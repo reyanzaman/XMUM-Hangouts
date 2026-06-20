@@ -1,0 +1,6 @@
+{
+  "name": "XMUM Hangouts",
+  "description": "Exclusive hangout and friend-finder app for Xiamen University Malaysia (XMUM) students. Connect, plan, and meet up safely.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
