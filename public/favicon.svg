@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <defs>
+    <style>
+      .bg { fill: #fef2f2; }
+      .heart-main { fill: #ef4444; }
+      .eyes { fill: #ffffff; }
+      .pupils { fill: #1f2937; }
+      .smile { fill: none; stroke: #1f2937; stroke-width: 3; stroke-linecap: round; }
+      .blush { fill: #fca5a5; opacity: 0.7; }
+    </style>
+  </defs>
+  
+  <!-- Soft background -->
+  <rect width="192" height="192" class="bg" rx="48"/>
+  
+  <!-- Main heart shape -->
+  <path d="M 96 162 C 50 130 24 105 24 75 C 24 50 42 35 60 35 C 73 35 85 45 96 58 C 107 45 119 35 132 35 C 150 35 168 50 168 75 C 168 105 142 130 96 162 Z" class="heart-main"/>
+  
+  <!-- Left eye white -->
+  <circle cx="70" cy="70" r="12" class="eyes"/>
+  <!-- Right eye white -->
+  <circle cx="122" cy="70" r="12" class="eyes"/>
+  
+  <!-- Left pupil -->
+  <circle cx="72" cy="72" r="6" class="pupils"/>
+  <!-- Right pupil -->
+  <circle cx="120" cy="72" r="6" class="pupils"/>
+  
+  <!-- Left blush -->
+  <circle cx="45" cy="90" r="10" class="blush"/>
+  <!-- Right blush -->
+  <circle cx="147" cy="90" r="10" class="blush"/>
+  
+  <!-- Cute smile -->
+  <path d="M 80 105 Q 96 118 112 105" class="smile"/>
+</svg>
