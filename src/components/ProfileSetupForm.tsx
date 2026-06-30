@@ -5,7 +5,7 @@
 
 import React, { useState } from "react";
 import { useApp } from "../context/AppContext";
-import { XMUM_PROGRAMS, COUNTRIES, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
+import { XMUM_PROGRAMS, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
 import { AvatarPicker } from "./AvatarPicker";
 import { Plus, X, Heart, ShieldAlert, Calendar } from "lucide-react";
 
@@ -37,11 +37,12 @@ export const ProfileSetupForm: React.FC = () => {
   const [studentType, setStudentType] = useState<"foundation" | "degree" | "postgraduate" | "Not Specified" | "">(currentUser.student_type || "");
   const [aboutMe, setAboutMe] = useState(currentUser.about_me || "");
   const [avatarId, setAvatarId] = useState(currentUser.avatar_id || "panda");
-  const [password, setPassword] = useState(currentUser.password || "");
+  const [password, setPassword] = useState("");
   
   // Custom language input state
   const [customLang, setCustomLang] = useState("");
   const [errorText, setErrorText] = useState("");
+  const hasExistingPassword = Boolean(currentUser.password_hash || currentUser.password);
 
   const handleToggleLanguage = (lang: string) => {
     if (languages.includes(lang)) {
@@ -83,8 +84,12 @@ export const ProfileSetupForm: React.FC = () => {
       setErrorText("Please write a small bio about yourself (minimum 10 characters).");
       return;
     }
-    if (!password.trim() || password.length < 6) {
+    if (!hasExistingPassword && !password.trim()) {
       setErrorText("For security, you must set an account password (minimum 6 characters) to login in future.");
+      return;
+    }
+    if (password.trim() && password.length < 6) {
+      setErrorText("For security, your password must be at least 6 characters.");
       return;
     }
 
@@ -100,7 +105,7 @@ export const ProfileSetupForm: React.FC = () => {
       student_type: (studentType as any) || "Not Specified",
       about_me: aboutMe.trim(),
       avatar_id: avatarId,
-      password: password.trim(),
+      ...(password.trim() ? { password: password.trim() } : {}),
       is_profile_complete: true
     });
 
@@ -296,9 +301,9 @@ export const ProfileSetupForm: React.FC = () => {
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              placeholder="Min 6 characters"
+              placeholder={hasExistingPassword ? "Leave blank to keep your current password" : "Min 6 characters"}
               className="w-full bg-white border border-gray-200 focus:border-rose-400 focus:ring-1 focus:ring-rose-400 rounded-xl px-4 py-2.5 text-xs sm:text-sm outline-none transition-colors text-slate-800"
-              required
+              required={!hasExistingPassword}
             />
           </div>
         </div>

@@ -8,10 +8,13 @@ import { motion, AnimatePresence } from "motion/react";
 import { useApp } from "../context/AppContext";
 import { Heart } from "lucide-react";
 
-export const CampusCompanion: React.FC = () => {
+interface CampusCompanionProps {
+  activeTab: string;
+}
+
+export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) => {
   const { 
     currentUser, 
-    activeTab, 
     toast,
     hangouts,
     messages,
@@ -598,6 +601,46 @@ export const CampusCompanion: React.FC = () => {
     window.addEventListener("xmum-signout-intent", handleSignoutIntent);
     return () => {
       window.removeEventListener("xmum-signout-intent", handleSignoutIntent);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleHangoutEdited = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const intention = customEvent.detail?.intention || "your hangout";
+      setBubbleText(`Tiny update patrol noticed a refresh for "${intention}". Everyone will stay in the loop.`);
+      setMood("happy");
+      setReactionType("success");
+      setShowBubble(true);
+      setTimeout(() => setReactionType("none"), 1800);
+    };
+
+    const handleHangoutCancelled = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const intention = customEvent.detail?.intention || "that hangout";
+      setBubbleText(`Plans changed for "${intention}". I helped send a gentle heads-up to everyone involved.`);
+      setMood("sleepy");
+      setReactionType("error");
+      setShowBubble(true);
+      setTimeout(() => setReactionType("none"), 1800);
+    };
+
+    const handleAccountDeleted = () => {
+      setBubbleText("Account cleanup is complete. I made sure active plans were wrapped up carefully.");
+      setMood("sleepy");
+      setReactionType("success");
+      setShowBubble(true);
+      setTimeout(() => setReactionType("none"), 1800);
+    };
+
+    window.addEventListener("xmum-hangout-edited", handleHangoutEdited);
+    window.addEventListener("xmum-hangout-cancelled", handleHangoutCancelled);
+    window.addEventListener("xmum-account-deleted", handleAccountDeleted);
+
+    return () => {
+      window.removeEventListener("xmum-hangout-edited", handleHangoutEdited);
+      window.removeEventListener("xmum-hangout-cancelled", handleHangoutCancelled);
+      window.removeEventListener("xmum-account-deleted", handleAccountDeleted);
     };
   }, []);
 

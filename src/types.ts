@@ -29,6 +29,8 @@ export interface Profile {
   flag_status: "none" | "potentially_unsafe" | "confirmed_unsafe";
   appeal_count: number;
   password?: string; // set during onboarding/profile update
+  password_hash?: string;
+  is_demo_profile?: boolean;
 }
 
 export interface HangoutRestrictions {

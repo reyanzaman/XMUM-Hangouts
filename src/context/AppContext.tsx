@@ -22,9 +22,222 @@ import {
 import { XMUM_PROGRAMS } from "../config/xmum-config";
 import { supabase } from "../lib/supabase";
 import { encryptMessage, decryptMessage } from "../lib/encryption";
+import { hashPassword, matchesStoredPassword } from "../lib/security";
+import {
+  MIN_HANGOUT_DESCRIPTION_LENGTH,
+  serializeHangoutEditHistoryEntry,
+  validateFutureHangoutDate
+} from "../lib/hangouts";
+import { collapseProfilesByEmail, isDemoProfile, isDemoProfileId, normalizeProfileEmail, pickCanonicalProfile, reconcileProfilesByEmail } from "../lib/profiles";
+
+const ADMIN_EMAIL = "mcs2509008@xmu.edu.my";
+const SYSTEM_DELETED_USER_ID = "deleted_user";
+const SYSTEM_DELETED_USER_EMAIL = "deleted.user@system.local";
+
+const normalizeProfileRecord = (profile: Profile): Profile => {
+  const normalized: Profile = { ...profile };
+
+  if (typeof normalized.password === "string" && normalized.password.trim() && !normalized.password_hash) {
+    normalized.password_hash = hashPassword(normalized.email, normalized.password);
+  }
+
+  delete normalized.password;
+  normalized.is_demo_profile = isDemoProfile(normalized);
+
+  return normalized;
+};
+
+const normalizeProfiles = (profiles: Profile[]): Profile[] => reconcileProfilesByEmail(profiles.map(normalizeProfileRecord));
+
+const onboardingStorageKey = (userId: string) => `xmum_onboarding_seen_${userId}`;
+const authRedirectStorageKey = "xmum_auth_redirect_pending";
+const localAuthTokenStorageKey = "xmum_local_auth_token";
+const demoDataEnabled = import.meta.env.VITE_ENABLE_DEMO_DATA === "true";
+
+const filterProfilesForRuntime = (items: Profile[]) =>
+  demoDataEnabled ? items : items.filter(profile => !isDemoProfile(profile));
+
+const filterHangoutsForRuntime = (items: Hangout[]) =>
+  demoDataEnabled ? items : items.filter(hangout => !isDemoProfileId(hangout.creator_id));
+
+const filterApplicationsForRuntime = (items: HangoutApplication[], hangoutIds: Set<string>) =>
+  demoDataEnabled
+    ? items
+    : items.filter(application => !isDemoProfileId(application.applicant_id) && hangoutIds.has(application.hangout_id));
+
+const filterChatsForRuntime = (items: Chat[], hangoutIds: Set<string>) =>
+  demoDataEnabled
+    ? items
+    : items.filter(
+        chat =>
+          !isDemoProfileId(chat.user_a_id) &&
+          !isDemoProfileId(chat.user_b_id) &&
+          (!chat.hangout_id || hangoutIds.has(chat.hangout_id))
+      );
+
+const filterMessagesForRuntime = (items: Message[], chatIds: Set<string>) =>
+  demoDataEnabled
+    ? items
+    : items.filter(message => !isDemoProfileId(message.sender_id) && chatIds.has(message.chat_id));
+
+const filterLikesForRuntime = (items: HangoutLike[], hangoutIds: Set<string>) =>
+  demoDataEnabled
+    ? items
+    : items.filter(like => !isDemoProfileId(like.user_id) && hangoutIds.has(like.hangout_id));
+
+const filterCommentsForRuntime = (items: HangoutComment[], hangoutIds: Set<string>) =>
+  demoDataEnabled
+    ? items
+    : items.filter(comment => !isDemoProfileId(comment.user_id) && hangoutIds.has(comment.hangout_id));
+
+const filterReportsForRuntime = (items: Report[]) =>
+  demoDataEnabled
+    ? items
+    : items.filter(report => !isDemoProfileId(report.reporter_id) && !isDemoProfileId(report.reported_user_id));
+
+const filterAppealsForRuntime = (items: ReportAppeal[], reportIds: Set<string>) =>
+  demoDataEnabled ? items : items.filter(appeal => reportIds.has(appeal.report_id));
+
+const filterBlocksForRuntime = (items: Block[]) =>
+  demoDataEnabled
+    ? items
+    : items.filter(block => !isDemoProfileId(block.blocker_id) && !isDemoProfileId(block.blocked_id));
+
+const filterNotificationsForRuntime = (items: AppNotification[]) =>
+  demoDataEnabled ? items : items.filter(notification => !isDemoProfileId(notification.user_id));
+
+const hasSeenOnboarding = (userId: string): boolean => {
+  try {
+    return localStorage.getItem(onboardingStorageKey(userId)) === "true";
+  } catch {
+    return false;
+  }
+};
+
+const markOnboardingSeen = (userId: string) => {
+  try {
+    localStorage.setItem(onboardingStorageKey(userId), "true");
+  } catch {
+    // Ignore storage issues and keep the session usable.
+  }
+};
+
+const markAuthRedirectPending = () => {
+  try {
+    sessionStorage.setItem(authRedirectStorageKey, "true");
+  } catch {
+    // Ignore storage issues and continue with the redirect.
+  }
+};
+
+const clearAuthRedirectPending = () => {
+  try {
+    sessionStorage.removeItem(authRedirectStorageKey);
+  } catch {
+    // Ignore storage issues and keep the session usable.
+  }
+};
+
+const storeLocalAuthToken = (token?: string | null) => {
+  try {
+    if (token) {
+      localStorage.setItem(localAuthTokenStorageKey, token);
+    } else {
+      localStorage.removeItem(localAuthTokenStorageKey);
+    }
+  } catch {
+    // Ignore storage errors and keep the session usable.
+  }
+};
+
+const getLocalAuthToken = () => {
+  try {
+    return localStorage.getItem(localAuthTokenStorageKey);
+  } catch {
+    return null;
+  }
+};
+
+const getAuthRedirectOrigin = () => {
+  const { protocol, hostname, port } = window.location;
+  if (hostname === "127.0.0.1") {
+    return `${protocol}//localhost${port ? `:${port}` : ""}`;
+  }
+
+  return window.location.origin;
+};
+
+const stripEmojiCharacters = (message: string) =>
+  message
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
+    .replace(/[\u{2600}-\u{27BF}]/gu, "")
+    .replace(/âš ï¸|ðŸš¨|ðŸ•’|ðŸŒŸ|ðŸ“¢|ðŸ”“|ðŸš€|â—/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+const humanizeToastMessage = (message: string): string => {
+  const normalized = stripEmojiCharacters(message);
+
+  const replacements: Array<[RegExp, string]> = [
+    [/^Rate limit exceeded: You can only create up to 5 hangouts per day\.?$/i, "You've reached today's hangout posting limit. Please try again tomorrow."],
+    [/^Background safety cron verified: successfully scanned for expiries & reminders\.?$/i, "Hangout reminders and expiry checks are up to date."],
+    [/^Report successfully marked as approved!?$/i, "The safety report has been approved."],
+    [/^Report successfully marked as rejected!?$/i, "The safety report has been closed."],
+    [/^Appeal review complete: marked as approved\.?$/i, "The appeal has been approved."],
+    [/^Appeal review complete: marked as rejected\.?$/i, "The appeal has been declined."],
+    [/^Application successfully accepted!?$/i, "The join request has been accepted."],
+    [/^Application successfully rejected!?$/i, "The join request has been declined."],
+    [/^Signed out successfully\.?$/i, "You have been signed out."],
+    [/^Comment added successfully!?$/i, "Your comment has been posted."],
+    [/^Application retracted\.?$/i, "Your join request has been withdrawn."],
+    [/^Profile updated successfully!?$/i, "Your profile has been updated."],
+    [/^Bug report sent to the admin team\.?$/i, "Your bug report has been sent to the admin team."],
+    [/^Bug report saved for the admin account\. Email delivery needs attention\.?$/i, "Your bug report reached the admin inbox. Email delivery still needs to be checked."],
+    [/^Please login\b/i, "Please log in"],
+    [/^Authentication failed\. Try again\.?$/i, "We couldn't sign you in. Please try again."],
+    [/^Password authentication failed\.?$/i, "Your password didn't work. Please try again."],
+    [/^Incorrect OTP code\.?$/i, "That verification code doesn't look right. Please try again."],
+    [/^Failed secure OTP email dispatch\.?$/i, "We couldn't send your verification code just now. Please try again."],
+    [/^Not logged in$/i, "Please sign in to continue."]
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    if (pattern.test(normalized)) {
+      return replacement;
+    }
+  }
+
+  return normalized;
+};
+
+const buildDeletedUserProfile = (): Profile => ({
+  id: SYSTEM_DELETED_USER_ID,
+  email: SYSTEM_DELETED_USER_EMAIL,
+  student_id: "deleted.user",
+  name: "Deleted User",
+  name_last_changed_at: null,
+  country: "Malaysia",
+  country_last_changed_at: null,
+  languages: [],
+  age: 0,
+  program: "Not Specified",
+  year_of_study: "Not Specified",
+  gender: "Prefer not to say",
+  student_type: "Not Specified",
+  about_me: "This account has been removed.",
+  avatar_id: "owl",
+  is_profile_complete: true,
+  hide_details: true,
+  is_admin: false,
+  is_blocked_globally: false,
+  flag_status: "none",
+  appeal_count: 0,
+  is_demo_profile: true
+});
 
 interface AppContextType {
   currentUser: Profile | null;
+  isAuthInitializing: boolean;
   profiles: Profile[];
   hangouts: Hangout[];
   applications: HangoutApplication[];
@@ -38,8 +251,18 @@ interface AppContextType {
   notifications: AppNotification[];
   
   // Auth Functions
-  signInSimulated: (email: string, name?: string) => Promise<{ success: boolean; error?: string; message?: string; resend_expired?: boolean }>;
+  signInSimulated: (email: string, name?: string) => Promise<{
+    success: boolean;
+    error?: string;
+    message?: string;
+    resend_expired?: boolean;
+    otp_limit_reached?: boolean;
+    requires_microsoft?: boolean;
+    allows_password_login?: boolean;
+    is_registered?: boolean;
+  }>;
   signInWithPassword: (email: string, password: string) => Promise<{ success: boolean; error?: string; message?: string }>;
+  signInWithMicrosoft: (emailHint?: string) => Promise<{ success: boolean; error?: string }>;
   signOutSimulated: () => void;
   completeOnboarding: () => void;
   
@@ -50,9 +273,15 @@ interface AppContextType {
   // Profile Functions
   updateProfile: (data: Partial<Profile>) => { success: boolean; error?: string };
   setHideDetails: (hide: boolean) => void;
+  deleteCurrentAccount: () => Promise<{ success: boolean; error?: string }>;
   
   // Hangout Functions
   createHangout: (data: Omit<Hangout, "id" | "creator_id" | "status" | "created_at" | "updated_at">) => { success: boolean; error?: string };
+  editHangout: (
+    hangoutId: string,
+    data: Pick<Hangout, "location" | "event_datetime" | "meeting_point" | "additional_info" | "max_participants" | "restrictions" | "is_anonymous">
+  ) => { success: boolean; error?: string };
+  deleteHangout: (hangoutId: string) => { success: boolean; error?: string };
   toggleLike: (hangoutId: string) => void;
   addComment: (hangoutId: string, content: string, parentCommentId?: string | null) => { success: boolean; error?: string };
   
@@ -69,6 +298,11 @@ interface AppContextType {
   // Block/Report Functions
   toggleBlockUser: (otherUserId: string) => void;
   submitReport: (reportedUserId: string, description: string) => { success: boolean; error?: string };
+  submitBugReport: (data: {
+    subject: string;
+    description: string;
+    sourcePage?: string;
+  }) => Promise<{ success: boolean; error?: string; warning?: string }>;
   submitAppeal: (reportId: string, description: string) => { success: boolean; error?: string };
   
   // Admin functions
@@ -105,7 +339,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentUser, setCurrentUser] = useState<Profile | null>(() => {
     try {
       const cached = localStorage.getItem("xmum_current_user_profile");
-      return cached ? JSON.parse(cached) : null;
+      return cached ? normalizeProfileRecord(JSON.parse(cached)) : null;
     } catch {
       return null;
     }
@@ -122,6 +356,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [currentUser]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
   const [hangouts, setHangouts] = useState<Hangout[]>([]);
   const [applications, setApplications] = useState<HangoutApplication[]>([]);
   const [likes, setLikes] = useState<HangoutLike[]>([]);
@@ -152,9 +387,138 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [lastCommentCreatedTime, setLastCommentCreatedTime] = useState<number>(0);
 
   const showToast = (message: string, type: "success" | "error" | "info") => {
-    setToast({ message, type });
+    setToast({ message: humanizeToastMessage(message), type });
   };
   const clearToast = () => setToast(null);
+
+  const getStoredProfilesSnapshot = (): Profile[] => {
+    try {
+      return normalizeProfiles(JSON.parse(localStorage.getItem("xmum_profiles") || "[]"));
+    } catch {
+      return [];
+    }
+  };
+
+  const syncServerMirror = async (path: string, payload: Record<string, unknown>) => {
+    try {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.warn(`Server mirror sync failed for ${path}:`, errorText);
+      }
+    } catch (error) {
+      console.warn(`Server mirror sync request failed for ${path}:`, error);
+    }
+  };
+
+  const resolveProfileByEmail = async (email: string, authUserId?: string | null): Promise<Profile | null> => {
+    const normalizedEmail = normalizeProfileEmail(email);
+    const candidates: Profile[] = [];
+
+    try {
+      const { data, error } = await supabase.from("xmum_profiles").select("*").eq("email", normalizedEmail);
+      if (error) {
+        console.warn("Supabase profile lookup by email returned an error:", error.message);
+      }
+
+      candidates.push(...normalizeProfiles((data || []) as Profile[]));
+    } catch (dbErr) {
+      console.warn("Supabase profile lookup by email failed, falling back to local cache:", dbErr);
+    }
+
+    candidates.push(
+      ...profiles,
+      ...getStoredProfilesSnapshot()
+    );
+
+    return pickCanonicalProfile(normalizeProfiles(candidates), { email: normalizedEmail, authUserId });
+  };
+
+  const applyAuthenticatedProfile = async (email: string, authUserId?: string | null) => {
+    const normalizedEmail = normalizeProfileEmail(email);
+
+    if (!normalizedEmail.endsWith("@xmu.edu.my")) {
+      console.warn("Rejected non-XMUM auth session for email:", normalizedEmail);
+      await supabase.auth.signOut();
+      localStorage.removeItem("xmum_current_user_id");
+      localStorage.removeItem("xmum_current_user_profile");
+      setCurrentUser(null);
+      setShowOnboarding(false);
+      setOnboardingStep(0);
+      showToast("Please sign in with your official @xmu.edu.my Microsoft account.", "error");
+      return null;
+    }
+
+    let profile = await resolveProfileByEmail(normalizedEmail, authUserId);
+
+    if (!profile) {
+      const student_id = normalizedEmail.split("@")[0];
+      profile = {
+        id: authUserId || ("user_" + Math.random().toString(36).substring(2, 11)),
+        email: normalizedEmail,
+        student_id,
+        name: normalizedEmail.split("@")[0],
+        name_last_changed_at: null,
+        country: "Malaysia",
+        country_last_changed_at: null,
+        languages: ["English"],
+        age: 18,
+        program: "Software Engineering",
+        year_of_study: "Year 1",
+        gender: "Male",
+        student_type: "degree",
+        about_me: "Hey there! I am new here on XMUM Hangouts.",
+        avatar_id: "panda",
+        is_profile_complete: false,
+        hide_details: false,
+        is_admin: normalizedEmail === ADMIN_EMAIL || normalizedEmail.startsWith("admin"),
+        is_blocked_globally: false,
+        flag_status: "none",
+        appeal_count: 0
+      };
+      try {
+        await supabase.from("xmum_profiles").insert([profile]);
+      } catch (insErr) {
+        console.warn("Authenticated profile creation deferred (offline database):", insErr);
+      }
+    }
+
+    const normalizedCurrentUser = normalizeProfileRecord(profile);
+    setCurrentUser(normalizedCurrentUser);
+    setProfiles(prev => {
+      const nextProfiles = prev.some(
+        p => p.id === normalizedCurrentUser.id || normalizeProfileEmail(p.email) === normalizedCurrentUser.email
+      )
+        ? prev.map(p =>
+            p.id === normalizedCurrentUser.id || normalizeProfileEmail(p.email) === normalizedCurrentUser.email
+              ? normalizedCurrentUser
+              : p
+          )
+        : [...prev, normalizedCurrentUser];
+      const reconciledProfiles = normalizeProfiles(nextProfiles);
+      localStorage.setItem("xmum_profiles", JSON.stringify(reconciledProfiles));
+      void syncServerMirror("/api/profiles/sync", { profiles: collapseProfilesByEmail(reconciledProfiles) });
+      return reconciledProfiles;
+    });
+    localStorage.setItem("xmum_current_user_id", normalizedCurrentUser.id);
+    localStorage.setItem("xmum_current_user_profile", JSON.stringify(normalizedCurrentUser));
+
+    if (normalizedCurrentUser.is_profile_complete) {
+      if (!hasSeenOnboarding(normalizedCurrentUser.id)) {
+        setOnboardingStep(0);
+        setShowOnboarding(true);
+      } else {
+        setShowOnboarding(false);
+      }
+    }
+
+    return normalizedCurrentUser;
+  };
 
   // Auto-clear active toast notifications after 4 seconds to prevent endless floating
   useEffect(() => {
@@ -165,6 +529,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return () => clearTimeout(timer);
     }
   }, [toast]);
+
+  useEffect(() => {
+    if (!currentUser || !currentUser.is_profile_complete) {
+      setShowOnboarding(false);
+      setOnboardingStep(0);
+      return;
+    }
+
+    if (!hasSeenOnboarding(currentUser.id)) {
+      setOnboardingStep(0);
+      setShowOnboarding(true);
+    }
+  }, [currentUser?.id, currentUser?.is_profile_complete]);
 
   const mergeByField = <T extends { id: string }>(arrSupa: T[], arrLocal: T[]): T[] => {
     const mapObj = new Map<string, T>();
@@ -197,6 +574,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     is_anonymous: !!h.is_anonymous
   });
 
+  const sanitizeProfileForDatabase = (profile: Profile) => ({
+    id: profile.id,
+    email: profile.email,
+    student_id: profile.student_id,
+    name: profile.name,
+    name_last_changed_at: profile.name_last_changed_at ?? null,
+    country: profile.country,
+    country_last_changed_at: profile.country_last_changed_at ?? null,
+    languages: Array.isArray(profile.languages) ? profile.languages : [],
+    age: profile.age,
+    program: profile.program,
+    year_of_study: profile.year_of_study,
+    gender: profile.gender,
+    student_type: profile.student_type,
+    about_me: profile.about_me,
+    avatar_id: profile.avatar_id,
+    is_profile_complete: Boolean(profile.is_profile_complete),
+    hide_details: Boolean(profile.hide_details),
+    is_admin: Boolean(profile.is_admin),
+    is_blocked_globally: Boolean(profile.is_blocked_globally),
+    flag_status: profile.flag_status,
+    appeal_count: profile.appeal_count ?? 0
+  });
+
   const sanitizeComment = (c: any) => ({
     id: c.id,
     hangout_id: c.hangout_id,
@@ -209,6 +610,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // --- INITIAL SEEDING ---
   useEffect(() => {
     const initData = async () => {
+      setIsAuthInitializing(true);
       try {
         // Parse URL segment/hash to automatically process redirect authentication keys from external emails
         try {
@@ -232,6 +634,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               }
             }
           }
+
+          const searchParams = new URLSearchParams(window.location.search);
+          const authCode = searchParams.get("code");
+          if (authCode) {
+            console.log("Exchanging Supabase OAuth code for a session...");
+            const { error: exchangeErr } = await supabase.auth.exchangeCodeForSession(authCode);
+            if (!exchangeErr) {
+              window.history.replaceState(null, "", window.location.pathname);
+            } else {
+              console.warn("OAuth code exchange error:", exchangeErr.message);
+            }
+          }
         } catch (uhError) {
           console.error("Auto hash verification attempt skipped:", uhError);
         }
@@ -242,7 +656,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let { data: dbProfiles, error: errProfiles } = await supabase.from("xmum_profiles").select("*");
         if (errProfiles) throw errProfiles;
         
-        if (!dbProfiles || dbProfiles.length === 0) {
+        if ((!dbProfiles || dbProfiles.length === 0) && demoDataEnabled) {
           const seedProfiles: Profile[] = [
             {
               id: "sys_admin",
@@ -353,8 +767,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (adminChanged) {
           await supabase.from("xmum_profiles").upsert(dbProfiles);
         }
-        setProfiles(dbProfiles);
-        localStorage.setItem("xmum_profiles", JSON.stringify(dbProfiles));
+        const storedProfilesSnapshot = getStoredProfilesSnapshot();
+        const normalizedProfiles = filterProfilesForRuntime(normalizeProfiles([
+          ...storedProfilesSnapshot,
+          ...(dbProfiles as Profile[])
+        ]));
+        setProfiles(normalizedProfiles);
+        localStorage.setItem("xmum_profiles", JSON.stringify(normalizedProfiles));
+        void syncServerMirror("/api/profiles/sync", { profiles: collapseProfilesByEmail(normalizedProfiles) });
+
+        const dbProfilesById = new Map((dbProfiles as Profile[]).map(profile => [profile.id, JSON.stringify(profile)]));
+        const profilesWereNormalized = normalizedProfiles.some(profile => {
+          return dbProfilesById.get(profile.id) !== JSON.stringify(profile);
+        });
+        if (profilesWereNormalized) {
+          try {
+            await supabase.from("xmum_profiles").upsert(normalizedProfiles);
+          } catch (syncErr) {
+            console.warn("Initial normalized profile upsert failed:", syncErr);
+          }
+        }
 
         // --- 2. Hangouts ---
         let localHangouts: Hangout[] = [];
@@ -376,7 +808,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         let finalHangouts = mergeByField((dbHangouts || []) as Hangout[], localHangouts);
 
-        if (!finalHangouts || finalHangouts.length === 0) {
+        if ((!finalHangouts || finalHangouts.length === 0) && demoDataEnabled) {
           const tomorrow = new Date();
           tomorrow.setDate(tomorrow.getDate() + 1);
           tomorrow.setHours(18, 0, 0, 0);
@@ -486,9 +918,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           await supabase.from("xmum_hangouts").insert(seedHangouts.map(h => sanitizeHangout(h)));
           finalHangouts = seedHangouts;
         }
-        const cleanHangouts = finalHangouts.filter(h => h.additional_info && h.additional_info.trim() !== "");
+        const cleanHangouts = filterHangoutsForRuntime(
+          finalHangouts.filter(h => h.additional_info && h.additional_info.trim() !== "")
+        );
+        const activeHangoutIds = new Set(cleanHangouts.map(hangout => hangout.id));
         setHangouts(cleanHangouts);
         localStorage.setItem("xmum_hangouts", JSON.stringify(cleanHangouts));
+        void syncServerMirror("/api/hangouts/sync", { hangouts: cleanHangouts });
 
         // --- 3. Applications ---
         let localApps: HangoutApplication[] = [];
@@ -502,7 +938,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let { data: dbApps } = await supabase.from("xmum_applications").select("*");
         let finalApps = mergeByField((dbApps || []) as HangoutApplication[], localApps);
 
-        if (finalApps.length === 0) {
+        if (finalApps.length === 0 && demoDataEnabled) {
           const seedApps: HangoutApplication[] = [
             {
               id: "app_seed_1",
@@ -538,6 +974,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           await supabase.from("xmum_applications").insert(seedApps);
           finalApps = seedApps;
         }
+        finalApps = filterApplicationsForRuntime(finalApps, activeHangoutIds);
         setApplications(finalApps);
         localStorage.setItem("xmum_applications", JSON.stringify(finalApps));
 
@@ -553,7 +990,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let { data: dbChats } = await supabase.from("xmum_chats").select("*");
         let finalChats = mergeByField((dbChats || []) as Chat[], localChats);
 
-        if (finalChats.length === 0) {
+        if (finalChats.length === 0 && demoDataEnabled) {
           const seedChats = [
             {
               id: "chat_seed_sarah_ahmad",
@@ -566,6 +1003,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           await supabase.from("xmum_chats").insert(seedChats);
           finalChats = seedChats;
         }
+        finalChats = filterChatsForRuntime(finalChats, activeHangoutIds);
+        const activeChatIds = new Set(finalChats.map(chat => chat.id));
         setChats(finalChats);
         localStorage.setItem("xmum_chats", JSON.stringify(finalChats));
 
@@ -581,7 +1020,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let { data: dbMessages } = await supabase.from("xmum_messages").select("*");
         let finalMessages = mergeByField((dbMessages || []) as Message[], localMessages);
 
-        if (finalMessages.length === 0) {
+        if (finalMessages.length === 0 && demoDataEnabled) {
           const fiveMinsAgo = new Date();
           fiveMinsAgo.setMinutes(fiveMinsAgo.getMinutes() - 15);
           const twoMinsAgo = new Date();
@@ -614,7 +1053,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           finalMessages = encryptedSeeds;
         }
         
-        const decryptedMessages = finalMessages.map(msg => {
+        const decryptedMessages = filterMessagesForRuntime(finalMessages, activeChatIds).map(msg => {
           try {
             return { ...msg, content: decryptMessage(msg.content) };
           } catch {
@@ -637,7 +1076,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localLikes = json.likes || [];
         } catch (e) {}
         const { data: dbLikes } = await supabase.from("xmum_likes").select("*");
-        const finalLikes = mergeByField((dbLikes || []) as HangoutLike[], localLikes);
+        const finalLikes = filterLikesForRuntime(
+          mergeByField((dbLikes || []) as HangoutLike[], localLikes),
+          activeHangoutIds
+        );
         setLikes(finalLikes);
         localStorage.setItem("xmum_likes", JSON.stringify(finalLikes));
 
@@ -648,9 +1090,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localComments = json.comments || [];
         } catch (e) {}
         const { data: dbComments } = await supabase.from("xmum_comments").select("*");
-        const finalComments = mergeByField((dbComments || []) as HangoutComment[], localComments);
+        const finalComments = filterCommentsForRuntime(
+          mergeByField((dbComments || []) as HangoutComment[], localComments),
+          activeHangoutIds
+        );
         setComments(finalComments);
         localStorage.setItem("xmum_comments", JSON.stringify(finalComments));
+        void syncServerMirror("/api/comments/sync", { comments: finalComments });
 
         let localReports: Report[] = [];
         try {
@@ -659,7 +1105,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localReports = json.reports || [];
         } catch (e) {}
         const { data: dbReports } = await supabase.from("xmum_reports").select("*");
-        const finalReports = mergeByField((dbReports || []) as Report[], localReports);
+        const finalReports = filterReportsForRuntime(mergeByField((dbReports || []) as Report[], localReports));
+        const activeReportIds = new Set(finalReports.map(report => report.id));
         setReports(finalReports);
         localStorage.setItem("xmum_reports", JSON.stringify(finalReports));
 
@@ -670,7 +1117,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localAppeals = json.appeals || [];
         } catch (e) {}
         const { data: dbAppeals } = await supabase.from("xmum_appeals").select("*");
-        const finalAppeals = mergeByField((dbAppeals || []) as ReportAppeal[], localAppeals);
+        const finalAppeals = filterAppealsForRuntime(
+          mergeByField((dbAppeals || []) as ReportAppeal[], localAppeals),
+          activeReportIds
+        );
         setAppeals(finalAppeals);
         localStorage.setItem("xmum_appeals", JSON.stringify(finalAppeals));
 
@@ -681,7 +1131,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localBlocks = json.blocks || [];
         } catch (e) {}
         const { data: dbBlocks } = await supabase.from("xmum_blocks").select("*");
-        const finalBlocks = mergeByField((dbBlocks || []) as Block[], localBlocks);
+        const finalBlocks = filterBlocksForRuntime(mergeByField((dbBlocks || []) as Block[], localBlocks));
         setBlocks(finalBlocks);
         localStorage.setItem("xmum_blocks", JSON.stringify(finalBlocks));
 
@@ -692,7 +1142,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localNotifs = json.notifications || [];
         } catch (e) {}
         const { data: dbNotifs } = await supabase.from("xmum_notifications").select("*");
-        const finalNotifs = mergeByField((dbNotifs || []) as any[], localNotifs);
+        const finalNotifs = filterNotificationsForRuntime(mergeByField((dbNotifs || []) as AppNotification[], localNotifs));
         setNotifications(finalNotifs);
         localStorage.setItem("xmum_notifications", JSON.stringify(finalNotifs));
 
@@ -701,81 +1151,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           try {
             if (session?.user) {
               const email = session.user.email;
-              if (email && email.toLowerCase().endsWith("@xmu.edu.my")) {
-                let profile: Profile | null = null;
-                try {
-                  const { data } = await supabase.from("xmum_profiles").select("*").eq("email", email.toLowerCase()).maybeSingle();
-                  profile = data;
-                } catch (dbErr) {
-                  console.warn("Auth state change callback profile fetch failed (using local match):", dbErr);
-                  profile = profiles.find(p => p.email.toLowerCase() === email.toLowerCase()) || null;
-                }
-
-                if (!profile) {
-                  const student_id = email.split("@")[0];
-                  profile = {
-                    id: session.user.id,
-                    email: email.toLowerCase(),
-                    student_id,
-                    name: email.split("@")[0],
-                    name_last_changed_at: null,
-                    country: "Malaysia",
-                    country_last_changed_at: null,
-                    languages: ["English"],
-                    age: 18,
-                    program: "Software Engineering",
-                    year_of_study: "Year 1",
-                    gender: "Male",
-                    student_type: "degree",
-                    about_me: "Hey there! I am new here on XMUM Hangouts.",
-                    avatar_id: "panda",
-                    is_profile_complete: false,
-                    hide_details: false,
-                    is_admin: email.toLowerCase() === "mcs2509008@xmu.edu.my" || email.toLowerCase().startsWith("admin"),
-                    is_blocked_globally: false,
-                    flag_status: "none",
-                    appeal_count: 0
-                  };
-                  try {
-                    await supabase.from("xmum_profiles").insert([profile]);
-                  } catch (insErr) {
-                    console.warn("Auth state change profile creation deferred (offline database):", insErr);
-                  }
-                  setProfiles(prev => {
-                    if (!prev.some(p => p.id === profile!.id)) {
-                      return [...prev, profile!];
-                    }
-                    return prev;
-                  });
-                  setShowOnboarding(true);
-                }
-                setCurrentUser(profile);
-                localStorage.setItem("xmum_current_user_id", profile.id);
+              if (!email) {
+                return;
               }
+              await applyAuthenticatedProfile(email, session.user.id);
             }
           } catch (callbackErr) {
             console.error("Auth state change callback exception:", callbackErr);
           }
         });
 
+        const { data: sessionSnapshot } = await supabase.auth.getSession();
+        const hasLiveSession = Boolean(sessionSnapshot.session?.user?.email);
+        if (hasLiveSession && sessionSnapshot.session?.user?.email) {
+          await applyAuthenticatedProfile(
+            sessionSnapshot.session.user.email,
+            sessionSnapshot.session.user.id
+          );
+        }
+
         // Initialize active user session if previously logged in from local state
         const storedActiveUser = localStorage.getItem("xmum_current_user_id");
-        if (storedActiveUser) {
+        if (!hasLiveSession && storedActiveUser) {
           try {
             const { data: userProfile } = await supabase.from("xmum_profiles").select("*").eq("id", storedActiveUser).maybeSingle();
             if (userProfile) {
-              setCurrentUser(userProfile);
+              setCurrentUser(normalizeProfileRecord(userProfile));
             } else {
               const fallbackLocal = profiles.find(p => p.id === storedActiveUser);
               if (fallbackLocal) {
-                setCurrentUser(fallbackLocal);
+                setCurrentUser(normalizeProfileRecord(fallbackLocal));
               }
             }
           } catch (actErr) {
             console.warn("Active user profile fetch errored, resolving from local profiles cache:", actErr);
             const fallbackLocal = profiles.find(p => p.id === storedActiveUser);
             if (fallbackLocal) {
-              setCurrentUser(fallbackLocal);
+              setCurrentUser(normalizeProfileRecord(fallbackLocal));
             }
           }
         }
@@ -788,28 +1200,83 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.error("Failed to fetch primary tables from Supabase, resolving from LocalStorage fallback:", err);
         // LocalStorage Fallback loaders
         const storedProfiles = localStorage.getItem("xmum_profiles");
-        setProfiles(storedProfiles ? JSON.parse(storedProfiles) : []);
+        const fallbackProfiles = storedProfiles ? filterProfilesForRuntime(normalizeProfiles(JSON.parse(storedProfiles))) : [];
+        setProfiles(fallbackProfiles);
+        localStorage.setItem("xmum_profiles", JSON.stringify(fallbackProfiles));
         const rawLocalHangouts = localStorage.getItem("xmum_hangouts") ? JSON.parse(localStorage.getItem("xmum_hangouts")!) : [];
-        setHangouts(rawLocalHangouts.filter((h: any) => h.additional_info && h.additional_info.trim() !== ""));
-        setApplications(localStorage.getItem("xmum_applications") ? JSON.parse(localStorage.getItem("xmum_applications")!) : []);
-        setChats(localStorage.getItem("xmum_chats") ? JSON.parse(localStorage.getItem("xmum_chats")!) : []);
+        const fallbackHangouts = filterHangoutsForRuntime(
+          rawLocalHangouts.filter((h: any) => h.additional_info && h.additional_info.trim() !== "")
+        );
+        const fallbackHangoutIds = new Set(fallbackHangouts.map((hangout: Hangout) => hangout.id));
+        setHangouts(fallbackHangouts);
+        const fallbackApplications = filterApplicationsForRuntime(
+          localStorage.getItem("xmum_applications") ? JSON.parse(localStorage.getItem("xmum_applications")!) : [],
+          fallbackHangoutIds
+        );
+        setApplications(fallbackApplications);
+        localStorage.setItem("xmum_applications", JSON.stringify(fallbackApplications));
+        const fallbackChats = filterChatsForRuntime(
+          localStorage.getItem("xmum_chats") ? JSON.parse(localStorage.getItem("xmum_chats")!) : [],
+          fallbackHangoutIds
+        );
+        const fallbackChatIds = new Set(fallbackChats.map((chat: Chat) => chat.id));
+        setChats(fallbackChats);
+        localStorage.setItem("xmum_chats", JSON.stringify(fallbackChats));
         const cachedMsgsRaw = localStorage.getItem("xmum_messages");
         const decryptedLocalMsgs = cachedMsgsRaw
-          ? JSON.parse(cachedMsgsRaw).map((m: any) => ({ ...m, content: decryptMessage(m.content) }))
+          ? filterMessagesForRuntime(
+              JSON.parse(cachedMsgsRaw).map((m: any) => ({ ...m, content: decryptMessage(m.content) })),
+              fallbackChatIds
+            )
           : [];
         setMessages(decryptedLocalMsgs);
-        setLikes(localStorage.getItem("xmum_likes") ? JSON.parse(localStorage.getItem("xmum_likes")!) : []);
-        setComments(localStorage.getItem("xmum_comments") ? JSON.parse(localStorage.getItem("xmum_comments")!) : []);
-        setReports(localStorage.getItem("xmum_reports") ? JSON.parse(localStorage.getItem("xmum_reports")!) : []);
-        setAppeals(localStorage.getItem("xmum_appeals") ? JSON.parse(localStorage.getItem("xmum_appeals")!) : []);
-        setBlocks(localStorage.getItem("xmum_blocks") ? JSON.parse(localStorage.getItem("xmum_blocks")!) : []);
-        setNotifications(localStorage.getItem("xmum_notifications") ? JSON.parse(localStorage.getItem("xmum_notifications")!) : []);
+        localStorage.setItem(
+          "xmum_messages",
+          JSON.stringify(decryptedLocalMsgs.map(msg => ({ ...msg, content: encryptMessage(msg.content) })))
+        );
+        const fallbackLikes = filterLikesForRuntime(
+          localStorage.getItem("xmum_likes") ? JSON.parse(localStorage.getItem("xmum_likes")!) : [],
+          fallbackHangoutIds
+        );
+        setLikes(fallbackLikes);
+        localStorage.setItem("xmum_likes", JSON.stringify(fallbackLikes));
+        const fallbackComments = filterCommentsForRuntime(
+          localStorage.getItem("xmum_comments") ? JSON.parse(localStorage.getItem("xmum_comments")!) : [],
+          fallbackHangoutIds
+        );
+        setComments(fallbackComments);
+        localStorage.setItem("xmum_comments", JSON.stringify(fallbackComments));
+        const fallbackReports = filterReportsForRuntime(
+          localStorage.getItem("xmum_reports") ? JSON.parse(localStorage.getItem("xmum_reports")!) : []
+        );
+        const fallbackReportIds = new Set(fallbackReports.map((report: Report) => report.id));
+        setReports(fallbackReports);
+        localStorage.setItem("xmum_reports", JSON.stringify(fallbackReports));
+        const fallbackAppeals = filterAppealsForRuntime(
+          localStorage.getItem("xmum_appeals") ? JSON.parse(localStorage.getItem("xmum_appeals")!) : [],
+          fallbackReportIds
+        );
+        setAppeals(fallbackAppeals);
+        localStorage.setItem("xmum_appeals", JSON.stringify(fallbackAppeals));
+        const fallbackBlocks = filterBlocksForRuntime(
+          localStorage.getItem("xmum_blocks") ? JSON.parse(localStorage.getItem("xmum_blocks")!) : []
+        );
+        setBlocks(fallbackBlocks);
+        localStorage.setItem("xmum_blocks", JSON.stringify(fallbackBlocks));
+        const fallbackNotifications = filterNotificationsForRuntime(
+          localStorage.getItem("xmum_notifications") ? JSON.parse(localStorage.getItem("xmum_notifications")!) : []
+        );
+        setNotifications(fallbackNotifications);
+        localStorage.setItem("xmum_notifications", JSON.stringify(fallbackNotifications));
 
         const storedActiveUser = localStorage.getItem("xmum_current_user_id");
-        if (storedActiveUser && storedProfiles) {
-          const found = JSON.parse(storedProfiles).find((p: any) => p.id === storedActiveUser);
-          if (found) setCurrentUser(found);
+        if (storedActiveUser && fallbackProfiles.length > 0) {
+          const found = fallbackProfiles.find((p: any) => p.id === storedActiveUser);
+          if (found) setCurrentUser(normalizeProfileRecord(found));
         }
+      } finally {
+        clearAuthRedirectPending();
+        setIsAuthInitializing(false);
       }
     };
     initData();
@@ -817,28 +1284,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // --- PERSISTENCE SYNCS ---
   const saveProfiles = async (data: Profile[]) => {
+    const normalizedData = filterProfilesForRuntime(normalizeProfiles(data));
+    const canonicalRows = collapseProfilesByEmail(normalizedData);
     const prev = profiles;
-    setProfiles(data);
-    localStorage.setItem("xmum_profiles", JSON.stringify(data));
+    setProfiles(normalizedData);
+    localStorage.setItem("xmum_profiles", JSON.stringify(normalizedData));
     
     // Sync to backend file-based local profiles registry
     try {
       await fetch("/api/profiles/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profiles: data })
+        body: JSON.stringify({ profiles: canonicalRows })
       });
     } catch (syncErr) {
       console.warn("Local backend profiles mirror sync failed:", syncErr);
     }
 
     try {
-      const changed = data.filter(item => {
+      const changed = canonicalRows.filter(item => {
         const matchingPrev = prev.find(p => p.id === item.id);
         return !matchingPrev || JSON.stringify(matchingPrev) !== JSON.stringify(item);
       });
       if (changed.length > 0) {
-        await supabase.from("xmum_profiles").upsert(changed);
+        await supabase.from("xmum_profiles").upsert(changed.map(sanitizeProfileForDatabase));
       }
     } catch (e) {
       console.error("Profiles sync exception:", e);
@@ -1098,22 +1567,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
   const saveNotifications = async (data: AppNotification[]) => {
+    const uniqueData = Array.from(
+      new Map(data.map(notification => [notification.id, notification])).values()
+    ).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     const prev = notifications;
-    setNotifications(data);
-    localStorage.setItem("xmum_notifications", JSON.stringify(data));
+    setNotifications(uniqueData);
+    localStorage.setItem("xmum_notifications", JSON.stringify(uniqueData));
 
     try {
       await fetch("/api/notifications/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notifications: data })
+        body: JSON.stringify({ notifications: uniqueData })
       });
     } catch (syncErr) {
       console.warn("Local backend notifications mirror sync failed:", syncErr);
     }
 
     try {
-      const changed = data.filter(item => {
+      const changed = uniqueData.filter(item => {
         const matchingPrev = prev.find(n => n.id === item.id);
         return !matchingPrev || JSON.stringify(matchingPrev) !== JSON.stringify(item);
       });
@@ -1123,6 +1595,195 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {
       console.error("Notifications sync exception:", e);
     }
+  };
+
+  const replaceAllAppData = (payload: {
+    profiles: Profile[];
+    hangouts: Hangout[];
+    applications: HangoutApplication[];
+    likes: HangoutLike[];
+    comments: HangoutComment[];
+    chats: Chat[];
+    messages: Message[];
+    reports: Report[];
+    appeals: ReportAppeal[];
+    blocks: Block[];
+    notifications: AppNotification[];
+  }) => {
+    const nextProfiles = normalizeProfiles(payload.profiles);
+    setProfiles(nextProfiles);
+    localStorage.setItem("xmum_profiles", JSON.stringify(nextProfiles));
+
+    setHangouts(payload.hangouts);
+    localStorage.setItem("xmum_hangouts", JSON.stringify(payload.hangouts));
+
+    setApplications(payload.applications);
+    localStorage.setItem("xmum_applications", JSON.stringify(payload.applications));
+
+    setLikes(payload.likes);
+    localStorage.setItem("xmum_likes", JSON.stringify(payload.likes));
+
+    setComments(payload.comments);
+    localStorage.setItem("xmum_comments", JSON.stringify(payload.comments));
+
+    setChats(payload.chats);
+    localStorage.setItem("xmum_chats", JSON.stringify(payload.chats));
+
+    setMessages(payload.messages);
+    localStorage.setItem(
+      "xmum_messages",
+      JSON.stringify(payload.messages.map(message => ({ ...message, content: encryptMessage(message.content) })))
+    );
+
+    setReports(payload.reports);
+    localStorage.setItem("xmum_reports", JSON.stringify(payload.reports));
+
+    setAppeals(payload.appeals);
+    localStorage.setItem("xmum_appeals", JSON.stringify(payload.appeals));
+
+    setBlocks(payload.blocks);
+    localStorage.setItem("xmum_blocks", JSON.stringify(payload.blocks));
+
+    setNotifications(payload.notifications);
+    localStorage.setItem("xmum_notifications", JSON.stringify(payload.notifications));
+  };
+
+  const formatParticipantLimit = (limit: number | null) => (limit === null ? "No limit" : `${limit} people`);
+
+  const formatRestrictionSummary = (restrictionSet: HangoutRestrictions) => {
+    const pieces: string[] = [];
+
+    if (restrictionSet.languages.length) {
+      pieces.push(`Languages: ${restrictionSet.languages.join(", ")}`);
+    }
+    if (restrictionSet.programs.length) {
+      pieces.push(`Programs: ${restrictionSet.programs.join(", ")}`);
+    }
+    if (restrictionSet.years.length) {
+      pieces.push(`Years: ${restrictionSet.years.join(", ")}`);
+    }
+    if (restrictionSet.student_types.length) {
+      pieces.push(`Student types: ${restrictionSet.student_types.join(", ")}`);
+    }
+    if (restrictionSet.countries.length) {
+      pieces.push(`Countries: ${restrictionSet.countries.join(", ")}`);
+    }
+    if (restrictionSet.genders.length) {
+      pieces.push(`Gender: ${restrictionSet.genders.join(", ")}`);
+    }
+    if (restrictionSet.age_min !== null || restrictionSet.age_max !== null) {
+      if (restrictionSet.age_min !== null && restrictionSet.age_max !== null) {
+        pieces.push(`Age: ${restrictionSet.age_min}-${restrictionSet.age_max}`);
+      } else if (restrictionSet.age_min !== null) {
+        pieces.push(`Age: ${restrictionSet.age_min}+`);
+      } else if (restrictionSet.age_max !== null) {
+        pieces.push(`Age: up to ${restrictionSet.age_max}`);
+      }
+    }
+
+    return pieces.length ? pieces.join(" | ") : "Open to everyone";
+  };
+
+  const formatHangoutDateTime = (isoString: string) =>
+    new Date(isoString).toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+
+  const buildHangoutEditChanges = (
+    original: Hangout,
+    updated: Pick<Hangout, "location" | "event_datetime" | "meeting_point" | "additional_info" | "max_participants" | "restrictions" | "is_anonymous">
+  ) => {
+    const changes: Array<{ field: string; label: string; before: string; after: string }> = [];
+
+    if (original.location !== updated.location) {
+      changes.push({
+        field: "location",
+        label: "Location",
+        before: original.location,
+        after: updated.location
+      });
+    }
+
+    if (original.event_datetime !== updated.event_datetime) {
+      changes.push({
+        field: "event_datetime",
+        label: "When",
+        before: formatHangoutDateTime(original.event_datetime),
+        after: formatHangoutDateTime(updated.event_datetime)
+      });
+    }
+
+    if (original.meeting_point !== updated.meeting_point) {
+      changes.push({
+        field: "meeting_point",
+        label: "Meeting point",
+        before: original.meeting_point,
+        after: updated.meeting_point
+      });
+    }
+
+    if (original.additional_info !== updated.additional_info) {
+      changes.push({
+        field: "additional_info",
+        label: "Description",
+        before: original.additional_info,
+        after: updated.additional_info
+      });
+    }
+
+    if (original.max_participants !== updated.max_participants) {
+      changes.push({
+        field: "max_participants",
+        label: "Buddy limit",
+        before: formatParticipantLimit(original.max_participants),
+        after: formatParticipantLimit(updated.max_participants)
+      });
+    }
+
+    if (JSON.stringify(original.restrictions) !== JSON.stringify(updated.restrictions)) {
+      changes.push({
+        field: "restrictions",
+        label: "Joining criteria",
+        before: formatRestrictionSummary(original.restrictions),
+        after: formatRestrictionSummary(updated.restrictions)
+      });
+    }
+
+    if (Boolean(original.is_anonymous) !== Boolean(updated.is_anonymous)) {
+      changes.push({
+        field: "is_anonymous",
+        label: "Visibility",
+        before: original.is_anonymous ? "Anonymous post" : "Named post",
+        after: updated.is_anonymous ? "Anonymous post" : "Named post"
+      });
+    }
+
+    return changes;
+  };
+
+  const createHangoutSystemEditComment = (hangout: Hangout, changeList: Array<{ field: string; label: string; before: string; after: string }>) => {
+    const summary =
+      changeList.length === 1
+        ? `${currentUser?.name || "The host"} updated the ${changeList[0].label.toLowerCase()}.`
+        : `${currentUser?.name || "The host"} updated this hangout's details.`;
+
+    return {
+      id: "comment_" + Math.random().toString(36).substring(2, 11),
+      hangout_id: hangout.id,
+      user_id: hangout.creator_id,
+      parent_comment_id: null,
+      content: serializeHangoutEditHistoryEntry({
+        at: new Date().toISOString(),
+        editorName: currentUser?.name || "Host",
+        summary,
+        changes: changeList
+      }),
+      created_at: new Date().toISOString()
+    } satisfies HangoutComment;
   };
 
   // --- ACTIONS ---
@@ -1159,19 +1820,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return {
           success: false,
           error: resData.error || "Failed secure OTP email dispatch.",
-          resend_expired: resData.resend_expired
+          resend_expired: resData.resend_expired,
+          otp_limit_reached: resData.otp_limit_reached,
+          requires_microsoft: resData.requires_microsoft,
+          allows_password_login: resData.allows_password_login,
+          is_registered: resData.is_registered
         };
       }
 
       // Also create target profile skeleton upfront if they don't have one
-      let profile: Profile | null = null;
-      try {
-        const { data } = await supabase.from("xmum_profiles").select("*").eq("email", formattedEmail).maybeSingle();
-        profile = data;
-      } catch (dbErr) {
-        console.warn("Client-side Supabase profile fetch errored (Supabase offline/paused); resolving from local state:", dbErr);
-        profile = profiles.find(p => p.email.toLowerCase() === formattedEmail) || null;
-      }
+      let profile = await resolveProfileByEmail(formattedEmail);
 
       if (!profile) {
         const student_id = formattedEmail.split("@")[0];
@@ -1206,11 +1864,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         
         // Setup local copy in the profiles array
-        setProfiles(prev => [...prev, newProfile]);
-        const currentLocalProfiles = JSON.parse(localStorage.getItem("xmum_profiles") || "[]");
-        if (!currentLocalProfiles.some((p: any) => p.email === formattedEmail)) {
-          localStorage.setItem("xmum_profiles", JSON.stringify([...currentLocalProfiles, newProfile]));
-        }
+        const normalizedNewProfile = normalizeProfileRecord(newProfile);
+        setProfiles(prev => {
+          const nextProfiles = prev.some(p => normalizeProfileEmail(p.email) === formattedEmail)
+            ? prev.map(p => normalizeProfileEmail(p.email) === formattedEmail ? normalizedNewProfile : p)
+            : [...prev, normalizedNewProfile];
+          const reconciledProfiles = normalizeProfiles(nextProfiles);
+          localStorage.setItem("xmum_profiles", JSON.stringify(reconciledProfiles));
+          return reconciledProfiles;
+        });
       } else {
         if (profile.is_blocked_globally) {
           return { success: false, error: "Your account is permanently locked due to security reviews." };
@@ -1219,11 +1881,84 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       return { 
         success: true, 
-        message: "Email Magic Link initiated successfully! Verify your university inbox to log in." 
+        message: resData.dev_mode && resData.dev_otp_preview
+          ? `Local development mode: your verification code is ${resData.dev_otp_preview}.`
+          : "Email Magic Link initiated successfully! Verify your university inbox to log in."
       };
     } catch (e: any) {
       console.error("Supabase sign in failed:", e);
       return { success: false, error: e.message || "Failed to trigger magic link authentication." };
+    }
+  };
+
+  const signInWithMicrosoft = async (emailHint?: string) => {
+    try {
+      const redirectTo = getAuthRedirectOrigin();
+      const normalizedEmailHint = emailHint?.trim().toLowerCase();
+      if (normalizedEmailHint && !normalizedEmailHint.endsWith("@xmu.edu.my")) {
+        return {
+          success: false,
+          error: "Please use your official XMUM Microsoft account ending with @xmu.edu.my."
+        };
+      }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const currentSessionEmail = sessionData.session?.user?.email?.toLowerCase();
+      const shouldLinkToCurrentUser =
+        Boolean(currentSessionEmail) &&
+        Boolean(currentUser?.email) &&
+        currentSessionEmail === currentUser.email.toLowerCase() &&
+        (!normalizedEmailHint || normalizedEmailHint === currentSessionEmail);
+
+      const authOptions = {
+        redirectTo,
+        scopes: "email",
+        queryParams: normalizedEmailHint ? { login_hint: normalizedEmailHint } : undefined
+      };
+
+      let authResponse: any;
+      if (shouldLinkToCurrentUser) {
+        authResponse = await supabase.auth.linkIdentity({
+          provider: "azure",
+          options: authOptions
+        } as any);
+
+        if (authResponse?.error) {
+          console.warn("Microsoft identity linking failed, retrying with standard OAuth sign-in:", authResponse.error);
+          authResponse = await supabase.auth.signInWithOAuth({
+            provider: "azure",
+            options: authOptions
+          });
+        }
+      } else {
+        authResponse = await supabase.auth.signInWithOAuth({
+          provider: "azure",
+          options: authOptions
+        });
+      }
+
+      const { data, error } = authResponse as any;
+
+      if (error) {
+        return { success: false, error: error.message || "Microsoft sign-in could not be started." };
+      }
+
+      if (data?.url) {
+        markAuthRedirectPending();
+        window.location.assign(data.url);
+        return { success: true };
+      }
+
+      if (shouldLinkToCurrentUser) {
+        return { success: true };
+      }
+
+      if (!data?.url) {
+        return { success: false, error: "Microsoft sign-in link could not be created." };
+      }
+    } catch (e: any) {
+      console.error("Microsoft sign-in failed:", e);
+      return { success: false, error: e.message || "Failed to start Microsoft sign-in." };
     }
   };
 
@@ -1254,9 +1989,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       if (resData.is_fallback) {
+        storeLocalAuthToken(resData.local_auth_token || null);
         localStorage.setItem("xmum_current_user_id", resData.profile.id);
         await switchUser(resData.profile.id, resData.profile);
       } else {
+        storeLocalAuthToken(resData.local_auth_token || null);
         const { error: sessionError } = await supabase.auth.setSession({
           access_token: resData.session.access_token,
           refresh_token: resData.session.refresh_token
@@ -1283,47 +2020,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     setCurrentUser(null);
     localStorage.removeItem("xmum_current_user_id");
+    storeLocalAuthToken(null);
     showToast("Signed out successfully.", "info");
   };
 
   const completeOnboarding = () => {
+    if (currentUser) {
+      markOnboardingSeen(currentUser.id);
+    }
     setShowOnboarding(false);
   };
 
   const switchUser = async (profileId: string, providedProfile?: Profile) => {
     if (providedProfile) {
-      setCurrentUser(providedProfile);
+      const normalizedProfile = normalizeProfileRecord(providedProfile);
+      setCurrentUser(normalizedProfile);
       setProfiles(prev => {
-        if (!prev.some(p => p.id === providedProfile.id)) {
-          return [...prev, providedProfile];
-        }
-        return prev;
+        const nextProfiles = !prev.some(p => p.id === normalizedProfile.id)
+          ? [...prev, normalizedProfile]
+          : prev.map(p => p.id === normalizedProfile.id || normalizeProfileEmail(p.email) === normalizedProfile.email
+            ? normalizedProfile
+            : p
+          );
+        const reconciledProfiles = normalizeProfiles(nextProfiles);
+        localStorage.setItem("xmum_profiles", JSON.stringify(reconciledProfiles));
+        return reconciledProfiles;
       });
-      localStorage.setItem("xmum_current_user_id", providedProfile.id);
-      showToast(`Switched active session to ${providedProfile.name}`, "info");
+      localStorage.setItem("xmum_current_user_id", normalizedProfile.id);
+      showToast(`Switched active session to ${normalizedProfile.name}`, "info");
       return;
     }
 
     try {
       const { data: found } = await supabase.from("xmum_profiles").select("*").eq("id", profileId).maybeSingle();
       if (found) {
-        setCurrentUser(found);
-        localStorage.setItem("xmum_current_user_id", found.id);
-        showToast(`Switched active session to ${found.name}`, "info");
+        const normalizedFound = normalizeProfileRecord(found);
+        setCurrentUser(normalizedFound);
+        localStorage.setItem("xmum_current_user_id", normalizedFound.id);
+        showToast(`Switched active session to ${normalizedFound.name}`, "info");
       } else {
         const fallbackLocal = profiles.find(p => p.id === profileId);
         if (fallbackLocal) {
-          setCurrentUser(fallbackLocal);
-          localStorage.setItem("xmum_current_user_id", fallbackLocal.id);
-          showToast(`Switched active session to ${fallbackLocal.name} (Local fallback)`, "info");
+          const normalizedFallback = normalizeProfileRecord(fallbackLocal);
+          setCurrentUser(normalizedFallback);
+          localStorage.setItem("xmum_current_user_id", normalizedFallback.id);
+          showToast(`Switched active session to ${normalizedFallback.name} (Local fallback)`, "info");
         }
       }
     } catch (e) {
       const fallbackLocal = profiles.find(p => p.id === profileId);
       if (fallbackLocal) {
-        setCurrentUser(fallbackLocal);
-        localStorage.setItem("xmum_current_user_id", fallbackLocal.id);
-        showToast(`Switched active session to ${fallbackLocal.name} (Local fallback)`, "info");
+        const normalizedFallback = normalizeProfileRecord(fallbackLocal);
+        setCurrentUser(normalizedFallback);
+        localStorage.setItem("xmum_current_user_id", normalizedFallback.id);
+        showToast(`Switched active session to ${normalizedFallback.name} (Local fallback)`, "info");
       }
     }
   };
@@ -1356,7 +2106,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       is_admin: isAdmin,
       is_blocked_globally: false,
       flag_status: "none",
-      appeal_count: 0
+      appeal_count: 0,
+      is_demo_profile: true
     };
     saveProfiles([...profiles, newUser]);
     showToast(`Simulated user ${name} created!`, "success");
@@ -1406,9 +2157,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     delete update.is_blocked_globally;
     delete update.flag_status;
     delete update.appeal_count;
+    delete update.is_demo_profile;
+
+    if (typeof update.password === "string") {
+      const trimmedPassword = update.password.trim();
+      if (trimmedPassword.length > 0) {
+        update.password_hash = hashPassword(currentUser.email, trimmedPassword);
+      }
+      delete update.password;
+    }
 
     // Build finalized profile
-    const updatedUser = { ...original, ...update, is_profile_complete: true };
+    const updatedUser = normalizeProfileRecord({ ...original, ...update, is_profile_complete: true });
     
     const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
     saveProfiles(nextProfiles);
@@ -1425,10 +2185,91 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(hide ? "Profile details hidden from public." : "Profile details visible to public.", "info");
   };
 
+  const deleteCurrentAccount = async () => {
+    if (!currentUser) {
+      return { success: false, error: "Please sign in to continue." };
+    }
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      const localAuthToken = getLocalAuthToken();
+
+      if (!accessToken && !localAuthToken) {
+        return { success: false, error: "Please sign in again before deleting your account." };
+      }
+
+      const response = await fetch("/api/account/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          ...(localAuthToken ? { "X-Local-Auth": localAuthToken } : {})
+        }
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return { success: false, error: payload.error || "We couldn't delete your account right now." };
+      }
+
+      replaceAllAppData({
+        profiles: payload.profiles || [],
+        hangouts: payload.hangouts || [],
+        applications: payload.applications || [],
+        likes: payload.likes || [],
+        comments: payload.comments || [],
+        chats: payload.chats || [],
+        messages: payload.messages || [],
+        reports: payload.reports || [],
+        appeals: payload.appeals || [],
+        blocks: payload.blocks || [],
+        notifications: payload.notifications || []
+      });
+
+      setCurrentUser(null);
+      setViewedProfile(null);
+      setShowOnboarding(false);
+      setOnboardingStep(0);
+      localStorage.removeItem("xmum_current_user_id");
+      localStorage.removeItem("xmum_current_user_profile");
+      storeLocalAuthToken(null);
+
+      try {
+        await supabase.auth.signOut();
+      } catch (signOutError) {
+        console.warn("Supabase sign-out after account deletion failed:", signOutError);
+      }
+
+      window.dispatchEvent(new CustomEvent("xmum-account-deleted"));
+      showToast("Your account has been permanently deleted.", "success");
+      return { success: true };
+    } catch (error: any) {
+      console.error("Account deletion failed:", error);
+      return { success: false, error: error?.message || "We couldn't delete your account right now." };
+    }
+  };
+
   // Hangouts
   const createHangout = (data: Omit<Hangout, "id" | "creator_id" | "status" | "created_at" | "updated_at">) => {
     if (!currentUser) return { success: false, error: "Please sign in to post a hangout." };
     if (!currentUser.is_profile_complete) return { success: false, error: "Please complete your profile to post a hangout." };
+    if (!data.intention.trim()) return { success: false, error: "Please describe what you want to do." };
+    if (!data.location.trim()) return { success: false, error: "Please add the hangout location." };
+    if (!data.meeting_point.trim()) return { success: false, error: "Please add a safe meeting point." };
+    if (!data.additional_info.trim()) return { success: false, error: "Please add a short description so people know what to expect." };
+    if (data.additional_info.trim().length < MIN_HANGOUT_DESCRIPTION_LENGTH) {
+      return { success: false, error: `Please make the description at least ${MIN_HANGOUT_DESCRIPTION_LENGTH} characters long.` };
+    }
+
+    const eventTimeError = validateFutureHangoutDate(data.event_datetime);
+    if (eventTimeError) {
+      return { success: false, error: eventTimeError };
+    }
+
+    if (data.max_participants !== null && (!Number.isInteger(data.max_participants) || data.max_participants < 1 || data.max_participants > 100)) {
+      return { success: false, error: "Participant limit must be between 1 and 100." };
+    }
 
     // Vulgarity detection
     if (containsProfanity(data.intention) || containsProfanity(data.additional_info || "") || containsProfanity(data.location) || containsProfanity(data.meeting_point)) {
@@ -1493,6 +2334,167 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveHangouts([newHangout, ...hangouts]);
     setLastHangoutCreatedTime(now);
     showToast("Hangout plan posted successfully! Let the meetups begin.", "success");
+    return { success: true };
+  };
+
+  const editHangout = (
+    hangoutId: string,
+    data: Pick<Hangout, "location" | "event_datetime" | "meeting_point" | "additional_info" | "max_participants" | "restrictions" | "is_anonymous">
+  ) => {
+    if (!currentUser) return { success: false, error: "Please sign in to edit your hangout." };
+
+    const target = hangouts.find(h => h.id === hangoutId);
+    if (!target || target.creator_id !== currentUser.id) {
+      return { success: false, error: "We couldn't find that hangout." };
+    }
+
+    if (target.status !== "active") {
+      return { success: false, error: "Only active hangouts can be edited." };
+    }
+
+    const nextData = {
+      location: data.location.trim(),
+      event_datetime: data.event_datetime,
+      meeting_point: data.meeting_point.trim(),
+      additional_info: data.additional_info.trim(),
+      max_participants: data.max_participants,
+      restrictions: data.restrictions,
+      is_anonymous: Boolean(data.is_anonymous)
+    };
+
+    if (!nextData.location) return { success: false, error: "Please add the hangout location." };
+    if (!nextData.meeting_point) return { success: false, error: "Please add a meeting point." };
+    if (!nextData.additional_info) return { success: false, error: "Please add a short description so people know what to expect." };
+    if (nextData.additional_info.length < MIN_HANGOUT_DESCRIPTION_LENGTH) {
+      return { success: false, error: `Please make the description at least ${MIN_HANGOUT_DESCRIPTION_LENGTH} characters long.` };
+    }
+    if (
+      nextData.max_participants !== null &&
+      (!Number.isInteger(nextData.max_participants) || nextData.max_participants < 1 || nextData.max_participants > 100)
+    ) {
+      return { success: false, error: "Buddy limit must be between 1 and 100." };
+    }
+    if (
+      containsProfanity(nextData.location) ||
+      containsProfanity(nextData.meeting_point) ||
+      containsProfanity(nextData.additional_info)
+    ) {
+      return { success: false, error: "Please keep the edited details respectful and student-friendly." };
+    }
+
+    if (target.event_datetime !== nextData.event_datetime) {
+      const editedTimeError = validateFutureHangoutDate(nextData.event_datetime, 60);
+      if (editedTimeError) {
+        return { success: false, error: "If you change the time, please keep it at least 1 hour in the future." };
+      }
+    }
+
+    const changeList = buildHangoutEditChanges(target, nextData);
+    if (changeList.length === 0) {
+      return { success: false, error: "No changes were detected." };
+    }
+
+    const updatedHangout: Hangout = {
+      ...target,
+      ...nextData,
+      updated_at: new Date().toISOString()
+    };
+
+    const nextHangouts = hangouts.map(h => (h.id === hangoutId ? updatedHangout : h));
+    const editHistoryComment = createHangoutSystemEditComment(updatedHangout, changeList);
+    const nextComments = [...comments, editHistoryComment];
+
+    const acceptedApplications = applications.filter(
+      application => application.hangout_id === hangoutId && application.status === "accepted"
+    );
+    const notificationText =
+      changeList.length === 1
+        ? `Little update: "${target.intention}" has a new ${changeList[0].label.toLowerCase()}.`
+        : `Little update: "${target.intention}" has refreshed details for everyone joining.`;
+
+    const updateNotifications: AppNotification[] = acceptedApplications.map(application => ({
+      id: "notif_" + Math.random().toString(36).substring(2, 11),
+      user_id: application.applicant_id,
+      type: "admin_message",
+      payload: {
+        hangout_id: hangoutId,
+        custom_text: `${notificationText} Open the hangout to see what changed.`
+      },
+      is_read: false,
+      created_at: new Date().toISOString()
+    }));
+
+    saveHangouts(nextHangouts);
+    saveComments(nextComments);
+    if (updateNotifications.length > 0) {
+      saveNotifications([...updateNotifications, ...notifications]);
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("xmum-hangout-edited", {
+        detail: {
+          intention: target.intention,
+          changeCount: changeList.length
+        }
+      })
+    );
+
+    showToast("Your hangout has been updated.", "success");
+    return { success: true };
+  };
+
+  const deleteHangout = (hangoutId: string) => {
+    if (!currentUser) return { success: false, error: "Please sign in to manage your hangouts." };
+
+    const target = hangouts.find(h => h.id === hangoutId);
+    if (!target || target.creator_id !== currentUser.id) {
+      return { success: false, error: "We couldn't find that hangout." };
+    }
+
+    if (target.status === "expired") {
+      return { success: false, error: "Expired hangouts can't be deleted." };
+    }
+
+    if (target.status === "cancelled") {
+      return { success: false, error: "This hangout has already been cancelled." };
+    }
+
+    const nextHangouts = hangouts.map(h =>
+      h.id === hangoutId
+        ? { ...h, status: "cancelled" as const, updated_at: new Date().toISOString() }
+        : h
+    );
+
+    const affectedApplications = applications.filter(
+      application =>
+        application.hangout_id === hangoutId &&
+        (application.status === "pending" || application.status === "accepted")
+    );
+
+    const cancellationNotifications: AppNotification[] = affectedApplications.map(application => ({
+      id: "notif_" + Math.random().toString(36).substring(2, 11),
+      user_id: application.applicant_id,
+      type: "admin_message",
+      payload: {
+        hangout_id: hangoutId,
+        custom_text: `Heads up: "${target.intention}" has been cancelled, so you don't need to keep this time free anymore.`
+      },
+      is_read: false,
+      created_at: new Date().toISOString()
+    }));
+
+    saveHangouts(nextHangouts);
+    if (cancellationNotifications.length > 0) {
+      saveNotifications([...cancellationNotifications, ...notifications]);
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("xmum-hangout-cancelled", {
+        detail: { intention: target.intention }
+      })
+    );
+
+    showToast("Your hangout has been cancelled.", "success");
     return { success: true };
   };
 
@@ -2038,6 +3040,100 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
+  const submitBugReport = async (data: { subject: string; description: string; sourcePage?: string }) => {
+    if (!currentUser) {
+      return { success: false, error: "Please sign in to submit a bug report." };
+    }
+
+    const subject = data.subject.trim().slice(0, 120);
+    const description = data.description.trim().slice(0, 2000);
+    const sourcePage = data.sourcePage?.trim().slice(0, 120) || "XMUM Hangouts";
+
+    if (!description || description.length < 10) {
+      return { success: false, error: "Please describe the bug in at least 10 characters." };
+    }
+
+    const primaryAdmin =
+      profiles.find(profile => profile.email.trim().toLowerCase() === ADMIN_EMAIL) ||
+      profiles.find(profile => profile.is_admin);
+
+    if (!primaryAdmin) {
+      return { success: false, error: "Admin account could not be found. Please try again shortly." };
+    }
+
+    const adminChat = getOrCreateChat(primaryAdmin.id, null);
+    const chatMessage = [
+      "[BUG REPORT]",
+      `Reporter: ${currentUser.name} (${currentUser.email})`,
+      `Page: ${sourcePage}`,
+      `Subject: ${subject || "General bug report"}`,
+      "",
+      description
+    ].join("\n");
+
+    const newMessage: Message = {
+      id: "msg_" + Math.random().toString(36).substring(2, 11),
+      chat_id: adminChat.id,
+      sender_id: currentUser.id,
+      content: chatMessage,
+      is_read: false,
+      created_at: new Date().toISOString()
+    };
+
+    saveMessages([...messages, newMessage]);
+
+    const adminNotifications: AppNotification[] = profiles
+      .filter(profile => profile.is_admin)
+      .map(admin => ({
+        id: "notif_" + Math.random().toString(36).substring(2, 11),
+        user_id: admin.id,
+        type: "new_report_admin",
+        payload: {
+          reporter_name: currentUser.name,
+          custom_text: `New bug report from ${currentUser.name}: ${subject || "General bug report"}`
+        },
+        is_read: false,
+        created_at: new Date().toISOString()
+      }));
+
+    saveNotifications([...adminNotifications, ...notifications]);
+
+    let warning: string | undefined;
+    try {
+      const res = await fetch("/api/bug-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reporter: {
+            id: currentUser.id,
+            name: currentUser.name,
+            email: currentUser.email
+          },
+          subject,
+          description,
+          sourcePage,
+          submittedAt: new Date().toISOString()
+        })
+      });
+
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        warning = payload.error || "The admin email could not be confirmed, but your report reached the in-app admin inbox.";
+      } else if (payload.warning) {
+        warning = payload.warning;
+      }
+    } catch (err) {
+      warning = "The admin email could not be confirmed, but your report reached the in-app admin inbox.";
+    }
+
+    showToast(
+      warning ? "Bug report saved for the admin account. Email delivery needs attention." : "Bug report sent to the admin team.",
+      warning ? "info" : "success"
+    );
+
+    return { success: true, warning };
+  };
+
   const submitAppeal = (reportId: string, description: string) => {
     if (!currentUser) return { success: false, error: "Not logged in" };
     if (!description.trim()) return { success: false, error: "Appeal description cannot be empty." };
@@ -2334,6 +3430,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     <AppContext.Provider
       value={{
         currentUser,
+        isAuthInitializing,
         profiles,
         hangouts,
         applications,
@@ -2348,6 +3445,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         
         signInSimulated,
         signInWithPassword,
+        signInWithMicrosoft,
         signOutSimulated,
         completeOnboarding,
         switchUser,
@@ -2355,8 +3453,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         updateProfile,
         setHideDetails,
+        deleteCurrentAccount,
         
         createHangout,
+        editHangout,
+        deleteHangout,
         toggleLike,
         addComment,
         
@@ -2370,6 +3471,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         toggleBlockUser,
         submitReport,
+        submitBugReport,
         submitAppeal,
         
         adminReviewReport,

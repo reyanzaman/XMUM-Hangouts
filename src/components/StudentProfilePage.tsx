@@ -7,7 +7,7 @@ import React, { useState } from "react";
 import { useApp } from "../context/AppContext";
 import { ProfileCard } from "./ProfileCard";
 import { AvatarPicker } from "./AvatarPicker";
-import { XMUM_PROGRAMS, COUNTRIES, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
+import { XMUM_PROGRAMS, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
 import { 
   User, 
   Settings, 
@@ -39,7 +39,8 @@ export const StudentProfilePage: React.FC = () => {
     onboardingStep,
     setOnboardingStep,
     setShowOnboarding,
-    signOutSimulated
+    signOutSimulated,
+    deleteCurrentAccount
   } = useApp();
 
   if (!currentUser) {
@@ -76,13 +77,19 @@ export const StudentProfilePage: React.FC = () => {
   const [profileType, setProfileType] = useState<"foundation" | "degree" | "postgraduate" | "Not Specified" | "">(currentUser.student_type || "");
   const [profileBio, setProfileBio] = useState(currentUser.about_me || "");
   const [profileAvatar, setProfileAvatar] = useState(currentUser.avatar_id || "panda");
-  const [profilePassword, setProfilePassword] = useState(currentUser.password || "");
+  const [profilePassword, setProfilePassword] = useState("");
   
   // Custom language draft input
   const [customLanguage, setCustomLanguage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isDemoSwitcherOpen, setIsDemoSwitcherOpen] = useState(false);
   const [showConfirmSignOut, setShowConfirmSignOut] = useState(false);
+  const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
+  const [deleteAccountConfirmationInput, setDeleteAccountConfirmationInput] = useState("");
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const hasExistingPassword = Boolean(currentUser.password_hash || currentUser.password);
+  const deleteAccountConfirmationMatches =
+    deleteAccountConfirmationInput.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
 
   // Toggle active PII Shield
   const handleTogglePii = () => {
@@ -142,8 +149,13 @@ export const StudentProfilePage: React.FC = () => {
       setIsSaving(false);
       return;
     }
-    if (!profilePassword.trim() || profilePassword.trim().length < 6) {
+    if (!hasExistingPassword && !profilePassword.trim()) {
       showToast("Security password is required for subsequent logins (min 6 characters).", "error");
+      setIsSaving(false);
+      return;
+    }
+    if (profilePassword.trim() && profilePassword.trim().length < 6) {
+      showToast("Security password must be at least 6 characters.", "error");
       setIsSaving(false);
       return;
     }
@@ -160,7 +172,7 @@ export const StudentProfilePage: React.FC = () => {
       student_type: (profileType as any) || "Not Specified",
       about_me: profileBio.trim(),
       avatar_id: profileAvatar,
-      password: profilePassword.trim(),
+      ...(profilePassword.trim() ? { password: profilePassword.trim() } : {}),
       is_profile_complete: true
     });
 
@@ -172,6 +184,20 @@ export const StudentProfilePage: React.FC = () => {
         showToast(error || "Could not save profile changes.", "error");
       }
     }, 450);
+  };
+
+  const handleDeleteAccount = async () => {
+    setIsDeletingAccount(true);
+    const result = await deleteCurrentAccount();
+    setIsDeletingAccount(false);
+
+    if (!result.success) {
+      showToast(result.error || "We couldn't delete your account right now.", "error");
+      return;
+    }
+
+    setDeleteAccountConfirmationInput("");
+    setShowDeleteAccountConfirm(false);
   };
 
   // Switch demo profiles
@@ -187,7 +213,7 @@ export const StudentProfilePage: React.FC = () => {
     profileType !== (currentUser.student_type || "") ||
     profileBio !== (currentUser.about_me || "") ||
     profileAvatar !== (currentUser.avatar_id || "panda") ||
-    profilePassword !== (currentUser.password || "") ||
+    profilePassword.trim().length > 0 ||
     JSON.stringify(profileLanguages.slice().sort()) !== JSON.stringify((currentUser.languages || []).slice().sort());
 
   return (
@@ -304,6 +330,64 @@ export const StudentProfilePage: React.FC = () => {
                 </>
               )}
             </button>
+          </div>
+
+          <div className="bg-white border border-rose-100 p-5 rounded-3xl shadow-sm space-y-4">
+            <div>
+              <h3 className="font-bold text-slate-850 text-sm">Permanent Account Deletion</h3>
+              <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                This removes your account, cancels any active hangouts you host, and keeps expired activity under a deleted-user label.
+              </p>
+            </div>
+
+            {showDeleteAccountConfirm ? (
+              <div className="space-y-3">
+                <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3 text-[11px] text-rose-800 leading-relaxed">
+                  This action is permanent. Type <span className="font-black">{currentUser.email}</span> to confirm account deletion. Your active hangouts will be cancelled and affected students will be notified.
+                </div>
+                <input
+                  type="text"
+                  value={deleteAccountConfirmationInput}
+                  onChange={(event) => setDeleteAccountConfirmationInput(event.target.value)}
+                  placeholder="Type your email to confirm"
+                  className="w-full px-3 py-2.5 rounded-xl border border-rose-200 focus:border-rose-400 focus:ring-2 focus:ring-rose-100 outline-none text-xs text-slate-700 bg-white"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDeleteAccount}
+                    disabled={isDeletingAccount || !deleteAccountConfirmationMatches}
+                    className="flex-1 bg-rose-600 hover:bg-rose-700 disabled:opacity-70 disabled:cursor-not-allowed text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                  >
+                    {isDeletingAccount ? "Deleting Account..." : "Delete Permanently"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteAccountConfirmationInput("");
+                      setShowDeleteAccountConfirm(false);
+                    }}
+                    disabled={isDeletingAccount}
+                    className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                  >
+                    Keep Account
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteAccountConfirmationInput("");
+                  setShowDeleteAccountConfirm(true);
+                }}
+                className="w-full bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Delete My Account Permanently
+              </button>
+            )}
           </div>
 
           {/* Simulated Account Switcher (Only visible to Admin) */}
@@ -442,8 +526,8 @@ export const StudentProfilePage: React.FC = () => {
                   type="password"
                   value={profilePassword}
                   onChange={e => setProfilePassword(e.target.value)}
-                  placeholder="Min 6 characters"
-                  required
+                  placeholder={hasExistingPassword ? "Leave blank to keep your current password" : "Min 6 characters"}
+                  required={!hasExistingPassword}
                   className="w-full bg-slate-50 border border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-1 focus:ring-rose-455 rounded-xl px-4 py-2 text-xs sm:text-sm text-gray-700 outline-none transition-all"
                 />
               </div>

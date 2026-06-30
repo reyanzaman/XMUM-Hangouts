@@ -1,0 +1,31 @@
+[
+  {
+    "id": "user_w15nng63o",
+    "email": "mcs2509008@xmu.edu.my",
+    "student_id": "mcs2509008",
+    "name": "Ashik",
+    "name_last_changed_at": "2026-06-29T19:44:17.888Z",
+    "country": "Malaysia",
+    "country_last_changed_at": null,
+    "languages": [
+      "English",
+      "Bengali",
+      "Hindi"
+    ],
+    "age": 26,
+    "program": "Computer Science and Technology",
+    "year_of_study": "Year 1",
+    "gender": "Male",
+    "student_type": "postgraduate",
+    "about_me": "Guess who created the app?",
+    "avatar_id": "capybara",
+    "is_profile_complete": true,
+    "hide_details": false,
+    "is_admin": true,
+    "is_blocked_globally": false,
+    "flag_status": "none",
+    "appeal_count": 0,
+    "birthdate": "2000-05-03",
+    "password_hash": "f393bc7b287ab2bccb2e6cf81db8917aaafe8c78f242124f9f75ebda6cc4290a"
+  }
+]

@@ -7,6 +7,7 @@ import React, { useState } from "react";
 import { Hangout, Profile, HangoutComment, HangoutApplication } from "../types";
 import { useApp } from "../context/AppContext";
 import { motion, AnimatePresence } from "motion/react";
+import { isHangoutEditHistoryComment, parseHangoutEditHistoryEntry } from "../lib/hangouts";
 import { AvatarSVG } from "./AvatarSVG";
 import { ProfileCard } from "./ProfileCard";
 import { ApplicantList } from "./ApplicantList";
@@ -33,7 +34,8 @@ import {
   Award,
   Sparkles,
   Clock,
-  ClipboardCheck
+  ClipboardCheck,
+  PencilLine
 } from "lucide-react";
 
 interface HangoutCardProps {
@@ -76,6 +78,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
   const [showComments, setShowComments] = useState(false);
   const [showApplicants, setShowApplicants] = useState(false);
   const [showApplicantsModal, setShowApplicantsModal] = useState(false);
+  const [showEditHistory, setShowEditHistory] = useState(false);
 
   // Comments form
   const [newCommentText, setNewCommentText] = useState("");
@@ -173,7 +176,12 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
   };
 
   const myLikes = likes.filter(l => l.hangout_id === hangout.id);
-  const myComments = comments.filter(c => c.hangout_id === hangout.id);
+  const hangoutComments = comments.filter(c => c.hangout_id === hangout.id);
+  const editHistoryEntries = hangoutComments
+    .map(comment => parseHangoutEditHistoryEntry(comment.content))
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  const myComments = hangoutComments.filter(c => !isHangoutEditHistoryComment(c.content));
   const isLikedByMe = currentUser ? likes.some(l => l.hangout_id === hangout.id && l.user_id === currentUser.id) : false;
 
   // Resolve applicants
@@ -286,6 +294,16 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
         </button>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          {editHistoryEntries.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowEditHistory(!showEditHistory)}
+              className="bg-amber-50 text-amber-700 text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1"
+            >
+              <PencilLine className="w-3 h-3" />
+              Edited
+            </button>
+          )}
           {isExpired && (
             <span className="bg-slate-150 text-slate-600 text-[10px] font-black px-2 py-0.5 rounded-full border border-slate-200 flex items-center gap-1 select-none">
               <Clock className="w-3 h-3 text-slate-500" /> Expired
@@ -303,6 +321,37 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
           )}
         </div>
       </div>
+
+      {showEditHistory && editHistoryEntries.length > 0 && (
+        <div className="bg-amber-50/70 border border-amber-100 rounded-2xl p-3 text-xs text-amber-950 space-y-3">
+          <div className="flex items-center gap-2 font-bold">
+            <PencilLine className="w-4 h-4 text-amber-700" />
+            Edit History
+          </div>
+          {editHistoryEntries.map((entry, index) => (
+            <div key={`${entry.at}-${index}`} className="bg-white/70 rounded-xl border border-amber-100 p-3 space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                <span className="font-semibold text-amber-900">{entry.summary}</span>
+                <span className="text-[10px] text-amber-700">
+                  {new Date(entry.at).toLocaleString([], {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit"
+                  })}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {entry.changes.map(change => (
+                  <div key={`${entry.at}-${change.field}`} className="text-[11px] text-slate-700">
+                    <span className="font-bold text-slate-800">{change.label}:</span> {change.before} {"->"} {change.after}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* 2. Safety advisories for flagged creators */}
       {creator.flag_status === "potentially_unsafe" && (

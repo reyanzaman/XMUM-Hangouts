@@ -3,20 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
+import React, { useState } from "react";
 import { useApp } from "../context/AppContext";
-import { ShieldCheck, Lock, Heart, MessageSquare, Coffee, Clipboard, HelpCircle } from "lucide-react";
+import { ShieldCheck, Lock, Heart, MessageSquare, Coffee, Clipboard, HelpCircle, Bug, Send } from "lucide-react";
 import { Logo } from "./Logo";
 
 const tngQrImage = new URL("../assets/images/touch_n_go_qr_solid_1781590124889.jpg", import.meta.url).href;
 
 interface StaticPageProps {
-  pageName: "terms" | "privacy" | "safety" | "about" | "donation";
+  pageName: "terms" | "privacy" | "safety" | "about" | "donation" | "bug-report";
   onNavigateToChats?: () => void;
+  onNavigateToBugReport?: () => void;
 }
 
-export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToChats }) => {
-  const { currentUser, profiles, getOrCreateChat, sendChatMessage, showToast } = useApp();
+export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToChats, onNavigateToBugReport }) => {
+  const { currentUser, profiles, getOrCreateChat, sendChatMessage, submitBugReport, showToast } = useApp();
+  const [bugSubject, setBugSubject] = useState("");
+  const [bugDescription, setBugDescription] = useState("");
+  const [isSubmittingBug, setIsSubmittingBug] = useState(false);
 
   const handleContactAdmin = (type: "general" | "feature" | "bug") => {
     if (!currentUser) {
@@ -55,6 +59,30 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
     } catch (err: any) {
       showToast(err.message, "error");
     }
+  };
+
+  const handleBugReportSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmittingBug(true);
+
+    const result = await submitBugReport({
+      subject: bugSubject,
+      description: bugDescription,
+      sourcePage: "Footer bug report page"
+    });
+
+    setIsSubmittingBug(false);
+
+    if (result.success) {
+      setBugSubject("");
+      setBugDescription("");
+      if (result.warning) {
+        showToast(result.warning, "info");
+      }
+      return;
+    }
+
+    showToast(result.error || "Bug report could not be sent.", "error");
   };
 
   const getQRPlaceHolderSVG = () => {
@@ -355,7 +383,13 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
                   {/* Report Bug */}
                   <button
                     id="contact-admin-bug-btn"
-                    onClick={() => handleContactAdmin("bug")}
+                    onClick={() => {
+                      if (onNavigateToBugReport) {
+                        onNavigateToBugReport();
+                        return;
+                      }
+                      handleContactAdmin("bug");
+                    }}
                     className="p-4 bg-amber-50/50 hover:bg-amber-100/40 border border-amber-100/50 rounded-2xl text-left cursor-pointer transition-all duration-200 hover:scale-[1.01] active:translate-y-0.5"
                   >
                     <span className="inline-block p-1 bg-white rounded-lg mb-2 shadow-sm">🐛</span>
@@ -370,6 +404,82 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
               <p className="text-xs text-gray-400 italic">Sign in to directly access advanced support portals.</p>
             )}
           </div>
+        </div>
+      );
+
+    case "bug-report":
+      return (
+        <div id="bug-report-page" className="bg-white border border-gray-100 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6 font-sans max-w-2xl mx-auto">
+          <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
+            <Bug className="w-5 h-5 text-rose-500" />
+            <h2 className="text-lg font-black text-gray-900 tracking-tight">Report a Bug</h2>
+          </div>
+
+          <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
+            Tell us what broke, where it happened, and what you expected instead. Your report will be sent to the admin account inside XMUM Hangouts and emailed to <strong>mcs2509008@xmu.edu.my</strong>.
+          </p>
+
+          {!currentUser ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+              Please sign in before sending a bug report so the admin team can follow up with you.
+            </div>
+          ) : (
+            <form onSubmit={handleBugReportSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor="bug-report-subject" className="block text-xs font-bold text-gray-700">
+                  Short summary
+                </label>
+                <input
+                  id="bug-report-subject"
+                  type="text"
+                  maxLength={120}
+                  value={bugSubject}
+                  onChange={e => setBugSubject(e.target.value)}
+                  placeholder="Example: Create hangout date picker allows past times"
+                  className="w-full bg-slate-50 border border-gray-200 focus:border-rose-400 focus:bg-white focus:ring-1 focus:ring-rose-100 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-slate-800 outline-none transition-all"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="bug-report-description" className="block text-xs font-bold text-gray-700">
+                  What happened? <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  id="bug-report-description"
+                  value={bugDescription}
+                  onChange={e => setBugDescription(e.target.value)}
+                  maxLength={2000}
+                  required
+                  placeholder="Describe the steps, the issue, and what you expected to happen."
+                  className="w-full min-h-36 bg-slate-50 border border-gray-200 focus:border-rose-400 focus:bg-white focus:ring-1 focus:ring-rose-100 rounded-2xl px-4 py-3 text-xs sm:text-sm text-slate-800 outline-none transition-all resize-y"
+                />
+                <p className="text-[10px] text-gray-400">
+                  Include the page, action, and any error text if you saw one.
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+                <button
+                  id="bug-report-submit-btn"
+                  type="submit"
+                  disabled={isSubmittingBug}
+                  className="inline-flex items-center justify-center gap-2 bg-rose-500 hover:bg-rose-600 disabled:bg-slate-300 text-white font-bold px-5 py-3 rounded-2xl text-xs sm:text-sm transition-colors cursor-pointer"
+                >
+                  <Send className="w-4 h-4" />
+                  {isSubmittingBug ? "Sending..." : "Send Bug Report"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onNavigateToChats?.()}
+                  className="inline-flex items-center justify-center gap-2 text-xs font-bold text-slate-600 border border-slate-200 hover:border-rose-200 hover:text-rose-600 px-4 py-3 rounded-2xl transition-colors cursor-pointer"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  Open admin chat
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       );
 

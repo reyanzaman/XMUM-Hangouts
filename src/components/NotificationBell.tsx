@@ -15,7 +15,9 @@ export const NotificationBell: React.FC = () => {
 
   // Filter relevant notifications for current active user
   const { currentUser } = useApp();
-  const myNotifications = notifications.filter(n => n.user_id === currentUser?.id);
+  const myNotifications = notifications
+    .filter(n => n.user_id === currentUser?.id)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const unreadCount = myNotifications.filter(n => !n.is_read).length;
 
   useEffect(() => {
@@ -72,7 +74,7 @@ export const NotificationBell: React.FC = () => {
                   onClick={markNotificationsAsRead}
                   className="text-xs text-rose-500 hover:text-rose-600 flex items-center gap-1 font-medium"
                 >
-                  <Check className="w-3.h-3" /> Mark all read
+                  <Check className="w-3 h-3" /> Mark all read
                 </button>
               )}
             </div>

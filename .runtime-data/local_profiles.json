@@ -1,0 +1,27 @@
+[
+  {
+    "id": "deleted_user",
+    "email": "deleted.user@system.local",
+    "student_id": "deleted.user",
+    "name": "Deleted User",
+    "name_last_changed_at": null,
+    "country": "Malaysia",
+    "country_last_changed_at": null,
+    "languages": [],
+    "age": 0,
+    "birthdate": null,
+    "program": "Not Specified",
+    "year_of_study": "Not Specified",
+    "gender": "Prefer not to say",
+    "student_type": "Not Specified",
+    "about_me": "This account has been removed.",
+    "avatar_id": "owl",
+    "is_profile_complete": true,
+    "hide_details": true,
+    "is_admin": false,
+    "is_blocked_globally": false,
+    "flag_status": "none",
+    "appeal_count": 0,
+    "is_demo_profile": true
+  }
+]

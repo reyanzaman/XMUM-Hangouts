@@ -8,8 +8,16 @@ import { AppProvider, useApp } from "./context/AppContext";
 import { supabase } from "./lib/supabase";
 import { Profile } from "./types";
 import { motion, AnimatePresence } from "motion/react";
+import {
+  combineDateAndTimeToIso,
+  formatDateInputValue,
+  formatTimeInputValue,
+  getRoundedMinimumTime,
+  MIN_HANGOUT_DESCRIPTION_LENGTH,
+  validateFutureHangoutDate
+} from "./lib/hangouts";
+import { isDemoProfile, normalizeProfileEmail, pickCanonicalProfile } from "./lib/profiles";
 import { NotificationBell } from "./components/NotificationBell";
-import { SafetyBanner } from "./components/SafetyBanner";
 import { HangoutCard } from "./components/HangoutCard";
 import { ChatWindow } from "./components/ChatWindow";
 import { ProfileSetupForm } from "./components/ProfileSetupForm";
@@ -29,6 +37,7 @@ import {
   Clock,
   Heart,
   MessageSquare,
+  Bug,
   BadgeAlert,
   ShieldAlert,
   ShieldCheck,
@@ -47,12 +56,15 @@ import {
   X,
   Flag,
   User,
-  Compass
+  Compass,
+  PencilLine,
+  Trash2
 } from "lucide-react";
 
 const AppContent: React.FC = () => {
   const {
     currentUser,
+    isAuthInitializing,
     profiles,
     hangouts,
     applications,
@@ -62,10 +74,12 @@ const AppContent: React.FC = () => {
     messages,
     signInSimulated,
     signInWithPassword,
+    signInWithMicrosoft,
     signOutSimulated,
     switchUser,
-    createMockUser,
     createHangout,
+    editHangout,
+    deleteHangout,
     submitReport,
     submitAppeal,
     adminReviewReport,
@@ -73,7 +87,6 @@ const AppContent: React.FC = () => {
     isEligibleForHangout,
     triggerCronJobs,
     showOnboarding,
-    setShowOnboarding,
     onboardingStep,
     setOnboardingStep,
     toast,
@@ -81,18 +94,30 @@ const AppContent: React.FC = () => {
     showToast,
     blocks,
     retractApplication,
-    updateProfile,
     completeOnboarding,
     toggleBlockUser,
     viewedProfile,
     setViewedProfile
   } = useApp();
 
+  const hasPendingAuthRedirect = typeof window !== "undefined" && (() => {
+    try {
+      return sessionStorage.getItem("xmum_auth_redirect_pending") === "true";
+    } catch {
+      return false;
+    }
+  })();
+
+  const isReturningFromOAuth = typeof window !== "undefined" && (
+    window.location.search.includes("code=") ||
+    window.location.hash.includes("access_token=") ||
+    window.location.hash.includes("refresh_token=")
+  );
+
   // Navigation states
-  const [activeTab, setActiveTab] = useState<"feed" | "create" | "profile" | "my-plans" | "chats" | "admin" | "terms" | "privacy" | "safety" | "about" | "donation">("feed");
+  const [activeTab, setActiveTab] = useState<"feed" | "create" | "profile" | "my-plans" | "chats" | "admin" | "terms" | "privacy" | "safety" | "about" | "donation" | "bug-report">("feed");
   const [portalSubTab, setPortalSubTab] = useState<"hosted" | "requested">("hosted");
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const [showBackupLink, setShowBackupLink] = useState(false);
 
   // Filter and search feed states
   const [searchLocation, setSearchLocation] = useState("");
@@ -112,13 +137,33 @@ const AppContent: React.FC = () => {
   // Create hangout input state
   const [createIntention, setCreateIntention] = useState("");
   const [createLocation, setCreateLocation] = useState("");
-  const [createDateTime, setCreateDateTime] = useState("");
+  const [createDate, setCreateDate] = useState("");
+  const [createTime, setCreateTime] = useState("");
   const [createMeetingPoint, setCreateMeetingPoint] = useState("");
   const [createAdditional, setCreateAdditional] = useState("");
   const [createMaxParticipants, setCreateMaxParticipants] = useState<number | "">("");
   const [createIsAnonymous, setCreateIsAnonymous] = useState(false);
   const [showAdvancedCreate, setShowAdvancedCreate] = useState(false);
   const [createRestrictions, setCreateRestrictions] = useState({
+    countries: [] as string[],
+    languages: [] as string[],
+    programs: [] as string[],
+    years: [] as string[],
+    student_types: [] as string[],
+    age_min: null as number | null,
+    age_max: null as number | null,
+    genders: [] as string[]
+  });
+  const [showHostedPastPlans, setShowHostedPastPlans] = useState(false);
+  const [editingHangoutId, setEditingHangoutId] = useState<string | null>(null);
+  const [editLocation, setEditLocation] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editTime, setEditTime] = useState("");
+  const [editMeetingPoint, setEditMeetingPoint] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editMaxParticipants, setEditMaxParticipants] = useState<number | "">("");
+  const [editIsAnonymous, setEditIsAnonymous] = useState(false);
+  const [editRestrictions, setEditRestrictions] = useState({
     countries: [] as string[],
     languages: [] as string[],
     programs: [] as string[],
@@ -148,7 +193,18 @@ const AppContent: React.FC = () => {
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [loginMode, setLoginMode] = useState<"otp" | "password">("otp");
   const [loginPassword, setLoginPassword] = useState("");
+  const [isMicrosoftLoading, setIsMicrosoftLoading] = useState(false);
   const [showNavLogoutConfirm, setShowNavLogoutConfirm] = useState(false);
+
+  const minimumCreateDateTime = getRoundedMinimumTime();
+  const minimumCreateDate = formatDateInputValue(minimumCreateDateTime);
+  const minimumCreateTime = createDate === minimumCreateDate ? formatTimeInputValue(minimumCreateDateTime) : undefined;
+  const combinedCreateDateTime = createDate && createTime ? combineDateAndTimeToIso(createDate, createTime) : null;
+  const createDateTimeError = combinedCreateDateTime ? validateFutureHangoutDate(combinedCreateDateTime) : null;
+  const editingHangout = editingHangoutId ? hangouts.find(h => h.id === editingHangoutId) || null : null;
+  const minimumEditDateTime = new Date(Date.now() + 60 * 60 * 1000);
+  const minimumEditDate = formatDateInputValue(minimumEditDateTime);
+  const minimumEditTime = editDate === minimumEditDate ? formatTimeInputValue(minimumEditDateTime) : undefined;
 
   const handleVerifyOtp = async (codeToVerify?: string) => {
     const code = (codeToVerify || otpCode).trim();
@@ -192,10 +248,14 @@ const AppContent: React.FC = () => {
       showToast("Verification successful! Establishing session...", "info");
 
       if (resData.is_fallback) {
+        localStorage.setItem("xmum_local_auth_token", resData.local_auth_token || "");
         localStorage.setItem("xmum_current_user_id", resData.profile.id);
         await switchUser(resData.profile.id, resData.profile);
         showToast("Success! Authenticated via validated fallback session.", "success");
       } else {
+        if (resData.local_auth_token) {
+          localStorage.setItem("xmum_local_auth_token", resData.local_auth_token);
+        }
         let isSessionSet = false;
         try {
           const { error: sessionError } = await supabase.auth.setSession({
@@ -211,19 +271,36 @@ const AppContent: React.FC = () => {
           console.warn("Supabase auth.setSession threw exception:", setErr);
         }
 
-        // Resiliently resolve profile info right now to prevent UI lag on onAuthStateChange hook
-        const email = resData.session?.user?.email || loginEmail.trim().toLowerCase();
         let profile: Profile | null = null;
-        try {
-          const { data } = await supabase.from("xmum_profiles").select("*").eq("email", email.toLowerCase()).maybeSingle();
-          profile = data;
-        } catch (dbErr) {
-          console.warn("Supabase profile fetch on verification failed (offline/paused database):", dbErr);
+        const email = normalizeProfileEmail(resData.session?.user?.email || loginEmail);
+
+        if (resData.profile) {
+          profile = pickCanonicalProfile([resData.profile as Profile], {
+            email,
+            authUserId: resData.session?.user?.id
+          });
         }
 
         if (!profile) {
-          // Check local profiles state fallback
-          profile = profiles.find(p => p.email.toLowerCase() === email.toLowerCase()) || null;
+          try {
+            const { data, error } = await supabase.from("xmum_profiles").select("*").eq("email", email);
+            if (error) {
+              console.warn("Supabase profile fetch on verification returned an error:", error.message);
+            }
+            profile = pickCanonicalProfile((data || []) as Profile[], {
+              email,
+              authUserId: resData.session?.user?.id
+            });
+          } catch (dbErr) {
+            console.warn("Supabase profile fetch on verification failed (offline/paused database):", dbErr);
+          }
+        }
+
+        if (!profile) {
+          profile = pickCanonicalProfile(profiles, {
+            email,
+            authUserId: resData.session?.user?.id
+          });
         }
 
         if (!profile) {
@@ -273,6 +350,18 @@ const AppContent: React.FC = () => {
     }
   };
 
+  const handleMicrosoftLogin = async () => {
+    setIsMicrosoftLoading(true);
+    const result = await signInWithMicrosoft(loginEmail);
+    if (!result.success) {
+      showToast(result.error || "Microsoft sign-in could not be started.", "error");
+      setIsMicrosoftLoading(false);
+      return;
+    }
+
+    setIsMicrosoftLoading(false);
+  };
+
   // Redirect to unauthenticated homepage / feed if user logs out or is null
   useEffect(() => {
     if (!currentUser) {
@@ -308,10 +397,11 @@ const AppContent: React.FC = () => {
       setMagicLinkSent(true);
       showToast(res.message || "Security verification code sent! Check your student inbox.", "success");
     } else {
-      if (res.resend_expired) {
-        showToast(res.error || "Email delivery failed.", "error");
-        // Automatically switch existing users to password mode!
-        setLoginMode("password");
+      if (res.otp_limit_reached || res.resend_expired) {
+        showToast(res.error || "OTP sign-in is unavailable right now.", "error");
+        if (res.allows_password_login) {
+          setLoginMode("password");
+        }
       } else {
         showToast(res.error || "Authentication failed. Try again.", "error");
       }
@@ -322,13 +412,24 @@ const AppContent: React.FC = () => {
     e.preventDefault();
     if (!createIntention.trim()) return showToast("Please write down what you want to do.", "error");
     if (!createLocation.trim()) return showToast("Where are you planning to do it?", "error");
-    if (!createDateTime) return showToast("Please pick a coordinate date and time.", "error");
+    if (!createDate) return showToast("Please choose the date for your hangout.", "error");
+    if (!createTime) return showToast("Please choose the time for your hangout.", "error");
     if (!createMeetingPoint.trim()) return showToast("Please declare a safe meeting point.", "error");
+    if (!createAdditional.trim()) return showToast("Please add a short description so people know what to expect.", "error");
+    if (createAdditional.trim().length < MIN_HANGOUT_DESCRIPTION_LENGTH) {
+      return showToast(`Please make the description at least ${MIN_HANGOUT_DESCRIPTION_LENGTH} characters long.`, "error");
+    }
+
+    const eventDateTime = combineDateAndTimeToIso(createDate, createTime);
+    if (!eventDateTime) return showToast("Please choose a valid date and time.", "error");
+
+    const dateTimeError = validateFutureHangoutDate(eventDateTime);
+    if (dateTimeError) return showToast(dateTimeError, "error");
 
     const { success, error } = createHangout({
       intention: createIntention.trim(),
       location: createLocation.trim(),
-      event_datetime: createDateTime,
+      event_datetime: eventDateTime,
       meeting_point: createMeetingPoint.trim(),
       additional_info: createAdditional.trim(),
       max_participants: createMaxParticipants === "" ? null : createMaxParticipants,
@@ -340,7 +441,8 @@ const AppContent: React.FC = () => {
       // Reset
       setCreateIntention("");
       setCreateLocation("");
-      setCreateDateTime("");
+      setCreateDate("");
+      setCreateTime("");
       setCreateMeetingPoint("");
       setCreateAdditional("");
       setCreateMaxParticipants("");
@@ -359,6 +461,94 @@ const AppContent: React.FC = () => {
       setActiveTab("feed");
     } else if (error) {
       showToast(error, "error");
+    }
+  };
+
+  const openEditHangout = (hangoutId: string) => {
+    const target = hangouts.find(h => h.id === hangoutId);
+    if (!target) return;
+
+    const eventDate = new Date(target.event_datetime);
+    setEditingHangoutId(target.id);
+    setEditLocation(target.location);
+    setEditDate(formatDateInputValue(eventDate));
+    setEditTime(formatTimeInputValue(eventDate));
+    setEditMeetingPoint(target.meeting_point);
+    setEditDescription(target.additional_info);
+    setEditMaxParticipants(target.max_participants ?? "");
+    setEditIsAnonymous(Boolean(target.is_anonymous));
+    setEditRestrictions({
+      countries: [...target.restrictions.countries],
+      languages: [...target.restrictions.languages],
+      programs: [...target.restrictions.programs],
+      years: [...target.restrictions.years],
+      student_types: [...target.restrictions.student_types],
+      age_min: target.restrictions.age_min,
+      age_max: target.restrictions.age_max,
+      genders: [...target.restrictions.genders]
+    });
+  };
+
+  const closeEditHangout = () => {
+    setEditingHangoutId(null);
+    setEditLocation("");
+    setEditDate("");
+    setEditTime("");
+    setEditMeetingPoint("");
+    setEditDescription("");
+    setEditMaxParticipants("");
+    setEditIsAnonymous(false);
+    setEditRestrictions({
+      countries: [],
+      languages: [],
+      programs: [],
+      years: [],
+      student_types: [],
+      age_min: null,
+      age_max: null,
+      genders: []
+    });
+  };
+
+  const handleEditHangoutSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingHangout) return;
+    if (!editLocation.trim()) return showToast("Please add the updated location.", "error");
+    if (!editDate || !editTime) return showToast("Please choose the updated date and time.", "error");
+    if (!editMeetingPoint.trim()) return showToast("Please add the updated meeting point.", "error");
+    if (!editDescription.trim()) return showToast("Please add a short description so people know what to expect.", "error");
+    if (editDescription.trim().length < MIN_HANGOUT_DESCRIPTION_LENGTH) {
+      return showToast(`Please make the description at least ${MIN_HANGOUT_DESCRIPTION_LENGTH} characters long.`, "error");
+    }
+
+    const eventDateTime = combineDateAndTimeToIso(editDate, editTime);
+    if (!eventDateTime) return showToast("Please choose a valid date and time.", "error");
+
+    const result = editHangout(editingHangout.id, {
+      location: editLocation.trim(),
+      event_datetime: eventDateTime,
+      meeting_point: editMeetingPoint.trim(),
+      additional_info: editDescription.trim(),
+      max_participants: editMaxParticipants === "" ? null : editMaxParticipants,
+      restrictions: editRestrictions,
+      is_anonymous: editIsAnonymous
+    });
+
+    if (!result.success) {
+      showToast(result.error || "We couldn't save those changes.", "error");
+      return;
+    }
+
+    closeEditHangout();
+  };
+
+  const handleDeleteHangout = (hangoutId: string) => {
+    const confirmed = window.confirm("Cancel this hangout? Students who applied will be notified.");
+    if (!confirmed) return;
+
+    const result = deleteHangout(hangoutId);
+    if (!result.success) {
+      showToast(result.error || "We couldn't cancel this hangout.", "error");
     }
   };
 
@@ -393,6 +583,9 @@ const AppContent: React.FC = () => {
   const myCreatedHangouts = currentUser 
     ? hangouts.filter(h => h.creator_id === currentUser.id) 
     : [];
+  const visibleHostedHangouts = myCreatedHangouts.filter(h =>
+    showHostedPastPlans ? true : h.status === "active"
+  );
 
   // Active unread messages indicator count
   const myUnreadMsgsCount = currentUser ? messages.filter(m => {
@@ -497,8 +690,6 @@ const AppContent: React.FC = () => {
 
         return (
           <div className="space-y-6">
-            <SafetyBanner />
-
             {/* Injected Login/Register CTA banner if guest/unauthenticated */}
             {!currentUser && (
               <div className="bg-gradient-to-r from-rose-500 to-amber-500 text-white p-6 sm:p-8 rounded-3xl shadow-md flex flex-col sm:flex-row items-center justify-between gap-6 animate-in fade-in duration-300">
@@ -518,7 +709,7 @@ const AppContent: React.FC = () => {
                   onClick={() => setShowLoginModal(true)}
                   className="bg-white hover:bg-rose-50 text-rose-600 font-extrabold px-6 py-3 rounded-2xl text-xs sm:text-sm shadow-sm transition-all shrink-0 hover:scale-[1.02] active:scale-95 cursor-pointer"
                 >
-                  Register Now
+                  Create Hangout
                 </button>
               </div>
             )}
@@ -742,7 +933,7 @@ const AppContent: React.FC = () => {
                   <Sparkles className="w-12 h-12 text-rose-300 mx-auto mb-2 stroke-1" />
                   <p className="text-gray-500 text-sm font-semibold">No active hangout plans found...</p>
                   <p className="text-xs text-gray-450 mt-1 max-w-sm mx-auto">
-                    Try broadening your search query or post your own safe plan! Be the first to start the trend.
+                    Try broadening your search query or post your own exciting plan! Be the first to start the trend.
                   </p>
                 </div>
               ) : (
@@ -823,7 +1014,7 @@ const AppContent: React.FC = () => {
                     type="text"
                     value={createIntention}
                     onChange={e => setCreateIntention(e.target.value)}
-                    placeholder="study group for chemistry, grab bubble tea, play basketball..."
+                    placeholder="do a group study for philosophy..."
                     required
                     maxLength={130}
                     className="w-full bg-transparent px-1 py-2 text-xs sm:text-sm text-slate-800 outline-none font-sans"
@@ -846,41 +1037,96 @@ const AppContent: React.FC = () => {
                   type="text"
                   value={createLocation}
                   onChange={e => setCreateLocation(e.target.value)}
-                  placeholder="e.g. Library, Block B Courtyard..."
+                  placeholder="e.g. Library, LY3 1st Floor..."
                   required
                   className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans"
                 />
               </div>
 
               {/* Date & Time */}
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <label className="block text-xs font-bold text-slate-700">
                   When? <span className="text-rose-500">*</span>
                 </label>
-                <input
-                  id="create-datetime"
-                  type="datetime-local"
-                  value={createDateTime}
-                  onChange={e => setCreateDateTime(e.target.value)}
-                  required
-                  className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans cursor-pointer"
-                />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label htmlFor="create-date" className="block text-[11px] font-semibold text-slate-500">
+                      Date
+                    </label>
+                    <input
+                      id="create-date"
+                      type="date"
+                      value={createDate}
+                      min={minimumCreateDate}
+                      onChange={e => setCreateDate(e.target.value)}
+                      required
+                      className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans cursor-pointer"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor="create-time" className="block text-[11px] font-semibold text-slate-500">
+                      Time
+                    </label>
+                    <input
+                      id="create-time"
+                      type="time"
+                      value={createTime}
+                      min={minimumCreateTime}
+                      onChange={e => setCreateTime(e.target.value)}
+                      required
+                      className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans cursor-pointer"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  Choose a future date and time. Same-day hangouts must be at least 30 minutes ahead.
+                </p>
+                {combinedCreateDateTime && (
+                  <p className={`text-[10px] font-medium ${createDateTimeError ? "text-rose-500" : "text-emerald-600"}`}>
+                    {createDateTimeError
+                      ? createDateTimeError
+                      : `Scheduled for ${new Date(combinedCreateDateTime).toLocaleString([], {
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit"
+                        })}`}
+                  </p>
+                )}
               </div>
 
               {/* Safe meeting spot (locked coordinates) */}
               <div className="space-y-1">
                 <label className="block text-xs font-bold text-slate-800">
-                  🔒 Meet-up Details (Approved buddies only) <span className="text-rose-500">*</span>
+                  Meeting Point (Approved buddies only) <span className="text-rose-500">*</span>
                 </label>
                 <input
                   id="create-meeting-point"
                   type="text"
                   value={createMeetingPoint}
                   onChange={e => setCreateMeetingPoint(e.target.value)}
-                  placeholder="e.g. Desk 5, next to glass lift..."
+                  placeholder="e.g. B1 in front of Sapid..."
                   required
                   className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans"
                 />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-slate-700">
+                  Description <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  id="create-additional"
+                  value={createAdditional}
+                  onChange={e => setCreateAdditional(e.target.value)}
+                  placeholder="Share what the plan is like, what to bring, or anything your group should know."
+                  className="w-full text-xs sm:text-sm p-3 bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl outline-none h-24 transition-all font-sans resize-none"
+                  required
+                />
+                <p className={`text-[10px] ${createAdditional.trim().length >= MIN_HANGOUT_DESCRIPTION_LENGTH ? "text-emerald-600" : "text-slate-400"}`}>
+                  Minimum {MIN_HANGOUT_DESCRIPTION_LENGTH} characters. This helps people know what to expect.
+                </p>
               </div>
 
               {/* Anonymous Checkbox */}
@@ -905,7 +1151,7 @@ const AppContent: React.FC = () => {
                   onClick={() => setShowAdvancedCreate(!showAdvancedCreate)}
                   className="flex items-center gap-1 text-xs text-rose-500 font-extrabold hover:text-rose-600 transition-all cursor-pointer"
                 >
-                  {showAdvancedCreate ? "Show fewer options ▲" : "Preferences, size limits & prep info ▼"}
+                  {showAdvancedCreate ? "Show fewer options ▲" : "Preferences, size limits & joining criteria ▼"}
                 </button>
 
                 {showAdvancedCreate && (
@@ -925,20 +1171,6 @@ const AppContent: React.FC = () => {
                         value={createMaxParticipants}
                         onChange={e => setCreateMaxParticipants(e.target.value === "" ? "" : parseInt(e.target.value))}
                         className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans"
-                      />
-                    </div>
-
-                    {/* About details / extra description */}
-                    <div className="space-y-1">
-                      <label className="block text-xs font-bold text-slate-700">
-                        About / Checklist (Optional)
-                      </label>
-                      <textarea
-                        id="create-additional"
-                        value={createAdditional}
-                        onChange={e => setCreateAdditional(e.target.value)}
-                        placeholder="What to bring or expect..."
-                        className="w-full text-xs sm:text-sm p-3 bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl outline-none h-20 transition-all font-sans resize-none"
                       />
                     </div>
 
@@ -1006,7 +1238,7 @@ const AppContent: React.FC = () => {
                       : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
-                  📢 Hosted ({myCreatedHangouts.length})
+                  Hosted ({myCreatedHangouts.length})
                 </button>
                 <button
                   type="button"
@@ -1018,7 +1250,7 @@ const AppContent: React.FC = () => {
                       : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
-                  🌟 Requests ({myApplications.length})
+                  Requests ({myApplications.length})
                 </button>
               </div>
             </div>
@@ -1036,19 +1268,34 @@ const AppContent: React.FC = () => {
                 >
                   <div className="flex items-center justify-between px-1">
                     <h2 className="text-xs sm:text-sm font-black text-slate-700 tracking-tight uppercase">
-                      📢 Posted Hangout Plans ({myCreatedHangouts.length})
+                      Posted Hangout Plans ({visibleHostedHangouts.length})
                     </h2>
+                    <button
+                      type="button"
+                      onClick={() => setShowHostedPastPlans(!showHostedPastPlans)}
+                      className={`text-[11px] font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                        showHostedPastPlans
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      {showHostedPastPlans ? "Hide Past Plans" : "Show Past Plans"}
+                    </button>
                   </div>
 
-                  {myCreatedHangouts.length === 0 ? (
+                  {visibleHostedHangouts.length === 0 ? (
                     <div className="bg-white border border-gray-100 rounded-3xl p-8 text-center shadow-sm flex flex-col items-center justify-center space-y-3">
                       <div className="p-3 bg-rose-50 text-rose-500 rounded-full w-12 h-12 flex items-center justify-center font-bold text-lg">
                         📢
                       </div>
                       <div>
-                        <h3 className="font-bold text-sm text-slate-700">No posted hangouts</h3>
+                        <h3 className="font-bold text-sm text-slate-700">
+                          {myCreatedHangouts.length === 0 ? "No posted hangouts" : "No active hangouts in this view"}
+                        </h3>
                         <p className="text-gray-400 text-xs mt-1 max-w-sm mx-auto">
-                          You haven't posted any hangout plans yet. Click 'Create Hangout' in the top navbar to announce a meetup!
+                          {myCreatedHangouts.length === 0
+                            ? "You haven't posted any hangout plans yet. Click 'Create Hangout' in the top navbar to announce a meetup."
+                            : "Turn on past plans if you want to review expired or cancelled hangouts."}
                         </p>
                       </div>
                       <button
@@ -1060,13 +1307,13 @@ const AppContent: React.FC = () => {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-5">
-                      {myCreatedHangouts.map(h => (
+                      {visibleHostedHangouts.map(h => (
                         <div key={h.id} className="bg-white border border-slate-100 rounded-3xl p-5 sm:p-6 space-y-4 shadow-sm hover:shadow-md/5 transition-all">
                           <div className="flex items-center justify-between">
                             <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
                               h.status === "active" ? "bg-teal-50 text-teal-700 border border-teal-100" : "bg-gray-100 text-gray-500"
                             }`}>
-                              ● {h.status}
+                              {h.status}
                             </span>
                             <span className="text-[10px] text-gray-400 font-mono">Posted on {new Date(h.created_at).toLocaleDateString()}</span>
                           </div>
@@ -1086,9 +1333,48 @@ const AppContent: React.FC = () => {
                               <span className="font-bold text-slate-700 mt-0.5 block truncate">{h.location}</span>
                             </div>
                             <div>
-                              <span className="text-[10px] text-slate-400 font-semibold block">🔒 Meeting Point (Secret)</span>
+                              <span className="text-[10px] text-slate-400 font-semibold block">Meeting Point</span>
                               <span className="font-bold text-slate-700 mt-0.5 block truncate">{h.meeting_point}</span>
                             </div>
+                          </div>
+
+                          <div className="bg-slate-50/60 rounded-2xl p-3 text-xs text-slate-600 space-y-2">
+                            <p>
+                              <span className="font-semibold text-slate-500">When:</span>{" "}
+                              {new Date(h.event_datetime).toLocaleString([], {
+                                weekday: "short",
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit"
+                              })}
+                            </p>
+                            <p>
+                              <span className="font-semibold text-slate-500">Description:</span> {h.additional_info}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+                            {h.status === "active" && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditHangout(h.id)}
+                                  className="inline-flex items-center gap-1.5 bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                                >
+                                  <PencilLine className="w-3.5 h-3.5" />
+                                  Edit Hangout
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteHangout(h.id)}
+                                  className="inline-flex items-center gap-1.5 bg-rose-50 text-rose-700 border border-rose-100 hover:bg-rose-100 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Cancel Hangout
+                                </button>
+                              </>
+                            )}
                           </div>
 
                           {/* Interactive ApplicantList */}
@@ -1111,7 +1397,7 @@ const AppContent: React.FC = () => {
                 >
                   <div className="flex items-center justify-between px-1">
                     <h2 className="text-xs sm:text-sm font-black text-slate-700 tracking-tight uppercase">
-                      🌟 Match Requests Sent ({myApplications.length})
+                      Match Requests Sent ({myApplications.length})
                     </h2>
                   </div>
 
@@ -1149,7 +1435,7 @@ const AppContent: React.FC = () => {
                                   app.status === "pending" ? "bg-amber-50 text-amber-600 border-amber-100" :
                                   app.status === "accepted" ? "bg-teal-50 text-teal-700 border-teal-100" : "bg-rose-50 text-rose-700 border-rose-100"
                                 }`}>
-                                  ● {app.status}
+                                  {app.status}
                                 </span>
                                 
                                 {app.is_anonymous && (
@@ -1293,9 +1579,24 @@ const AppContent: React.FC = () => {
 
       case "admin":
         // Admin stats calculations
-        const totalActive = hangouts.filter(h => h.status === "active").length;
-        const totalExpired = hangouts.filter(h => h.status === "expired").length;
-        const totalUsersCount = profiles.length;
+        const allRealProfilesByEmail = new Map<string, Profile>(
+          profiles
+            .filter(profile => !isDemoProfile(profile))
+            .map(profile => [normalizeProfileEmail(profile.email), profile])
+        );
+        const testProfilesByEmail = new Map<string, Profile>(
+          profiles
+            .filter(profile => isDemoProfile(profile))
+            .map(profile => [normalizeProfileEmail(profile.email), profile])
+        );
+        const countableProfiles = Array.from(allRealProfilesByEmail.values());
+        const statsProfiles = countableProfiles.filter(profile => !profile.is_admin);
+        const statsProfileIds = new Set(statsProfiles.map(profile => profile.id));
+        const testUsersCount = testProfilesByEmail.size;
+        const totalActive = hangouts.filter(h => h.status === "active" && statsProfileIds.has(h.creator_id)).length;
+        const totalExpired = hangouts.filter(h => h.status === "expired" && statsProfileIds.has(h.creator_id)).length;
+        const totalUsersCount = countableProfiles.length;
+        const statsUsersCount = statsProfiles.length;
         const pendingReportsList = reports.filter(r => r.status === "pending");
         const pendingAppealsList = appeals.filter(a => a.status === "pending");
 
@@ -1307,11 +1608,11 @@ const AppContent: React.FC = () => {
                 <h2 className="text-lg font-bold text-purple-950">Admin Center</h2>
               </div>
               <p className="text-xs text-purple-800 leading-relaxed max-w-2xl">
-                Dear XMUM administrator, manage reports, evaluate appeals, and monitor safe statistics directly. Safety is our single highest objective metric.
+                Dear XMUM administrator, manage reports, evaluate appeals, and monitor safe statistics directly.
               </p>
 
               {/* Admin metrics counters */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-3">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 pt-3">
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
                   <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Active Posts</span>
                   <strong className="text-xl text-gray-800 block mt-1">{totalActive}</strong>
@@ -1323,6 +1624,10 @@ const AppContent: React.FC = () => {
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
                   <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Total profiles</span>
                   <strong className="text-xl text-gray-800 block mt-1">{totalUsersCount}</strong>
+                </div>
+                <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
+                  <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Test users</span>
+                  <strong className="text-xl text-gray-800 block mt-1">{testUsersCount}</strong>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center bg-rose-50/20">
                   <span className="text-xs text-rose-600 block uppercase tracking-wider font-semibold">Pending Reports</span>
@@ -1344,8 +1649,8 @@ const AppContent: React.FC = () => {
                 
                 {/* Demographics Card */}
                 {(() => {
-                  const maleCount = profiles.filter(p => (p.gender || "").toLowerCase() === "male").length;
-                  const femaleCount = profiles.filter(p => (p.gender || "").toLowerCase() === "female").length;
+                  const maleCount = statsProfiles.filter(p => (p.gender || "").toLowerCase() === "male").length;
+                  const femaleCount = statsProfiles.filter(p => (p.gender || "").toLowerCase() === "female").length;
                   return (
                     <div className="bg-slate-50 p-4.5 rounded-2xl border border-gray-100/60 flex flex-col justify-between">
                       <div>
@@ -1354,19 +1659,19 @@ const AppContent: React.FC = () => {
                           <div>
                             <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
                               <span>Male Students</span>
-                              <span>{maleCount} ({totalUsersCount > 0 ? Math.round((maleCount/totalUsersCount)*100) : 0}%)</span>
+                              <span>{maleCount} ({statsUsersCount > 0 ? Math.round((maleCount/statsUsersCount)*100) : 0}%)</span>
                             </div>
                             <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                              <div className="bg-blue-500 h-full" style={{ width: `${totalUsersCount > 0 ? (maleCount/totalUsersCount)*100 : 0}%` }} />
+                              <div className="bg-blue-500 h-full" style={{ width: `${statsUsersCount > 0 ? (maleCount/statsUsersCount)*100 : 0}%` }} />
                             </div>
                           </div>
                           <div>
                             <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
                               <span>Female Students</span>
-                              <span>{femaleCount} ({totalUsersCount > 0 ? Math.round((femaleCount/totalUsersCount)*100) : 0}%)</span>
+                              <span>{femaleCount} ({statsUsersCount > 0 ? Math.round((femaleCount/statsUsersCount)*100) : 0}%)</span>
                             </div>
                             <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                              <div className="bg-pink-500 h-full" style={{ width: `${totalUsersCount > 0 ? (femaleCount/totalUsersCount)*100 : 0}%` }} />
+                              <div className="bg-pink-500 h-full" style={{ width: `${statsUsersCount > 0 ? (femaleCount/statsUsersCount)*100 : 0}%` }} />
                             </div>
                           </div>
                         </div>
@@ -1380,7 +1685,9 @@ const AppContent: React.FC = () => {
 
                 {/* Plan categories shares */}
                 {(() => {
-                  const categoriesCount = hangouts.reduce((acc, h) => {
+                  const categoriesCount = hangouts
+                    .filter(h => statsProfileIds.has(h.creator_id))
+                    .reduce((acc, h) => {
                     const cat = h.category || "Study";
                     acc[cat] = (acc[cat] || 0) + 1;
                     return acc;
@@ -1414,8 +1721,8 @@ const AppContent: React.FC = () => {
 
                 {/* Coordination Success rate card */}
                 {(() => {
-                  const totalApps = applications.length;
-                  const acceptedApps = applications.filter(a => a.status === "accepted").length;
+                  const totalApps = applications.filter(a => statsProfileIds.has(a.applicant_id)).length;
+                  const acceptedApps = applications.filter(a => statsProfileIds.has(a.applicant_id) && a.status === "accepted").length;
                   const acceptanceRate = totalApps > 0 ? Math.round((acceptedApps / totalApps) * 100) : 100;
 
                   return (
@@ -1556,10 +1863,12 @@ const AppContent: React.FC = () => {
       case "safety":
       case "about":
       case "donation":
+      case "bug-report":
         return (
           <StaticPages
             pageName={activeTab}
             onNavigateToChats={() => setActiveTab("chats")}
+            onNavigateToBugReport={() => setActiveTab("bug-report")}
           />
         );
 
@@ -1567,6 +1876,22 @@ const AppContent: React.FC = () => {
         return null;
     }
   };
+
+  if (isAuthInitializing && (isReturningFromOAuth || hasPendingAuthRedirect)) {
+    return (
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.16),_transparent_35%),linear-gradient(180deg,_#fffaf6_0%,_#fffdf9_48%,_#fff7ed_100%)] text-slate-900 flex items-center justify-center px-6">
+        <div className="w-full max-w-md rounded-[2rem] border border-amber-100/80 bg-white/90 shadow-[0_30px_80px_-40px_rgba(217,119,6,0.45)] backdrop-blur px-8 py-10 text-center">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-amber-600">
+            <Sparkles className="w-7 h-7 animate-pulse" />
+          </div>
+          <h1 className="text-xl font-black tracking-tight text-slate-900">Signing you in...</h1>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500">
+            We&apos;re restoring your XMUM Hangouts session and matching your student profile.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-850 font-sans flex flex-col justify-between">
@@ -1821,6 +2146,13 @@ const AppContent: React.FC = () => {
           <span className="text-slate-200 hidden sm:inline">•</span>
           <button onClick={() => { setActiveTab("about"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer">About</button>
           <span className="text-slate-200 hidden sm:inline">•</span>
+          <button
+            onClick={() => { setActiveTab("bug-report"); window.scrollTo(0, 0); }}
+            className="hover:text-rose-500 transition-colors cursor-pointer inline-flex items-center justify-center gap-1"
+          >
+            <Bug className="w-3 h-3 shrink-0" /> Report Bug
+          </button>
+          <span className="text-slate-200 hidden sm:inline">•</span>
           <button onClick={() => { setActiveTab("donation"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer flex items-center justify-center gap-1 text-rose-500"><Heart className="w-3 h-3 fill-rose-500 text-rose-500 shrink-0" /> Donation</button>
         </div>
         <p className="max-w-xl sm:max-w-none mx-auto text-[9px] sm:text-[10px] leading-relaxed text-slate-450 font-mono px-4">
@@ -1995,6 +2327,28 @@ const AppContent: React.FC = () => {
                         loginMode === "password" ? "Sign In with Password" : "Send Verification OTP"
                       )}
                     </button>
+
+                    <div className="pt-1 space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="h-px flex-1 bg-slate-200" />
+                        <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">or</span>
+                        <div className="h-px flex-1 bg-slate-200" />
+                      </div>
+
+                      <button
+                        id="login-microsoft-btn"
+                        type="button"
+                        onClick={handleMicrosoftLogin}
+                        disabled={isMicrosoftLoading}
+                        className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 px-6 rounded-2xl text-xs sm:text-sm transition-colors duration-150 shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                      >
+                        {isMicrosoftLoading ? "Redirecting to Microsoft..." : "Continue with Microsoft"}
+                      </button>
+
+                      <p className="text-[11px] text-slate-500 leading-relaxed text-center">
+                        Use Microsoft sign-in for normal login or first-time registration. If the OTP daily email limit is reached, existing users can use Password or Microsoft, while new users must use Microsoft.
+                      </p>
+                    </div>
                   </form>
                 </div>
               )}
@@ -2103,6 +2457,153 @@ const AppContent: React.FC = () => {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {editingHangout && (
+          <motion.div
+            id="edit-hangout-modal-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          >
+            <motion.div
+              id="edit-hangout-modal"
+              initial={{ scale: 0.96, opacity: 0, y: 12 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.96, opacity: 0, y: 12 }}
+              transition={{ type: "spring", duration: 0.28 }}
+              className="bg-white rounded-3xl p-6 max-w-2xl w-full shadow-2xl border border-gray-100 relative space-y-4 max-h-[90vh] overflow-y-auto"
+            >
+              <button
+                type="button"
+                onClick={closeEditHangout}
+                className="absolute top-4 right-4 text-gray-400 hover:text-gray-700 p-1 rounded-lg"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="space-y-1">
+                <h3 className="text-gray-950 font-black text-lg">Edit Hangout</h3>
+                <p className="text-xs text-slate-500">
+                  The title stays fixed so applicants always recognize the plan they joined.
+                </p>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100">
+                <p className="text-[10px] uppercase tracking-wide text-slate-400 font-bold">Title</p>
+                <p className="text-sm font-extrabold text-slate-800">I want to {editingHangout.intention}</p>
+              </div>
+
+              <form onSubmit={handleEditHangoutSubmit} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">Location</label>
+                  <input
+                    type="text"
+                    value={editLocation}
+                    onChange={e => setEditLocation(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-800 outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-200"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">Date</label>
+                    <input
+                      type="date"
+                      value={editDate}
+                      min={minimumEditDate}
+                      onChange={e => setEditDate(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-800 outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-200"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">Time</label>
+                    <input
+                      type="time"
+                      value={editTime}
+                      min={minimumEditTime}
+                      onChange={e => setEditTime(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-800 outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-200"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  If you change the time, it must stay at least 1 hour in the future.
+                </p>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">Meeting Point</label>
+                  <input
+                    type="text"
+                    value={editMeetingPoint}
+                    onChange={e => setEditMeetingPoint(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-800 outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-200"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">Description</label>
+                  <textarea
+                    value={editDescription}
+                    onChange={e => setEditDescription(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-3 text-sm text-slate-800 outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-200 h-24 resize-none"
+                  />
+                  <p className={`text-[10px] ${editDescription.trim().length >= MIN_HANGOUT_DESCRIPTION_LENGTH ? "text-emerald-600" : "text-slate-400"}`}>
+                    Minimum {MIN_HANGOUT_DESCRIPTION_LENGTH} characters.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">Buddy Limit</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      placeholder="No limit"
+                      value={editMaxParticipants}
+                      onChange={e => setEditMaxParticipants(e.target.value === "" ? "" : parseInt(e.target.value))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-800 outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-200"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 bg-slate-50 border border-slate-100 rounded-2xl px-3.5 py-2.5 text-xs font-medium text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={editIsAnonymous}
+                      onChange={e => setEditIsAnonymous(e.target.checked)}
+                      className="accent-rose-500"
+                    />
+                    Post anonymously
+                  </label>
+                </div>
+
+                <div className="space-y-2 border-t border-slate-100 pt-4">
+                  <label className="block text-xs font-bold text-slate-800">Joining Criteria</label>
+                  <RestrictionBuilder restrictions={editRestrictions} onChange={setEditRestrictions} />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="submit"
+                    className="flex-1 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2.5 rounded-xl text-sm transition-colors"
+                  >
+                    Save Changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeEditHangout}
+                    className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-xl text-sm transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Onboarding Dialog Slider Carousel */}
       <AnimatePresence>
         {showOnboarding && (
@@ -2177,7 +2678,7 @@ const AppContent: React.FC = () => {
               </div>
               
               <button
-                onClick={() => setShowOnboarding(false)}
+                onClick={() => completeOnboarding()}
                 className="text-[10px] font-bold text-gray-400 block mx-auto hover:text-gray-650 transition-colors duration-200 h-8"
               >
                 Skip guide
@@ -2306,7 +2807,7 @@ const AppContent: React.FC = () => {
       </AnimatePresence>
 
       {/* Floating Animated Mascot Cat Companion */}
-      <CampusCompanion />
+      <CampusCompanion activeTab={activeTab} />
     </div>
   );
 };
@@ -2318,3 +2819,4 @@ export default function App() {
     </AppProvider>
   );
 }
+

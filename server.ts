@@ -5,6 +5,8 @@ import dotenv from "dotenv";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
+import { hashPassword, matchesStoredPassword } from "./src/lib/security";
+import { collapseProfilesByEmail, normalizeProfileEmail, pickCanonicalProfile } from "./src/lib/profiles";
 
 // Load environment variables
 dotenv.config();
@@ -13,68 +15,214 @@ dotenv.config();
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://bssljvoorzotsiskhpcl.supabase.co";
 const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_bcss09rrbiJbwHx03f5A1g_QViwGFFI";
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const supabaseAdmin = supabaseServiceRoleKey
+  ? createClient(supabaseUrl, supabaseServiceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    })
+  : null;
 
 const PORT = 3000;
+const ADMIN_EMAIL = "mcs2509008@xmu.edu.my";
+const RUNTIME_DATA_DIR = path.join(process.cwd(), ".runtime-data");
+const SYSTEM_DELETED_USER_ID = "deleted_user";
+const SYSTEM_DELETED_USER_EMAIL = "deleted.user@system.local";
 
-// Local Profiles JSON backup file path to ensure absolute database permanence even when Supabase is paused/offline
-const LOCAL_PROFILES_FILE = path.join(process.cwd(), "local_profiles.json");
+function ensureRuntimeDataDir() {
+  if (!fs.existsSync(RUNTIME_DATA_DIR)) {
+    fs.mkdirSync(RUNTIME_DATA_DIR, { recursive: true });
+  }
+}
 
-function getLocalProfiles(): any[] {
+function getRuntimeDataFile(fileName: string) {
+  return path.join(RUNTIME_DATA_DIR, fileName);
+}
+
+function getLegacyDataFile(fileName: string) {
+  return path.join(process.cwd(), fileName);
+}
+
+function getLocalAuthSecret() {
+  const secret =
+    process.env.JWT_SECRET ||
+    (process.env.NODE_ENV !== "production" ? "xmum-local-dev-secret-change-me" : "");
+
+  if (!secret) {
+    throw new Error("JWT_SECRET must be set in production.");
+  }
+
+  return secret;
+}
+
+function readDataFile(fileName: string): any[] {
+  const runtimeFile = getRuntimeDataFile(fileName);
+  const legacyFile = getLegacyDataFile(fileName);
+  const candidate = fs.existsSync(runtimeFile) ? runtimeFile : legacyFile;
+
   try {
-    if (fs.existsSync(LOCAL_PROFILES_FILE)) {
-      const data = fs.readFileSync(LOCAL_PROFILES_FILE, "utf-8");
+    if (fs.existsSync(candidate)) {
+      const data = fs.readFileSync(candidate, "utf-8");
       return JSON.parse(data);
     }
   } catch (err) {
-    console.error("Failed to read local profiles:", err);
+    console.error(`Failed to read local data from ${candidate}:`, err);
   }
+
   return [];
+}
+
+function getLocalProfiles(): any[] {
+  return readDataFile("local_profiles.json");
 }
 
 function saveLocalProfiles(profiles: any[]) {
   try {
-    fs.writeFileSync(LOCAL_PROFILES_FILE, JSON.stringify(profiles, null, 2), "utf-8");
+    ensureRuntimeDataDir();
+    fs.writeFileSync(getRuntimeDataFile("local_profiles.json"), JSON.stringify(profiles, null, 2), "utf-8");
   } catch (err) {
     console.error("Failed to write local profiles:", err);
   }
 }
 
 // Backup file pathways for other tables
-const LOCAL_HANGOUTS_FILE = path.join(process.cwd(), "local_hangouts.json");
-const LOCAL_COMMENTS_FILE = path.join(process.cwd(), "local_comments.json");
-const LOCAL_APPLICATIONS_FILE = path.join(process.cwd(), "local_applications.json");
-const LOCAL_LIKES_FILE = path.join(process.cwd(), "local_likes.json");
-const LOCAL_CHATS_FILE = path.join(process.cwd(), "local_chats.json");
-const LOCAL_MESSAGES_FILE = path.join(process.cwd(), "local_messages.json");
-const LOCAL_REPORTS_FILE = path.join(process.cwd(), "local_reports.json");
-const LOCAL_APPEALS_FILE = path.join(process.cwd(), "local_appeals.json");
-const LOCAL_BLOCKS_FILE = path.join(process.cwd(), "local_blocks.json");
-const LOCAL_NOTIFICATIONS_FILE = path.join(process.cwd(), "local_notifications.json");
+const LOCAL_HANGOUTS_FILE = "local_hangouts.json";
+const LOCAL_COMMENTS_FILE = "local_comments.json";
+const LOCAL_APPLICATIONS_FILE = "local_applications.json";
+const LOCAL_LIKES_FILE = "local_likes.json";
+const LOCAL_CHATS_FILE = "local_chats.json";
+const LOCAL_MESSAGES_FILE = "local_messages.json";
+const LOCAL_REPORTS_FILE = "local_reports.json";
+const LOCAL_APPEALS_FILE = "local_appeals.json";
+const LOCAL_BLOCKS_FILE = "local_blocks.json";
+const LOCAL_NOTIFICATIONS_FILE = "local_notifications.json";
 
 function getLocalData(filePath: string): any[] {
-  try {
-    if (fs.existsSync(filePath)) {
-      const data = fs.readFileSync(filePath, "utf-8");
-      return JSON.parse(data);
-    }
-  } catch (err) {
-    console.error(`Failed to read local data from ${filePath}:`, err);
-  }
-  return [];
+  return readDataFile(filePath);
 }
 
 function saveLocalData(filePath: string, data: any[]) {
   try {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+    ensureRuntimeDataDir();
+    fs.writeFileSync(getRuntimeDataFile(filePath), JSON.stringify(data, null, 2), "utf-8");
   } catch (err) {
     console.error(`Failed to write local data to ${filePath}:`, err);
   }
 }
 
+function mergeById<T extends { id: string }>(primary: T[], secondary: T[]): T[] {
+  const map = new Map<string, T>();
+  for (const item of secondary || []) {
+    if (item?.id) map.set(item.id, item);
+  }
+  for (const item of primary || []) {
+    if (item?.id) map.set(item.id, item);
+  }
+  return Array.from(map.values());
+}
+
+function buildDeletedUserProfile() {
+  return {
+    id: SYSTEM_DELETED_USER_ID,
+    email: SYSTEM_DELETED_USER_EMAIL,
+    student_id: "deleted.user",
+    name: "Deleted User",
+    name_last_changed_at: null,
+    country: "Malaysia",
+    country_last_changed_at: null,
+    languages: [],
+    age: 0,
+    birthdate: null,
+    program: "Not Specified",
+    year_of_study: "Not Specified",
+    gender: "Prefer not to say",
+    student_type: "Not Specified",
+    about_me: "This account has been removed.",
+    avatar_id: "owl",
+    is_profile_complete: true,
+    hide_details: true,
+    is_admin: false,
+    is_blocked_globally: false,
+    flag_status: "none",
+    appeal_count: 0,
+    is_demo_profile: true
+  };
+}
+
+function sanitizeProfileForDatabase(profile: any) {
+  return {
+    id: profile.id,
+    email: profile.email,
+    student_id: profile.student_id,
+    name: profile.name,
+    name_last_changed_at: profile.name_last_changed_at ?? null,
+    country: profile.country,
+    country_last_changed_at: profile.country_last_changed_at ?? null,
+    languages: Array.isArray(profile.languages) ? profile.languages : [],
+    age: profile.age,
+    program: profile.program,
+    year_of_study: profile.year_of_study,
+    gender: profile.gender,
+    student_type: profile.student_type,
+    about_me: profile.about_me,
+    avatar_id: profile.avatar_id,
+    is_profile_complete: Boolean(profile.is_profile_complete),
+    hide_details: Boolean(profile.hide_details),
+    is_admin: Boolean(profile.is_admin),
+    is_blocked_globally: Boolean(profile.is_blocked_globally),
+    flag_status: profile.flag_status,
+    appeal_count: profile.appeal_count ?? 0
+  };
+}
+
+async function deleteRowsByIds(table: string, ids: string[]) {
+  if (!supabaseAdmin || ids.length === 0) return;
+
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  const chunkSize = 100;
+  for (let index = 0; index < uniqueIds.length; index += chunkSize) {
+    const chunk = uniqueIds.slice(index, index + chunkSize);
+    const { error } = await supabaseAdmin.from(table).delete().in("id", chunk);
+    if (error) {
+      throw error;
+    }
+  }
+}
+
+async function upsertToSupabase(table: string, rows: any[]) {
+  if (!supabaseAdmin) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY is required for server-side sync.");
+  }
+  if (rows.length === 0) return;
+
+  const { error } = await supabaseAdmin.from(table).upsert(rows);
+  if (error) {
+    throw error;
+  }
+}
+
 function findLocalProfileByEmail(email: string): any | null {
-  const formatted = email.trim().toLowerCase();
+  const formatted = normalizeProfileEmail(email);
   const list = getLocalProfiles();
-  return list.find((p: any) => p.email && p.email.toLowerCase() === formatted) || null;
+  return pickCanonicalProfile(list as any[], { email: formatted }) || null;
+}
+
+async function resolveBestProfileByEmail(email: string): Promise<any | null> {
+  const formattedEmail = normalizeProfileEmail(email);
+  const candidates: any[] = [];
+
+  try {
+    const { data, error } = await supabase.from("xmum_profiles").select("*").eq("email", formattedEmail);
+    if (error) {
+      console.warn("Supabase profile lookup returned an error:", error.message);
+    }
+    candidates.push(...(data || []));
+  } catch (dbErr) {
+    console.warn("Supabase profile lookup failed, continuing with local fallback:", dbErr);
+  }
+
+  candidates.push(...getLocalProfiles().filter((profile: any) => normalizeProfileEmail(profile.email || "") === formattedEmail));
+
+  return pickCanonicalProfile(candidates as any[], { email: formattedEmail }) || null;
 }
 
 function upsertLocalProfiles(profilesToUpsert: any[]) {
@@ -91,6 +239,49 @@ function upsertLocalProfiles(profilesToUpsert: any[]) {
     }
   }
   saveLocalProfiles(updated);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function generateLocalAuthToken(profile: { id: string; email: string }) {
+  const payload = {
+    profileId: profile.id,
+    email: normalizeProfileEmail(profile.email),
+    exp: Date.now() + 1000 * 60 * 15
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = crypto.createHmac("sha256", getLocalAuthSecret()).update(encodedPayload).digest("base64url");
+  return `${encodedPayload}.${signature}`;
+}
+
+function verifyLocalAuthToken(token: string | undefined | null) {
+  if (!token || !token.includes(".")) return null;
+
+  const [encodedPayload, providedSignature] = token.split(".");
+  const expectedSignature = crypto.createHmac("sha256", getLocalAuthSecret()).update(encodedPayload).digest("base64url");
+  if (providedSignature !== expectedSignature) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    if (!payload?.profileId || !payload?.email || !payload?.exp || payload.exp < Date.now()) {
+      return null;
+    }
+    return {
+      profileId: String(payload.profileId),
+      email: normalizeProfileEmail(String(payload.email))
+    };
+  } catch {
+    return null;
+  }
 }
 
 // OTP Storage in-memory
@@ -111,6 +302,7 @@ const otpRequestTracker = new Map<string, number[]>();
 
 async function startServer() {
   const app = express();
+  const isProduction = process.env.NODE_ENV === "production";
 
   // Middleware to parse json requests
   app.use(express.json());
@@ -130,7 +322,7 @@ async function startServer() {
         return res.status(400).json({ error: "Student email is required." });
       }
 
-      const formattedEmail = email.trim().toLowerCase();
+      const formattedEmail = normalizeProfileEmail(email);
 
       // Server-side validation of email domain restriction
       if (!formattedEmail.endsWith("@xmu.edu.my")) {
@@ -142,8 +334,7 @@ async function startServer() {
       // Check if user is already registered (profile exists)
       let isRegistered = false;
       try {
-        const { data: dbProfile } = await supabase.from("xmum_profiles").select("*").eq("email", formattedEmail).maybeSingle();
-        isRegistered = !!dbProfile;
+        isRegistered = Boolean(await resolveBestProfileByEmail(formattedEmail));
       } catch (dbErr) {
         console.warn("Backend Supabase fetch registered check errored (Supabase offline/paused). Falling back to local check.");
       }
@@ -165,19 +356,24 @@ async function startServer() {
       const windowStart = now - 15 * 60 * 1000;
       const recentRequests = requestHistory.filter(ts => ts > windowStart);
 
-      if (recentRequests.length >= 3) {
+      if (isProduction && recentRequests.length >= 3) {
         return res.status(429).json({
-          error: "Security limit reached: You can request at most 3 verification codes every 15 minutes. Please try again later or log in using your password.",
-          rate_limited: true
+          error: "Security limit reached: You can request at most 3 verification codes every 15 minutes. Please try again later, continue with Microsoft sign-in, or use your password if you already set one.",
+          rate_limited: true,
+          requires_microsoft: true,
+          allows_password_login: true
         });
       }
 
       // Basic cooling throttling (45 seconds between consecutive request button clicks)
       const lastRequested = rateLimitStore.get(formattedEmail);
-      if (lastRequested && (now - lastRequested < 45000)) {
+      if (isProduction && lastRequested && (now - lastRequested < 45000)) {
         const waitTime = Math.ceil((45000 - (now - lastRequested)) / 1000);
         return res.status(429).json({
-          error: `Please wait ${waitTime} seconds before requesting another verification code.`
+          error: `Please wait ${waitTime} seconds before requesting another verification code, or continue with Microsoft sign-in if you need immediate access.`,
+          rate_limited: true,
+          requires_microsoft: true,
+          allows_password_login: true
         });
       }
 
@@ -253,7 +449,22 @@ async function startServer() {
       `;
 
       // Resend API delivery integration
-      const resendApiKey = process.env.RESEND_API_KEY || "re_VcsQcAdo_PAtwkaHwsHqFZe6MBaEUit3e";
+      const resendApiKey = process.env.RESEND_API_KEY;
+      if (!resendApiKey) {
+        if (isProduction) {
+          return res.status(500).json({
+            error: "Email service is not configured. Please set RESEND_API_KEY."
+          });
+        }
+
+        console.log(`[DEV-OTP] RESEND_API_KEY not set. Use OTP ${otp} for ${formattedEmail}`);
+        return res.status(200).json({
+          success: true,
+          message: "Local development mode: verification code generated. Check the server terminal for the OTP.",
+          dev_mode: true,
+          dev_otp_preview: otp
+        });
+      }
       
       const resendResponse = await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -275,13 +486,21 @@ async function startServer() {
 
         if (!isRegistered) {
           return res.status(400).json({
-            error: "Email registration service quota has been reached for today. Please try registering again tomorrow.",
-            resend_expired: true
+            error: "OTP daily email limit has been reached. New registrations must continue with Microsoft sign-in today.",
+            resend_expired: true,
+            otp_limit_reached: true,
+            requires_microsoft: true,
+            allows_password_login: false,
+            is_registered: false
           });
         } else {
           return res.status(429).json({
-            error: "Email verification service quota reached. Please sign in using your account password instead.",
-            resend_expired: true
+            error: "OTP daily email limit has been reached. Please sign in with Microsoft or use your password instead.",
+            resend_expired: true,
+            otp_limit_reached: true,
+            requires_microsoft: true,
+            allows_password_login: true,
+            is_registered: true
           });
         }
       }
@@ -307,21 +526,10 @@ async function startServer() {
         return res.status(400).json({ error: "Email address and password are required parameters." });
       }
 
-      const formattedEmail = email.trim().toLowerCase();
+      const formattedEmail = normalizeProfileEmail(email);
 
       // Retrieve existing profile
-      let profile = null;
-      try {
-        const { data } = await supabase.from("xmum_profiles").select("*").eq("email", formattedEmail).maybeSingle();
-        profile = data;
-      } catch (dbErr) {
-        console.warn("Backend Supabase profile load failed on password login (database offline/paused):", dbErr);
-      }
-
-      // Check local files backup cache
-      if (!profile) {
-        profile = findLocalProfileByEmail(formattedEmail);
-      }
+      let profile = await resolveBestProfileByEmail(formattedEmail);
 
       if (!profile) {
         return res.status(404).json({ error: "No registered profile found with this email. Registrations require a verified verification code first." });
@@ -330,12 +538,24 @@ async function startServer() {
       // Sync local cache
       upsertLocalProfiles([profile]);
 
-      if (!profile.password) {
+      if (!profile.password_hash && !profile.password) {
         return res.status(400).json({ error: "No password has been configured for this account. Please log in with a verification code to set your password." });
       }
 
-      if (profile.password !== password) {
+      if (!matchesStoredPassword(formattedEmail, password, profile)) {
         return res.status(401).json({ error: "Incorrect password. Please try again." });
+      }
+
+      if (!profile.password_hash) {
+        profile.password_hash = hashPassword(formattedEmail, password);
+        delete profile.password;
+
+        try {
+          upsertLocalProfiles([profile]);
+          await supabase.from("xmum_profiles").upsert([profile]);
+        } catch (migrationErr) {
+          console.warn("Password hash migration failed during login:", migrationErr);
+        }
       }
 
       if (profile.is_blocked_globally) {
@@ -365,6 +585,7 @@ async function startServer() {
           message: "Logged in successfully (Resilient fallback profile session)!",
           is_fallback: true,
           profile,
+          local_auth_token: generateLocalAuthToken(profile),
           session: {
             access_token: "resilient_fallback_session_token",
             refresh_token: "resilient_fallback_session_token",
@@ -382,6 +603,7 @@ async function startServer() {
         message: "Logged in successfully!",
         is_fallback: false,
         profile,
+        local_auth_token: generateLocalAuthToken(profile),
         session: {
           access_token: sessionData.session.access_token,
           refresh_token: sessionData.session.refresh_token,
@@ -398,7 +620,14 @@ async function startServer() {
 
   // Helper calculation to generate a secure, non-guessable deterministic password on the server
   function getDeterministicPassword(email: string): string {
-    const secretSalt = process.env.JWT_SECRET || "XMUM_HANGOUTS_SUPER_SECRET_SALT_2026_PRODUCTION_HARDENED";
+    const secretSalt =
+      process.env.JWT_SECRET ||
+      (process.env.NODE_ENV !== "production" ? "xmum-local-dev-secret-change-me" : "");
+
+    if (!secretSalt) {
+      throw new Error("JWT_SECRET must be set in production.");
+    }
+
     return crypto.createHmac("sha256", secretSalt).update(email).digest("hex");
   }
 
@@ -410,7 +639,7 @@ async function startServer() {
         return res.status(400).json({ error: "Email address and 6-digit verification code are required parameters." });
       }
 
-      const formattedEmail = email.trim().toLowerCase();
+      const formattedEmail = normalizeProfileEmail(email);
       const codeStr = otp.trim();
 
       const entry = otpStore.get(formattedEmail);
@@ -497,18 +726,7 @@ async function startServer() {
         console.warn("Supabase active session payload could not be compiled directly. Triggering custom resilient local-session fallback:", sessionErr?.message || sessionErr);
         
         // Search if profile already exists in the profile table
-        let profileErrorFallback: any = null;
-        try {
-          const { data } = await supabase.from("xmum_profiles").select("*").eq("email", formattedEmail).maybeSingle();
-          profileErrorFallback = data;
-        } catch (dbErr: any) {
-          console.warn("Supabase direct profile search failed on verify-otp active session error fallback:", dbErr);
-        }
-
-        if (!profileErrorFallback) {
-          // Fallback to local file backup copy
-          profileErrorFallback = findLocalProfileByEmail(formattedEmail);
-        }
+        let profileErrorFallback: any = await resolveBestProfileByEmail(formattedEmail);
 
         if (!profileErrorFallback) {
           const student_id = formattedEmail.split("@")[0];
@@ -553,6 +771,7 @@ async function startServer() {
           message: "Identity verified! (Validated fallback session)",
           is_fallback: true,
           profile: profileErrorFallback,
+          local_auth_token: generateLocalAuthToken(profileErrorFallback),
           session: {
             access_token: "resilient_fallback_session_token",
             refresh_token: "resilient_fallback_session_token",
@@ -565,11 +784,49 @@ async function startServer() {
         });
       }
 
+      let profile = await resolveBestProfileByEmail(formattedEmail);
+      if (!profile) {
+        const student_id = formattedEmail.split("@")[0];
+        profile = {
+          id: sessionData.user?.id || ("user_" + Math.random().toString(36).substring(2, 11)),
+          email: formattedEmail,
+          student_id,
+          name: student_id,
+          name_last_changed_at: null,
+          country: "Malaysia",
+          country_last_changed_at: null,
+          languages: ["English"],
+          age: 18,
+          program: "Software Engineering",
+          year_of_study: "Year 1",
+          gender: "Male",
+          student_type: "degree",
+          about_me: "Hey there! I am new here on XMUM Hangouts.",
+          avatar_id: "panda",
+          is_profile_complete: false,
+          hide_details: false,
+          is_admin: formattedEmail === ADMIN_EMAIL || formattedEmail.startsWith("admin"),
+          is_blocked_globally: false,
+          flag_status: "none",
+          appeal_count: 0
+        };
+
+        try {
+          await supabase.from("xmum_profiles").insert([profile]);
+        } catch (dbInsErr: any) {
+          console.warn("Supabase insert profile after OTP verification threw exception:", dbInsErr);
+        }
+      }
+
+      upsertLocalProfiles([profile]);
+
       // Return the tokens safely to the client browser
       return res.status(200).json({
         success: true,
         message: "Identity verified! Authorizing app session.",
         is_fallback: false,
+        profile,
+        local_auth_token: generateLocalAuthToken(profile),
         session: {
           access_token: sessionData.session.access_token,
           refresh_token: sessionData.session.refresh_token,
@@ -652,192 +909,444 @@ async function startServer() {
     }
   });
 
-  // 4. Synchronise Profiles list from client to server (maintains offline/local database backup redundancy)
-  app.post("/api/profiles/sync", (req, res) => {
-    try {
-      const { profiles } = req.body;
-      if (Array.isArray(profiles)) {
-        upsertLocalProfiles(profiles);
-        return res.status(200).json({ success: true, count: profiles.length });
+  const registerSyncRoute = (options: {
+    getPath: string;
+    postPath: string;
+    payloadKey: string;
+    fileName: string;
+    table: string;
+    localProfileMode?: boolean;
+    transformRows?: (rows: any[]) => any[];
+  }) => {
+    const { getPath, postPath, payloadKey, fileName, table, localProfileMode, transformRows } = options;
+
+    app.get(getPath, (req, res) => {
+      const payload = localProfileMode ? getLocalProfiles() : getLocalData(fileName);
+      return res.status(200).json({ [payloadKey]: payload });
+    });
+
+    app.post(postPath, async (req, res) => {
+      try {
+        const data = req.body?.[payloadKey];
+        if (!Array.isArray(data)) {
+          return res.status(400).json({ error: "Invalid payload: must be array." });
+        }
+
+        if (localProfileMode) {
+          upsertLocalProfiles(data);
+        } else {
+          saveLocalData(fileName, data);
+        }
+
+        await upsertToSupabase(table, transformRows ? transformRows(data) : data);
+
+        return res.status(200).json({ success: true, count: data.length });
+      } catch (err) {
+        console.error(`${payloadKey} sync exception:`, err);
+        return res.status(500).json({ error: `Failed to sync ${payloadKey}` });
       }
-      return res.status(400).json({ error: "Invalid profiles payload. Must be array." });
+    });
+  };
+
+  registerSyncRoute({
+    getPath: "/api/profiles",
+    postPath: "/api/profiles/sync",
+    payloadKey: "profiles",
+    fileName: "local_profiles.json",
+    table: "xmum_profiles",
+    localProfileMode: true,
+    transformRows: rows => collapseProfilesByEmail(rows).map(sanitizeProfileForDatabase)
+  });
+  registerSyncRoute({
+    getPath: "/api/hangouts",
+    postPath: "/api/hangouts/sync",
+    payloadKey: "hangouts",
+    fileName: LOCAL_HANGOUTS_FILE,
+    table: "xmum_hangouts"
+  });
+  registerSyncRoute({
+    getPath: "/api/comments",
+    postPath: "/api/comments/sync",
+    payloadKey: "comments",
+    fileName: LOCAL_COMMENTS_FILE,
+    table: "xmum_comments"
+  });
+  registerSyncRoute({
+    getPath: "/api/applications",
+    postPath: "/api/applications/sync",
+    payloadKey: "applications",
+    fileName: LOCAL_APPLICATIONS_FILE,
+    table: "xmum_applications"
+  });
+  registerSyncRoute({
+    getPath: "/api/likes",
+    postPath: "/api/likes/sync",
+    payloadKey: "likes",
+    fileName: LOCAL_LIKES_FILE,
+    table: "xmum_likes"
+  });
+  registerSyncRoute({
+    getPath: "/api/messages",
+    postPath: "/api/messages/sync",
+    payloadKey: "messages",
+    fileName: LOCAL_MESSAGES_FILE,
+    table: "xmum_messages"
+  });
+  registerSyncRoute({
+    getPath: "/api/chats",
+    postPath: "/api/chats/sync",
+    payloadKey: "chats",
+    fileName: LOCAL_CHATS_FILE,
+    table: "xmum_chats"
+  });
+  registerSyncRoute({
+    getPath: "/api/reports",
+    postPath: "/api/reports/sync",
+    payloadKey: "reports",
+    fileName: LOCAL_REPORTS_FILE,
+    table: "xmum_reports"
+  });
+  registerSyncRoute({
+    getPath: "/api/appeals",
+    postPath: "/api/appeals/sync",
+    payloadKey: "appeals",
+    fileName: LOCAL_APPEALS_FILE,
+    table: "xmum_appeals"
+  });
+  registerSyncRoute({
+    getPath: "/api/blocks",
+    postPath: "/api/blocks/sync",
+    payloadKey: "blocks",
+    fileName: LOCAL_BLOCKS_FILE,
+    table: "xmum_blocks"
+  });
+  registerSyncRoute({
+    getPath: "/api/notifications",
+    postPath: "/api/notifications/sync",
+    payloadKey: "notifications",
+    fileName: LOCAL_NOTIFICATIONS_FILE,
+    table: "xmum_notifications"
+  });
+
+  app.post("/api/account/delete", async (req, res) => {
+    try {
+      if (!supabaseAdmin) {
+        return res.status(503).json({
+          error: "Permanent account deletion needs SUPABASE_SERVICE_ROLE_KEY in the server environment."
+        });
+      }
+
+      const authHeader = req.headers.authorization || "";
+      const accessToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+      const localAuth = verifyLocalAuthToken(
+        typeof req.headers["x-local-auth"] === "string" ? req.headers["x-local-auth"] : undefined
+      );
+
+      let resolvedUserId = "";
+      let normalizedEmail = "";
+
+      if (accessToken) {
+        const {
+          data: { user },
+          error: authError
+        } = await supabase.auth.getUser(accessToken);
+
+        if (authError || !user?.id || !user.email) {
+          return res.status(401).json({ error: "We couldn't verify your account for deletion." });
+        }
+
+        resolvedUserId = user.id;
+        normalizedEmail = normalizeProfileEmail(user.email);
+      } else if (localAuth) {
+        resolvedUserId = localAuth.profileId;
+        normalizedEmail = localAuth.email;
+      } else {
+        return res.status(401).json({ error: "Please sign in again before deleting your account." });
+      }
+
+      const nowIso = new Date().toISOString();
+
+      const [
+        remoteProfilesRes,
+        remoteHangoutsRes,
+        remoteApplicationsRes,
+        remoteLikesRes,
+        remoteCommentsRes,
+        remoteChatsRes,
+        remoteMessagesRes,
+        remoteReportsRes,
+        remoteAppealsRes,
+        remoteBlocksRes,
+        remoteNotificationsRes
+      ] = await Promise.all([
+        supabaseAdmin.from("xmum_profiles").select("*"),
+        supabaseAdmin.from("xmum_hangouts").select("*"),
+        supabaseAdmin.from("xmum_applications").select("*"),
+        supabaseAdmin.from("xmum_likes").select("*"),
+        supabaseAdmin.from("xmum_comments").select("*"),
+        supabaseAdmin.from("xmum_chats").select("*"),
+        supabaseAdmin.from("xmum_messages").select("*"),
+        supabaseAdmin.from("xmum_reports").select("*"),
+        supabaseAdmin.from("xmum_appeals").select("*"),
+        supabaseAdmin.from("xmum_blocks").select("*"),
+        supabaseAdmin.from("xmum_notifications").select("*")
+      ]);
+
+      const profiles = mergeById((remoteProfilesRes.data as any[]) || [], getLocalProfiles());
+      const hangouts = mergeById((remoteHangoutsRes.data as any[]) || [], getLocalData(LOCAL_HANGOUTS_FILE));
+      const applications = mergeById((remoteApplicationsRes.data as any[]) || [], getLocalData(LOCAL_APPLICATIONS_FILE));
+      const likes = mergeById((remoteLikesRes.data as any[]) || [], getLocalData(LOCAL_LIKES_FILE));
+      const comments = mergeById((remoteCommentsRes.data as any[]) || [], getLocalData(LOCAL_COMMENTS_FILE));
+      const chats = mergeById((remoteChatsRes.data as any[]) || [], getLocalData(LOCAL_CHATS_FILE));
+      const messages = mergeById((remoteMessagesRes.data as any[]) || [], getLocalData(LOCAL_MESSAGES_FILE));
+      const reports = mergeById((remoteReportsRes.data as any[]) || [], getLocalData(LOCAL_REPORTS_FILE));
+      const appeals = mergeById((remoteAppealsRes.data as any[]) || [], getLocalData(LOCAL_APPEALS_FILE));
+      const blocks = mergeById((remoteBlocksRes.data as any[]) || [], getLocalData(LOCAL_BLOCKS_FILE));
+      const notifications = mergeById((remoteNotificationsRes.data as any[]) || [], getLocalData(LOCAL_NOTIFICATIONS_FILE));
+
+      const matchingProfiles = profiles.filter(
+        (profile: any) =>
+          profile.id === resolvedUserId ||
+          normalizeProfileEmail(profile.email || "") === normalizedEmail
+      );
+      const userIds = new Set<string>([resolvedUserId, ...matchingProfiles.map((profile: any) => profile.id)]);
+
+      const deletedUserProfile = buildDeletedUserProfile();
+      const activeOrPendingHangouts = hangouts.filter(
+        (hangout: any) => userIds.has(hangout.creator_id) && hangout.status !== "expired" && hangout.status !== "cancelled"
+      );
+
+      const participantNotifications = applications
+        .filter(
+          (application: any) =>
+            activeOrPendingHangouts.some((hangout: any) => hangout.id === application.hangout_id) &&
+            !userIds.has(application.applicant_id) &&
+            (application.status === "pending" || application.status === "accepted")
+        )
+        .map((application: any) => {
+          const relatedHangout = activeOrPendingHangouts.find((hangout: any) => hangout.id === application.hangout_id);
+          return {
+            id: "notif_" + Math.random().toString(36).substring(2, 11),
+            user_id: application.applicant_id,
+            type: "admin_message",
+            payload: {
+              hangout_id: application.hangout_id,
+              custom_text: `Heads up: "${relatedHangout?.intention || "A hangout"}" has been closed because the host account was removed.`
+            },
+            is_read: false,
+            created_at: nowIso
+          };
+        });
+
+      const nextProfiles = [
+        ...profiles.filter(
+          (profile: any) =>
+            !userIds.has(profile.id) &&
+            normalizeProfileEmail(profile.email || "") !== normalizedEmail
+        ),
+        deletedUserProfile
+      ];
+
+      const nextHangouts = hangouts.map((hangout: any) => {
+        if (!userIds.has(hangout.creator_id)) {
+          return hangout;
+        }
+
+        return {
+          ...hangout,
+          creator_id: SYSTEM_DELETED_USER_ID,
+          status: "expired",
+          updated_at: nowIso
+        };
+      });
+
+      const nextComments = comments.flatMap((comment: any) => {
+        if (!userIds.has(comment.user_id)) {
+          return [comment];
+        }
+
+        const relatedHangout = nextHangouts.find((hangout: any) => hangout.id === comment.hangout_id);
+        if (relatedHangout?.status === "expired") {
+          return [
+            {
+              ...comment,
+              user_id: SYSTEM_DELETED_USER_ID
+            }
+          ];
+        }
+
+        return [];
+      });
+
+      const nextApplications = applications.filter((application: any) => !userIds.has(application.applicant_id));
+      const nextLikes = likes.filter((like: any) => !userIds.has(like.user_id));
+      const nextBlocks = blocks.filter((block: any) => !userIds.has(block.blocker_id) && !userIds.has(block.blocked_id));
+      const nextReports = reports.filter((report: any) => !userIds.has(report.reporter_id) && !userIds.has(report.reported_user_id));
+      const remainingReportIds = new Set(nextReports.map((report: any) => report.id));
+      const nextAppeals = appeals.filter((appeal: any) => remainingReportIds.has(appeal.report_id));
+      const nextChats = chats.filter((chat: any) => !userIds.has(chat.user_a_id) && !userIds.has(chat.user_b_id));
+      const keptChatIds = new Set(nextChats.map((chat: any) => chat.id));
+      const nextMessages = messages.filter((message: any) => keptChatIds.has(message.chat_id) && !userIds.has(message.sender_id));
+      const nextNotifications = [
+        ...notifications.filter((notification: any) => !userIds.has(notification.user_id)),
+        ...participantNotifications
+      ];
+
+      saveLocalProfiles(nextProfiles);
+      saveLocalData(LOCAL_HANGOUTS_FILE, nextHangouts);
+      saveLocalData(LOCAL_APPLICATIONS_FILE, nextApplications);
+      saveLocalData(LOCAL_LIKES_FILE, nextLikes);
+      saveLocalData(LOCAL_COMMENTS_FILE, nextComments);
+      saveLocalData(LOCAL_CHATS_FILE, nextChats);
+      saveLocalData(LOCAL_MESSAGES_FILE, nextMessages);
+      saveLocalData(LOCAL_REPORTS_FILE, nextReports);
+      saveLocalData(LOCAL_APPEALS_FILE, nextAppeals);
+      saveLocalData(LOCAL_BLOCKS_FILE, nextBlocks);
+      saveLocalData(LOCAL_NOTIFICATIONS_FILE, nextNotifications);
+
+      await supabaseAdmin.from("xmum_profiles").upsert([deletedUserProfile]);
+      await supabaseAdmin.from("xmum_hangouts").upsert(nextHangouts);
+      await supabaseAdmin.from("xmum_comments").upsert(nextComments);
+      await supabaseAdmin.from("xmum_notifications").upsert(nextNotifications);
+
+      await deleteRowsByIds(
+        "xmum_messages",
+        messages.filter((message: any) => !nextMessages.some((item: any) => item.id === message.id)).map((message: any) => message.id)
+      );
+      await deleteRowsByIds(
+        "xmum_chats",
+        chats.filter((chat: any) => !nextChats.some((item: any) => item.id === chat.id)).map((chat: any) => chat.id)
+      );
+      await deleteRowsByIds(
+        "xmum_likes",
+        likes.filter((like: any) => !nextLikes.some((item: any) => item.id === like.id)).map((like: any) => like.id)
+      );
+      await deleteRowsByIds(
+        "xmum_applications",
+        applications.filter((application: any) => !nextApplications.some((item: any) => item.id === application.id)).map((application: any) => application.id)
+      );
+      await deleteRowsByIds(
+        "xmum_appeals",
+        appeals.filter((appeal: any) => !nextAppeals.some((item: any) => item.id === appeal.id)).map((appeal: any) => appeal.id)
+      );
+      await deleteRowsByIds(
+        "xmum_reports",
+        reports.filter((report: any) => !nextReports.some((item: any) => item.id === report.id)).map((report: any) => report.id)
+      );
+      await deleteRowsByIds(
+        "xmum_blocks",
+        blocks.filter((block: any) => !nextBlocks.some((item: any) => item.id === block.id)).map((block: any) => block.id)
+      );
+      await deleteRowsByIds(
+        "xmum_notifications",
+        notifications
+          .filter((notification: any) => !nextNotifications.some((item: any) => item.id === notification.id))
+          .map((notification: any) => notification.id)
+      );
+      await deleteRowsByIds(
+        "xmum_comments",
+        comments.filter((comment: any) => !nextComments.some((item: any) => item.id === comment.id)).map((comment: any) => comment.id)
+      );
+      await deleteRowsByIds(
+        "xmum_profiles",
+        matchingProfiles.map((profile: any) => profile.id).filter((id: string) => id !== SYSTEM_DELETED_USER_ID)
+      );
+
+      const { error: authDeleteError } = await supabaseAdmin.auth.admin.deleteUser(resolvedUserId);
+      if (authDeleteError) {
+        console.error("Supabase auth user deletion failed:", authDeleteError);
+      }
+
+      return res.status(200).json({
+        success: true,
+        profiles: nextProfiles,
+        hangouts: nextHangouts,
+        applications: nextApplications,
+        likes: nextLikes,
+        comments: nextComments,
+        chats: nextChats,
+        messages: nextMessages,
+        reports: nextReports,
+        appeals: nextAppeals,
+        blocks: nextBlocks,
+        notifications: nextNotifications
+      });
     } catch (err) {
-      console.error("Profiles sync backend endpoint exception:", err);
-      return res.status(500).json({ error: "Failed to mirror profile metadata to local backup storage." });
+      console.error("Account deletion endpoint failed:", err);
+      return res.status(500).json({ error: "We couldn't finish deleting this account." });
     }
   });
 
-  // Synchronise Hangouts
-  app.get("/api/hangouts", (req, res) => {
-    return res.status(200).json({ hangouts: getLocalData(LOCAL_HANGOUTS_FILE) });
-  });
-  app.post("/api/hangouts/sync", (req, res) => {
+  app.post("/api/bug-report", async (req, res) => {
     try {
-      const { hangouts } = req.body;
-      if (Array.isArray(hangouts)) {
-        saveLocalData(LOCAL_HANGOUTS_FILE, hangouts);
-        return res.status(200).json({ success: true, count: hangouts.length });
-      }
-      return res.status(400).json({ error: "Invalid payload: must be array." });
-    } catch (err) {
-      console.error("Hangouts sync exception:", err);
-      return res.status(500).json({ error: "Failed to sync hangouts" });
-    }
-  });
+      const { reporter, subject, description, sourcePage, submittedAt } = req.body || {};
+      const trimmedDescription = typeof description === "string" ? description.trim() : "";
+      const trimmedSubject = typeof subject === "string" ? subject.trim().slice(0, 120) : "General bug report";
+      const trimmedPage = typeof sourcePage === "string" ? sourcePage.trim().slice(0, 120) : "XMUM Hangouts";
+      const reporterEmail = typeof reporter?.email === "string" ? reporter.email.trim().toLowerCase() : "";
 
-  // Synchronise Comments
-  app.get("/api/comments", (req, res) => {
-    return res.status(200).json({ comments: getLocalData(LOCAL_COMMENTS_FILE) });
-  });
-  app.post("/api/comments/sync", (req, res) => {
-    try {
-      const { comments } = req.body;
-      if (Array.isArray(comments)) {
-        saveLocalData(LOCAL_COMMENTS_FILE, comments);
-        return res.status(200).json({ success: true, count: comments.length });
+      if (!reporterEmail.endsWith("@xmu.edu.my")) {
+        return res.status(400).json({ error: "Only XMUM student accounts can submit bug reports." });
       }
-      return res.status(400).json({ error: "Invalid payload: must be array." });
-    } catch (err) {
-      console.error("Comments sync exception:", err);
-      return res.status(500).json({ error: "Failed to sync comments" });
-    }
-  });
 
-  // Synchronise Applications
-  app.get("/api/applications", (req, res) => {
-    return res.status(200).json({ applications: getLocalData(LOCAL_APPLICATIONS_FILE) });
-  });
-  app.post("/api/applications/sync", (req, res) => {
-    try {
-      const { applications } = req.body;
-      if (Array.isArray(applications)) {
-        saveLocalData(LOCAL_APPLICATIONS_FILE, applications);
-        return res.status(200).json({ success: true, count: applications.length });
+      if (trimmedDescription.length < 10) {
+        return res.status(400).json({ error: "Bug description must be at least 10 characters long." });
       }
-      return res.status(400).json({ error: "Invalid payload: must be array." });
-    } catch (err) {
-      console.error("Applications sync exception:", err);
-      return res.status(500).json({ error: "Failed to sync applications" });
-    }
-  });
 
-  // Synchronise Likes
-  app.get("/api/likes", (req, res) => {
-    return res.status(200).json({ likes: getLocalData(LOCAL_LIKES_FILE) });
-  });
-  app.post("/api/likes/sync", (req, res) => {
-    try {
-      const { likes } = req.body;
-      if (Array.isArray(likes)) {
-        saveLocalData(LOCAL_LIKES_FILE, likes);
-        return res.status(200).json({ success: true, count: likes.length });
+      const resendApiKey = process.env.RESEND_API_KEY;
+      if (!resendApiKey) {
+        return res.status(200).json({
+          success: true,
+          warning: "Admin chat was created, but RESEND_API_KEY is not configured for email delivery."
+        });
       }
-      return res.status(400).json({ error: "Invalid payload: must be array." });
-    } catch (err) {
-      console.error("Likes sync exception:", err);
-      return res.status(500).json({ error: "Failed to sync likes" });
-    }
-  });
 
-  // Synchronise Messages
-  app.get("/api/messages", (req, res) => {
-    return res.status(200).json({ messages: getLocalData(LOCAL_MESSAGES_FILE) });
-  });
-  app.post("/api/messages/sync", (req, res) => {
-    try {
-      const { messages } = req.body;
-      if (Array.isArray(messages)) {
-        saveLocalData(LOCAL_MESSAGES_FILE, messages);
-        return res.status(200).json({ success: true, count: messages.length });
-      }
-      return res.status(400).json({ error: "Invalid payload: must be array." });
-    } catch (err) {
-      return res.status(500).json({ error: "Failed to sync messages" });
-    }
-  });
+      const safeSubject = escapeHtml(trimmedSubject);
+      const safeDescription = escapeHtml(trimmedDescription).replace(/\n/g, "<br />");
+      const safePage = escapeHtml(trimmedPage);
+      const safeReporterName = escapeHtml(reporter?.name || "XMUM student");
+      const safeReporterEmail = escapeHtml(reporterEmail);
+      const safeSubmittedAt = escapeHtml(submittedAt || new Date().toISOString());
 
-  // Synchronise Chats
-  app.get("/api/chats", (req, res) => {
-    return res.status(200).json({ chats: getLocalData(LOCAL_CHATS_FILE) });
-  });
-  app.post("/api/chats/sync", (req, res) => {
-    try {
-      const { chats } = req.body;
-      if (Array.isArray(chats)) {
-        saveLocalData(LOCAL_CHATS_FILE, chats);
-        return res.status(200).json({ success: true, count: chats.length });
-      }
-      return res.status(400).json({ error: "Invalid payload: must be array." });
-    } catch (err) {
-      return res.status(500).json({ error: "Failed to sync chats" });
-    }
-  });
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px; color: #0f172a;">
+          <h2 style="margin: 0 0 16px; color: #e11d48;">XMUM Hangouts Bug Report</h2>
+          <p style="margin: 0 0 12px;"><strong>Reporter:</strong> ${safeReporterName} (${safeReporterEmail})</p>
+          <p style="margin: 0 0 12px;"><strong>Page:</strong> ${safePage}</p>
+          <p style="margin: 0 0 12px;"><strong>Subject:</strong> ${safeSubject}</p>
+          <p style="margin: 0 0 12px;"><strong>Submitted:</strong> ${safeSubmittedAt}</p>
+          <div style="margin-top: 20px; padding: 16px; border: 1px solid #fecdd3; border-radius: 12px; background: #fff1f2;">
+            <strong style="display: block; margin-bottom: 8px;">Details</strong>
+            <div style="line-height: 1.6;">${safeDescription}</div>
+          </div>
+        </div>
+      `;
 
-  // Synchronise Reports
-  app.get("/api/reports", (req, res) => {
-    return res.status(200).json({ reports: getLocalData(LOCAL_REPORTS_FILE) });
-  });
-  app.post("/api/reports/sync", (req, res) => {
-    try {
-      const { reports } = req.body;
-      if (Array.isArray(reports)) {
-        saveLocalData(LOCAL_REPORTS_FILE, reports);
-        return res.status(200).json({ success: true, count: reports.length });
-      }
-      return res.status(400).json({ error: "Invalid payload: must be array." });
-    } catch (err) {
-      return res.status(500).json({ error: "Failed to sync reports" });
-    }
-  });
+      const resendResponse = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${resendApiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          from: "XMUM Hangouts <noreply@xmum-hangouts.reyanzaman.com>",
+          to: ADMIN_EMAIL,
+          reply_to: reporterEmail,
+          subject: `[XMUM Hangouts Bug] ${trimmedSubject}`,
+          html: emailHtml
+        })
+      });
 
-  // Synchronise Appeals
-  app.get("/api/appeals", (req, res) => {
-    return res.status(200).json({ appeals: getLocalData(LOCAL_APPEALS_FILE) });
-  });
-  app.post("/api/appeals/sync", (req, res) => {
-    try {
-      const { appeals } = req.body;
-      if (Array.isArray(appeals)) {
-        saveLocalData(LOCAL_APPEALS_FILE, appeals);
-        return res.status(200).json({ success: true, count: appeals.length });
+      if (!resendResponse.ok) {
+        const errorText = await resendResponse.text();
+        console.error("Bug report email delivery failed:", errorText);
+        return res.status(502).json({ error: "Bug report email could not be delivered." });
       }
-      return res.status(400).json({ error: "Invalid payload: must be array." });
-    } catch (err) {
-      return res.status(500).json({ error: "Failed to sync appeals" });
-    }
-  });
 
-  // Synchronise Blocks
-  app.get("/api/blocks", (req, res) => {
-    return res.status(200).json({ blocks: getLocalData(LOCAL_BLOCKS_FILE) });
-  });
-  app.post("/api/blocks/sync", (req, res) => {
-    try {
-      const { blocks } = req.body;
-      if (Array.isArray(blocks)) {
-        saveLocalData(LOCAL_BLOCKS_FILE, blocks);
-        return res.status(200).json({ success: true, count: blocks.length });
-      }
-      return res.status(400).json({ error: "Invalid payload: must be array." });
+      return res.status(200).json({ success: true });
     } catch (err) {
-      return res.status(500).json({ error: "Failed to sync blocks" });
-    }
-  });
-
-  // Synchronise Notifications
-  app.get("/api/notifications", (req, res) => {
-    return res.status(200).json({ notifications: getLocalData(LOCAL_NOTIFICATIONS_FILE) });
-  });
-  app.post("/api/notifications/sync", (req, res) => {
-    try {
-      const { notifications } = req.body;
-      if (Array.isArray(notifications)) {
-        saveLocalData(LOCAL_NOTIFICATIONS_FILE, notifications);
-        return res.status(200).json({ success: true, count: notifications.length });
-      }
-      return res.status(400).json({ error: "Invalid payload: must be array." });
-    } catch (err) {
-      return res.status(500).json({ error: "Failed to sync notifications" });
+      console.error("Bug report endpoint failed:", err);
+      return res.status(500).json({ error: "Failed to send bug report email." });
     }
   });
 
@@ -860,8 +1369,17 @@ async function startServer() {
   }
 
   // Active listener bind
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Production App Backend] XMUM Hangouts Server listening securely on port ${PORT}`);
+  });
+
+  server.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`Port ${PORT} is already in use. Stop the other XMUM Hangouts dev server before starting a new one.`);
+      process.exit(1);
+    }
+
+    throw error;
   });
 }
 

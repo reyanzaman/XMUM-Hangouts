@@ -44,7 +44,7 @@ export const SafetyBanner: React.FC = () => {
           XMUM Student Safety First! 🛡️
         </h4>
         <p id="safety-banner-desc" className="text-amber-800 leading-relaxed text-xs">
-          Always arrange meetups in <strong>public, on-campus locations</strong> (like the Courtyard, Block B Hall, or Library). Under no circumstances agree to meet alone in private locations off-campus. Host or travel together, trust your instincts, and file safety reports right away if anyone acts suspiciously.
+          Always arrange meetups in <strong>public, on-campus locations</strong> (like the Lakefront cafe, B1 or Library). Under no circumstances agree to meet alone in private locations off-campus. Host or travel together, trust your instincts and file safety reports right away if anyone acts suspiciously.
         </p>
       </div>
       <button
