@@ -28,7 +28,7 @@ export const ProfileSetupForm: React.FC = () => {
 
   // Form states
   const [name, setName] = useState(currentUser.name || "");
-  const [country] = useState(currentUser.country || "Malaysia"); // locked to custom country
+  const [country, setCountry] = useState(currentUser.country || "Malaysia");
   const [languages, setLanguages] = useState<string[]>(currentUser.languages || []);
   const [birthdate, setBirthdate] = useState(currentUser.birthdate || "2006-01-01");
   const [program, setProgram] = useState(currentUser.program || "");
@@ -170,20 +170,22 @@ export const ProfileSetupForm: React.FC = () => {
             />
           </div>
 
-          {/* Country list drop list (non-changeable) */}
+          {/* Country input during onboarding */}
           <div className="space-y-1.5">
             <label className="block text-xs font-bold text-gray-500">
-              Country / Place of Origin
+              Country / Place of Origin <span className="text-rose-500">*</span>
             </label>
             <input
-              id="setup-country-select-disabled"
+              id="setup-country-input"
               type="text"
               value={country}
-              disabled
-              className="w-full bg-gray-100 border border-gray-200 rounded-xl px-4 py-2.5 text-xs text-gray-400 cursor-not-allowed outline-none"
+              onChange={e => setCountry(e.target.value)}
+              placeholder="e.g. Malaysia"
+              required
+              className="w-full bg-white border border-gray-200 focus:border-rose-400 focus:ring-1 focus:ring-rose-400 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-gray-700 outline-none transition-colors"
             />
             <div className="text-[10px] text-gray-400 italic">
-              * Country of origin is non-changeable to verify campus residency.
+              You can set this now. It becomes restricted after your profile is completed.
             </div>
           </div>
 

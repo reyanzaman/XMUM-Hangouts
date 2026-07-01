@@ -1,7 +1,22 @@
 {
   "buildCommand": "vite build",
   "outputDirectory": "dist",
-  "env": {
-    "NODE_ENV": "production"
-  }
+  "rewrites": [
+    {
+      "source": "/api/auth/:action",
+      "destination": "/api/router?group=auth&action=:action"
+    },
+    {
+      "source": "/api/account/:action",
+      "destination": "/api/router?group=account&action=:action"
+    },
+    {
+      "source": "/api/:resource/sync",
+      "destination": "/api/router?group=sync&resource=:resource"
+    },
+    {
+      "source": "/api/:resource",
+      "destination": "/api/router?group=resource&resource=:resource"
+    }
+  ]
 }

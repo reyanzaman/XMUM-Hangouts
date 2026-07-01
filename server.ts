@@ -54,6 +54,55 @@ function getLocalAuthSecret() {
   return secret;
 }
 
+function isLocalhostHost(host: string) {
+  return host.includes("localhost") || host.includes("127.0.0.1");
+}
+
+function getRequestOrigin(req: express.Request) {
+  const host = req.get("host") || `localhost:${PORT}`;
+  const forwardedProto = req.get("x-forwarded-proto");
+  const protocol = forwardedProto || (isLocalhostHost(host) ? "http" : "https");
+  return `${protocol}://${host}`;
+}
+
+function getConfiguredAppOrigin() {
+  const rawValue = (process.env.APP_URL || "").trim();
+  if (!rawValue) return "";
+
+  try {
+    const parsed = new URL(rawValue);
+    if (process.env.NODE_ENV === "production" && isLocalhostHost(parsed.host)) {
+      return "";
+    }
+    return parsed.origin;
+  } catch {
+    return "";
+  }
+}
+
+function resolveAppUrl(req: express.Request) {
+  return getConfiguredAppOrigin() || getRequestOrigin(req);
+}
+
+function setCors(
+  req: express.Request,
+  res: express.Response,
+  methods = "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+  headers = "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
+) {
+  const requestOrigin = getRequestOrigin(req);
+  const configuredOrigin = getConfiguredAppOrigin();
+  const originHeader = req.get("origin") || "";
+  const allowedOrigins = new Set([requestOrigin, configuredOrigin].filter(Boolean));
+  const allowedOrigin = originHeader && allowedOrigins.has(originHeader) ? originHeader : requestOrigin;
+
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", methods);
+  res.setHeader("Access-Control-Allow-Headers", headers);
+}
+
 function readDataFile(fileName: string): any[] {
   const runtimeFile = getRuntimeDataFile(fileName);
   const legacyFile = getLegacyDataFile(fileName);
@@ -170,8 +219,30 @@ function sanitizeProfileForDatabase(profile: any) {
     is_admin: Boolean(profile.is_admin),
     is_blocked_globally: Boolean(profile.is_blocked_globally),
     flag_status: profile.flag_status,
-    appeal_count: profile.appeal_count ?? 0
+    appeal_count: profile.appeal_count ?? 0,
+    password_hash: profile.password_hash ?? null
   };
+}
+
+function isMissingPasswordHashColumnError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return message.includes("password_hash") && message.includes("does not exist");
+}
+
+async function upsertProfileWithFallback(profile: any) {
+  const { error } = await supabase.from("xmum_profiles").upsert([profile]);
+  if (error) {
+    if (isMissingPasswordHashColumnError(error)) {
+      const { password_hash, ...fallbackProfile } = profile;
+      const fallback = await supabase.from("xmum_profiles").upsert([fallbackProfile]);
+      if (fallback.error) {
+        throw fallback.error;
+      }
+      return;
+    }
+
+    throw error;
+  }
 }
 
 async function deleteRowsByIds(table: string, ids: string[]) {
@@ -196,6 +267,15 @@ async function upsertToSupabase(table: string, rows: any[]) {
 
   const { error } = await supabaseAdmin.from(table).upsert(rows);
   if (error) {
+    if (table === "xmum_profiles" && isMissingPasswordHashColumnError(error)) {
+      const fallbackRows = rows.map(({ password_hash, ...rest }) => rest);
+      const fallback = await supabaseAdmin.from(table).upsert(fallbackRows);
+      if (fallback.error) {
+        throw fallback.error;
+      }
+      return;
+    }
+
     throw error;
   }
 }
@@ -396,9 +476,7 @@ async function startServer() {
       otpRequestTracker.set(formattedEmail, recentRequests);
 
       // Resolve dynamic baseUrl from headers to support all sandbox and preview environments beautifully
-      const host = req.get("host") || "localhost:3000";
-      const protocol = host.includes("localhost") || host.includes("127.0.0.1") ? "http" : "https";
-      const baseUrl = `${protocol}://${host}`;
+      const baseUrl = getRequestOrigin(req);
       const magicLink = `${baseUrl}/api/auth/login-backup?email=${encodeURIComponent(formattedEmail)}&otp=${otp}`;
 
       // Email template styling with OTP highlighted heavily and Magic Link as subtle secondary
@@ -552,7 +630,7 @@ async function startServer() {
 
         try {
           upsertLocalProfiles([profile]);
-          await supabase.from("xmum_profiles").upsert([profile]);
+          await upsertProfileWithFallback(profile);
         } catch (migrationErr) {
           console.warn("Password hash migration failed during login:", migrationErr);
         }
@@ -898,7 +976,7 @@ async function startServer() {
       }
 
       const { access_token, refresh_token } = sessionData.session;
-      const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+      const appUrl = resolveAppUrl(req);
 
       // Redirect user with hash parameters, which is auto parsed by AppContext!
       return res.redirect(`${appUrl}/#access_token=${access_token}&refresh_token=${refresh_token}`);
@@ -921,11 +999,13 @@ async function startServer() {
     const { getPath, postPath, payloadKey, fileName, table, localProfileMode, transformRows } = options;
 
     app.get(getPath, (req, res) => {
+      setCors(req, res);
       const payload = localProfileMode ? getLocalProfiles() : getLocalData(fileName);
       return res.status(200).json({ [payloadKey]: payload });
     });
 
     app.post(postPath, async (req, res) => {
+      setCors(req, res);
       try {
         const data = req.body?.[payloadKey];
         if (!Array.isArray(data)) {
@@ -1029,6 +1109,7 @@ async function startServer() {
   });
 
   app.post("/api/account/delete", async (req, res) => {
+    setCors(req, res, "OPTIONS,POST", "Content-Type, Authorization, X-Local-Auth");
     try {
       if (!supabaseAdmin) {
         return res.status(503).json({
@@ -1278,6 +1359,7 @@ async function startServer() {
   });
 
   app.post("/api/bug-report", async (req, res) => {
+    setCors(req, res);
     try {
       const { reporter, subject, description, sourcePage, submittedAt } = req.body || {};
       const trimmedDescription = typeof description === "string" ? description.trim() : "";

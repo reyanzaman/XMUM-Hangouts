@@ -167,6 +167,11 @@ const getAuthRedirectOrigin = () => {
   return window.location.origin;
 };
 
+const isMissingPasswordHashColumnError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return message.includes("password_hash") && message.includes("does not exist");
+};
+
 const stripEmojiCharacters = (message: string) =>
   message
     .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
@@ -595,7 +600,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     is_admin: Boolean(profile.is_admin),
     is_blocked_globally: Boolean(profile.is_blocked_globally),
     flag_status: profile.flag_status,
-    appeal_count: profile.appeal_count ?? 0
+    appeal_count: profile.appeal_count ?? 0,
+    password_hash: profile.password_hash ?? null
   });
 
   const sanitizeComment = (c: any) => ({
@@ -606,6 +612,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     content: c.content,
     created_at: c.created_at
   });
+
+  const upsertProfilesDirect = async (items: Profile[]) => {
+    const rows = collapseProfilesByEmail(items).map(sanitizeProfileForDatabase);
+    const { error } = await supabase.from("xmum_profiles").upsert(rows);
+
+    if (error) {
+      if (isMissingPasswordHashColumnError(error)) {
+        const fallbackRows = rows.map(({ password_hash, ...rest }) => rest);
+        const fallback = await supabase.from("xmum_profiles").upsert(fallbackRows);
+        if (fallback.error) {
+          throw fallback.error;
+        }
+        return;
+      }
+
+      throw error;
+    }
+  };
 
   // --- INITIAL SEEDING ---
   useEffect(() => {
@@ -765,7 +789,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return p;
         });
         if (adminChanged) {
-          await supabase.from("xmum_profiles").upsert(dbProfiles);
+          await upsertProfilesDirect(dbProfiles as Profile[]);
         }
         const storedProfilesSnapshot = getStoredProfilesSnapshot();
         const normalizedProfiles = filterProfilesForRuntime(normalizeProfiles([
@@ -782,7 +806,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
         if (profilesWereNormalized) {
           try {
-            await supabase.from("xmum_profiles").upsert(normalizedProfiles);
+            await upsertProfilesDirect(normalizedProfiles);
           } catch (syncErr) {
             console.warn("Initial normalized profile upsert failed:", syncErr);
           }
@@ -1307,7 +1331,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return !matchingPrev || JSON.stringify(matchingPrev) !== JSON.stringify(item);
       });
       if (changed.length > 0) {
-        await supabase.from("xmum_profiles").upsert(changed.map(sanitizeProfileForDatabase));
+        const rows = changed.map(sanitizeProfileForDatabase);
+        const { error } = await supabase.from("xmum_profiles").upsert(rows);
+        if (error) {
+          if (isMissingPasswordHashColumnError(error)) {
+            const fallbackRows = rows.map(({ password_hash, ...rest }) => rest);
+            const fallback = await supabase.from("xmum_profiles").upsert(fallbackRows);
+            if (fallback.error) {
+              throw fallback.error;
+            }
+          } else {
+            throw error;
+          }
+        }
       }
     } catch (e) {
       console.error("Profiles sync exception:", e);

@@ -1117,25 +1117,33 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       return (
         <g>
           {/* Left Sleeping eye line curves downwards */}
-          <motion.path 
-            d="M 28 45 Q 34 51, 40 45" 
-            stroke="#1e293b" 
-            strokeWidth="3.2" 
-            strokeLinecap="round" 
-            fill="none"
-            animate={{ d: ["M 28 45 Q 34 51, 40 45", "M 28 46 Q 34 53, 40 46", "M 28 45 Q 34 51, 40 45"] }}
+          <motion.g
+            animate={{ y: [0, 1, 0], scaleY: [1, 1.08, 1] }}
             transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-          />
+            style={{ originX: 0.34, originY: 0.46 }}
+          >
+            <path
+              d="M 28 45 Q 34 51, 40 45"
+              stroke="#1e293b"
+              strokeWidth="3.2"
+              strokeLinecap="round"
+              fill="none"
+            />
+          </motion.g>
           {/* Right Sleeping eye line curves downwards */}
-          <motion.path 
-            d="M 60 45 Q 66 51, 72 45" 
-            stroke="#1e293b" 
-            strokeWidth="3.2" 
-            strokeLinecap="round" 
-            fill="none"
-            animate={{ d: ["M 60 45 Q 66 51, 72 45", "M 60 46 Q 66 53, 72 46", "M 60 45 Q 66 51, 72 45"] }}
+          <motion.g
+            animate={{ y: [0, 1, 0], scaleY: [1, 1.08, 1] }}
             transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-          />
+            style={{ originX: 0.66, originY: 0.46 }}
+          >
+            <path
+              d="M 60 45 Q 66 51, 72 45"
+              stroke="#1e293b"
+              strokeWidth="3.2"
+              strokeLinecap="round"
+              fill="none"
+            />
+          </motion.g>
         </g>
       );
     }

@@ -38,6 +38,11 @@ type SyncConfig = {
   transformRows?: (rows: any[]) => any[];
 };
 
+const isMissingPasswordHashColumnError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return message.includes("password_hash") && message.includes("does not exist");
+};
+
 const sanitizeProfileForDatabase = (profile: any) => ({
   id: profile.id,
   email: profile.email,
@@ -59,7 +64,8 @@ const sanitizeProfileForDatabase = (profile: any) => ({
   is_admin: Boolean(profile.is_admin),
   is_blocked_globally: Boolean(profile.is_blocked_globally),
   flag_status: profile.flag_status,
-  appeal_count: profile.appeal_count ?? 0
+  appeal_count: profile.appeal_count ?? 0,
+  password_hash: profile.password_hash ?? null
 });
 
 const syncConfigs: Record<string, SyncConfig> = {
@@ -80,9 +86,54 @@ const syncConfigs: Record<string, SyncConfig> = {
   notifications: { payloadKey: "notifications", table: "xmum_notifications" }
 };
 
-function setCors(res: VercelResponse, methods = "GET,OPTIONS,PATCH,DELETE,POST,PUT", headers = "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version") {
+function isLocalhostHost(host: string) {
+  return host.includes("localhost") || host.includes("127.0.0.1");
+}
+
+function getRequestProtocol(req: VercelRequest) {
+  const forwardedProto = getSingleQueryParam(req.headers["x-forwarded-proto"] as string | string[] | undefined);
+  if (forwardedProto) {
+    return forwardedProto;
+  }
+
+  const host = req.headers.host || "xmum-hangouts.vercel.app";
+  return isLocalhostHost(host) ? "http" : "https";
+}
+
+function getRequestOrigin(req: VercelRequest) {
+  const host = req.headers.host || "xmum-hangouts.vercel.app";
+  return `${getRequestProtocol(req)}://${host}`;
+}
+
+function getConfiguredAppOrigin() {
+  const rawValue = (process.env.APP_URL || "").trim();
+  if (!rawValue) return "";
+
+  try {
+    const parsed = new URL(rawValue);
+    if (isProduction && isLocalhostHost(parsed.host)) {
+      return "";
+    }
+    return parsed.origin;
+  } catch {
+    return "";
+  }
+}
+
+function resolveAppUrl(req: VercelRequest) {
+  return getConfiguredAppOrigin() || getRequestOrigin(req);
+}
+
+function setCors(req: VercelRequest, res: VercelResponse, methods = "GET,OPTIONS,PATCH,DELETE,POST,PUT", headers = "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version") {
+  const requestOrigin = getRequestOrigin(req);
+  const configuredOrigin = getConfiguredAppOrigin();
+  const originHeader = typeof req.headers.origin === "string" ? req.headers.origin : "";
+  const allowedOrigins = new Set([requestOrigin, configuredOrigin].filter(Boolean));
+  const allowedOrigin = originHeader && allowedOrigins.has(originHeader) ? originHeader : requestOrigin;
+
   res.setHeader("Access-Control-Allow-Credentials", "true");
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", methods);
   res.setHeader("Access-Control-Allow-Headers", headers);
 }
@@ -165,6 +216,22 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
   return pickCanonicalProfile((profilesByEmail || []) as Profile[], { email: formattedEmail });
 }
 
+async function upsertProfileWithFallback(profile: Profile) {
+  const { error } = await supabase.from("xmum_profiles").upsert([profile]);
+  if (error) {
+    if (isMissingPasswordHashColumnError(error)) {
+      const { password_hash, ...fallbackProfile } = profile as Profile & { password_hash?: string | null };
+      const fallback = await supabase.from("xmum_profiles").upsert([fallbackProfile]);
+      if (fallback.error) {
+        throw fallback.error;
+      }
+      return;
+    }
+
+    throw error;
+  }
+}
+
 function buildDeletedUserProfile() {
   return {
     id: SYSTEM_DELETED_USER_ID,
@@ -231,8 +298,17 @@ async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config
     if (rows.length > 0) {
       const { error } = await supabaseAdmin.from(table).upsert(rows);
       if (error) {
-        console.error(`Supabase sync failed for ${table}:`, error);
-        return res.status(500).json({ error: `Failed to sync ${payloadKey} to Supabase.` });
+        if (table === "xmum_profiles" && isMissingPasswordHashColumnError(error)) {
+          const fallbackRows = rows.map(({ password_hash, ...rest }) => rest);
+          const fallback = await supabaseAdmin.from(table).upsert(fallbackRows);
+          if (fallback.error) {
+            console.error(`Supabase sync failed for ${table}:`, fallback.error);
+            return res.status(500).json({ error: `Failed to sync ${payloadKey} to Supabase.` });
+          }
+        } else {
+          console.error(`Supabase sync failed for ${table}:`, error);
+          return res.status(500).json({ error: `Failed to sync ${payloadKey} to Supabase.` });
+        }
       }
     }
 
@@ -369,9 +445,7 @@ async function handleSendOtp(req: VercelRequest, res: VercelResponse) {
     requestHistory: [...recentRequests, now]
   });
 
-  const host = req.headers.host || "xmum-hangouts.vercel.app";
-  const protocol = getSingleQueryParam(req.headers["x-forwarded-proto"] as string | string[] | undefined) || "https";
-  const baseUrl = `${protocol}://${host}`;
+  const baseUrl = getRequestOrigin(req);
   const magicLink = `${baseUrl}/api/auth/login-backup?email=${encodeURIComponent(formattedEmail)}&otp=${otp}`;
 
   const resendApiKey = process.env.RESEND_API_KEY;
@@ -624,7 +698,7 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
   if (!profile.password_hash) {
     profile.password_hash = hashPassword(formattedEmail, password);
     delete (profile as any).password;
-    await supabase.from("xmum_profiles").upsert([profile]);
+    await upsertProfileWithFallback(profile);
   }
 
   if (profile.is_blocked_globally) {
@@ -730,7 +804,7 @@ async function handleLoginBackup(req: VercelRequest, res: VercelResponse) {
 
     const accessToken = sessionData.session.access_token;
     const refreshToken = sessionData.session.refresh_token;
-    const appUrl = process.env.APP_URL || "https://xmum-hangouts.vercel.app";
+    const appUrl = resolveAppUrl(req);
     return res.redirect(`${appUrl}/#access_token=${accessToken}&refresh_token=${refreshToken}`);
   } catch (error) {
     if (error instanceof OtpStorageConfigurationError) {
@@ -925,7 +999,7 @@ async function handleDeleteAccount(req: VercelRequest, res: VercelResponse) {
 }
 
 export async function handleResourceRootRoute(req: VercelRequest, res: VercelResponse, resource: string) {
-  setCors(res);
+  setCors(req, res);
 
   if (req.method === "OPTIONS") {
     res.status(200).end();
@@ -945,7 +1019,7 @@ export async function handleResourceRootRoute(req: VercelRequest, res: VercelRes
 }
 
 export async function handleResourceSyncRoute(req: VercelRequest, res: VercelResponse, resource: string) {
-  setCors(res);
+  setCors(req, res);
 
   if (req.method === "OPTIONS") {
     res.status(200).end();
@@ -961,7 +1035,7 @@ export async function handleResourceSyncRoute(req: VercelRequest, res: VercelRes
 }
 
 export async function handleAuthRoute(req: VercelRequest, res: VercelResponse, action: string) {
-  setCors(res);
+  setCors(req, res);
 
   if (req.method === "OPTIONS") {
     res.status(200).end();
@@ -1004,7 +1078,7 @@ export async function handleAuthRoute(req: VercelRequest, res: VercelResponse, a
 }
 
 export async function handleAccountRoute(req: VercelRequest, res: VercelResponse, action: string) {
-  setCors(res, "OPTIONS,POST", "Content-Type, Authorization, X-Local-Auth");
+  setCors(req, res, "OPTIONS,POST", "Content-Type, Authorization, X-Local-Auth");
 
   if (req.method === "OPTIONS") {
     res.status(200).end();
