@@ -4,7 +4,7 @@ import {
   handleAuthRoute,
   handleResourceRootRoute,
   handleResourceSyncRoute
-} from "../src/server/vercel-routes";
+} from "../src/server/vercel-routes.js";
 
 const getParam = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] || "" : value || "");
 

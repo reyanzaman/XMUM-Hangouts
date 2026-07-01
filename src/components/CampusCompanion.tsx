@@ -7,6 +7,25 @@ import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useApp } from "../context/AppContext";
 import { Heart } from "lucide-react";
+import {
+  companionAnimations,
+  companionDialogue,
+  companionEventDialogue,
+  companionGrumpyActions,
+  companionMilestoneCounts,
+  companionRandomActions,
+  companionRareActions,
+  companionTabResponses,
+  companionTravelAnimations,
+  formatCompanionLine,
+  getCompanionMilestone,
+  pickCompanionLine,
+  type CompanionAccessory,
+  type CompanionMood,
+  type CompanionPose,
+  type CompanionReaction,
+  type CompanionTravel
+} from "../config/companionConfig";
 
 interface CampusCompanionProps {
   activeTab: string;
@@ -29,26 +48,15 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       if (lastAngerTimeStr) {
         const diff = Date.now() - new Date(lastAngerTimeStr).getTime();
         if (diff > 0 && diff < 24 * 60 * 60 * 1000) {
-          return "Hmph! 😤 I am angry because somebody typed inappropriate words! Keep it clean and polite, please!";
+          return companionDialogue.angryWelcome;
         }
       }
     } catch (e) {
       console.error(e);
     }
 
-    const welcomeQuotes = [
-      "Meow! Let's hang out on campus! *wag*",
-      "Hewwo! I'm your fluffy marshmallow kitty! Ready for some fun?",
-      "Kawaii kitten alert! Let's find your study buddies today!",
-      "Purrrr! The Sepang sunshine is lovely! Want to explore Bell Avenue?",
-      "Hi friend! Need a cozy studying companion? I'm always here! *purr*",
-      "Mew! Sending you fluffy good vibes for your lectures!",
-      "Let's grab a warm bubble tea and coordinate some plans!",
-      "Boop! *nudges your hand* Let's make today extra cute! ❤️"
-    ];
-    return welcomeQuotes[Math.floor(Math.random() * welcomeQuotes.length)];
+    return pickCompanionLine(companionDialogue.welcome);
   });
-
   const queueRef = useRef<string[]>([]);
   const processingQueueRef = useRef<boolean>(false);
   const lastSpeechTimeRef = useRef<number>(0);
@@ -106,10 +114,11 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     processQueue();
   };
 
-  const [mood, setMood] = useState<"happy" | "sleepy" | "bouncy" | "excited">("happy");
+  const [mood, setMood] = useState<CompanionMood>("happy");
   const [isReady, setIsReady] = useState<boolean>(false);
-  const [companionPose, setCompanionPose] = useState<"rest" | "bounce" | "fly" | "wiggle" | "spin" | "stretch">("rest");
-  const [accessory, setAccessory] = useState<"none" | "book" | "wizard" | "saiyan">("none");
+  const [companionPose, setCompanionPose] = useState<CompanionPose>("rest");
+  const [accessory, setAccessory] = useState<CompanionAccessory>("none");
+  const [travelMode, setTravelMode] = useState<CompanionTravel>("home");
 
   // Idle and sleeping state tracking
   const [isIdle, setIsIdle] = useState<boolean>(false);
@@ -128,6 +137,12 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     return false;
   });
 
+  const getUserFirstName = () => {
+    if (!currentUser || !currentUser.name) return "friend";
+    return currentUser.name.trim().split(/\s+/)[0];
+  };
+  const fName = getUserFirstName();
+
   // Track user active movements to sleep and wake the companion up dynamically
   useEffect(() => {
     let idleTimeout: any;
@@ -135,15 +150,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     const resetIdleTimer = () => {
       setIsIdle(prev => {
         if (prev) {
-          // If was previously idle, speak cute wake up lines!
-          const wakeQuotes = [
-            `Good morning, ${fName}! Let us get things done! ❤️`,
-            `Yay, ${fName}! You are back! I was resting! ❤️`,
-            `Mew! I missed you, ${fName}! Let us find buddies! ❤️`,
-            `*stretches paws* Oh, hello ${fName}! Back to work?`,
-            "Meow! Rest time is over! Let us coordinate plans!"
-          ];
-          setBubbleText(wakeQuotes[Math.floor(Math.random() * wakeQuotes.length)]);
+          setBubbleText(formatCompanionLine(pickCompanionLine(companionDialogue.wake), { name: fName }));
           setShowBubble(true);
           setMood("happy");
           setCompanionPose("rest");
@@ -158,7 +165,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         setMood("sleepy");
         setCompanionPose("rest");
         setAccessory("none");
-        setBubbleText("Zzz... Napping... *soft snores*");
+        setBubbleText(companionDialogue.nap);
         setShowBubble(true);
       }, 30000);
     };
@@ -201,66 +208,40 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     return () => clearInterval(interval);
   }, [isIdle]);
 
-  // Periodic subtle cute random companion bouncing/flying movement triggers and actions
+  // Periodic subtle cute random companion movement triggers and rare screen hops.
   useEffect(() => {
-    if (isIdle) return; // do not trigger random motions while napping!
-
-    const randomActions = [
-      { text: `Hi ${fName}! Stretching my tiny soft paws!`, pose: "stretch" as const, mood: "sleepy" as const, accessory: "none" as const },
-      { text: "Doing a little happy spin! Wheee!", pose: "spin" as const, mood: "excited" as const, accessory: "none" as const },
-      { text: "Chasing a virtual campus butterfly!", pose: "bounce" as const, mood: "excited" as const, accessory: "none" as const },
-      { text: `Purring next to you, ${fName}! ❤️`, pose: "wiggle" as const, mood: "happy" as const, accessory: "none" as const },
-      { text: "Rolling around! *tumble tumble*", pose: "bounce" as const, mood: "bouncy" as const, accessory: "none" as const },
-      { text: "Wiggle wiggle wiggle! *soft tail shakes*", pose: "wiggle" as const, mood: "bouncy" as const, accessory: "none" as const },
-      { text: "Doing an elegant backflip stretch! Whee!", pose: "stretch" as const, mood: "excited" as const, accessory: "none" as const },
-      { text: "Grooming my soft fluffy marshmallow ears!", pose: "wiggle" as const, mood: "happy" as const, accessory: "none" as const },
-      { text: `I love you, ${fName}! ❤️`, pose: "stretch" as const, mood: "happy" as const, accessory: "none" as const },
-      { text: "Tornado spin attack! Zoom zoom!", pose: "spin" as const, mood: "excited" as const, accessory: "none" as const },
-      { text: "Napping on a warm laptop keyboard!", pose: "wiggle" as const, mood: "sleepy" as const, accessory: "none" as const },
-      { text: `Mew! Shhh, I am reading for you, ${fName}!`, pose: "rest" as const, mood: "sleepy" as const, accessory: "book" as const },
-      { text: "Abracadabra! I am the Grand Wizard of XMUM!", pose: "spin" as const, mood: "excited" as const, accessory: "wizard" as const },
-      { text: "AAAHHH! SUPER SAIYAN KITTY OVERDRIVE!", pose: "bounce" as const, mood: "excited" as const, accessory: "saiyan" as const },
-      { text: "Sniffing a sweet virtual hibiscus flower!", pose: "wiggle" as const, mood: "happy" as const, accessory: "none" as const },
-      { text: "Practicing my ninja hops! Yah!", pose: "bounce" as const, mood: "excited" as const, accessory: "none" as const },
-      { text: "Muffins? Did someone say muffins?", pose: "bounce" as const, mood: "excited" as const, accessory: "none" as const },
-      { text: `*pokes screen* Hello ${fName}! Can you hear me?`, pose: "stretch" as const, mood: "happy" as const, accessory: "none" as const },
-      { text: "Searching for cool study coordinates!", pose: "fly" as const, mood: "excited" as const, accessory: "none" as const },
-      { text: "Counting stars over the campus...", pose: "rest" as const, mood: "sleepy" as const, accessory: "book" as const }
-    ];
-
-    const grumpyRandomActions = [
-      { text: "Hmph! Fluffy is keeping an eye out for naughty words! 😤", pose: "rest" as const, mood: "sleepy" as const, accessory: "none" as const },
-      { text: "Feeling grumpy and sad ... 😢 Please keep talks polite!", pose: "wiggle" as const, mood: "sleepy" as const, accessory: "none" as const },
-      { text: "*sighs softly* Tiny sighs of marshmallow sadness... 😣", pose: "stretch" as const, mood: "sleepy" as const, accessory: "none" as const },
-      { text: "Please be friendly and follow Student Guidelines! ❤️", pose: "rest" as const, mood: "sleepy" as const, accessory: "book" as const },
-      { text: "Hmph! Speak nicely to your classmates! 😤", pose: "wiggle" as const, mood: "sleepy" as const, accessory: "none" as const }
-    ];
+    if (isIdle) return;
 
     const triggerRandomMovement = () => {
-      // Choose actions list depending on anger state
-      const actionsToUse = isCompanionAngry ? grumpyRandomActions : randomActions;
+      const rareAction = !isCompanionAngry && Math.random() < 0.12;
+      const actionsToUse = isCompanionAngry
+        ? companionGrumpyActions
+        : rareAction
+        ? companionRareActions
+        : companionRandomActions;
       const action = actionsToUse[Math.floor(Math.random() * actionsToUse.length)];
 
       setCompanionPose(action.pose);
       setMood(action.mood);
       setAccessory(action.accessory);
+      if (action.travel) setTravelMode(action.travel);
 
-      // Only 15% chance to actually show a speech chat bubble during random periodic idle ticks
-      if (Math.random() < 0.15) {
-        setBubbleText(action.text);
+      const speechChance = action.speechChance ?? (rareAction ? 0.3 : 0.15);
+      if (Math.random() < speechChance) {
+        setBubbleText(formatCompanionLine(action.text, { name: fName }));
       }
-      
+
       setTimeout(() => {
         setCompanionPose("rest");
         setMood(isCompanionAngry ? "sleepy" : "happy");
         setAccessory("none");
-      }, 8000); // 8 seconds display to allow full completion of the extended animations
+        setTravelMode("home");
+      }, action.durationMs ?? 8000);
     };
 
     let timerId: any;
 
     const scheduleNext = () => {
-      // Unpredictable delay cycle between 26 to 48 seconds
       const delay = Math.floor(Math.random() * 22000) + 26000;
       timerId = setTimeout(() => {
         triggerRandomMovement();
@@ -268,14 +249,13 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       }, delay);
     };
 
-    // First trigger after warm initial 22 seconds
     timerId = setTimeout(() => {
       triggerRandomMovement();
       scheduleNext();
     }, 22000);
 
     return () => clearTimeout(timerId);
-  }, [isIdle]);
+  }, [isIdle, isCompanionAngry, fName]);
 
   // Suppress transient hydration alarms during database loading on mount
   useEffect(() => {
@@ -285,13 +265,6 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     return () => clearTimeout(timer);
   }, []);
   
-  // Helper to extract first name
-  const getUserFirstName = () => {
-    if (!currentUser || !currentUser.name) return "friend";
-    return currentUser.name.trim().split(/\s+/)[0];
-  };
-  const fName = getUserFirstName();
-
   const [angryPetCount, setAngryPetCount] = useState<number>(0);
 
   // Initialize petCount from persistent localStorage with 1-day rotation expiry check
@@ -320,26 +293,11 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
   const [particles, setParticles] = useState<{ id: number; x: number; y: number; rotate: number; size: number; color: string }[]>([]);
   
-  // Cute, shorter companion headpat quotes
-  const petQuotes = [
-    `Meow! *nuzzles* You are so warm!`,
-    `Purrrr... *headbutts* Let us study, ${fName}!`,
-    `Aww... *paw stretch* I love being here with you, ${fName}! ❤️`,
-    `Ahhh, right behind my ears! Perfect!`,
-    `Tail wag! Thank you for petting me, ${fName}! ❤️`,
-    `Sleepy... but your pats woke me up!`,
-    `Warm marshmallow cozy ball mode: ON!`,
-    `Meow! Huge warm hugs to you! ❤️`,
-    `Purrrr! Let us check new hangouts, ${fName}!`,
-    `Meow! Good luck with your studies today!`
-  ];
   
   // Triggers visual animation loops for click, scroll, and strategic events
   const [actionCount, setActionCount] = useState<number>(0);
   const [isBlinking, setIsBlinking] = useState<boolean>(false);
-  const [reactionType, setReactionType] = useState<
-    "none" | "success" | "error" | "subtle" | "milestone-small" | "milestone-medium" | "milestone-gold" | "milestone-rainbow" | "milestone-ultimate"
-  >("none");
+  const [reactionType, setReactionType] = useState<CompanionReaction>("none");
   
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -350,26 +308,6 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const prevApplicationsLen = useRef<number>(applications?.length || 0);
   const prevViewedProfileId = useRef<string | null>(viewedProfile?.id || null);
 
-  // Guidelines and safety tips
-  const safetyQuotes = [
-    "Always meet in busy, public areas of XMUM campus first!",
-    "Did you know? Meeting coordinates are locked until you authorize meetups!",
-    "Let's play some board games in the hostel lobby room!",
-    "Fancy a coffee trip to Bell Avenue after evening lectures?",
-    "If you experience any bad behavior, press the Safety Report button!",
-    "A quick jog around Sepang lake is always refreshing.",
-    "Trust your peers, but verify their student profiles first!",
-    "You can hide your details from strangers using the Profile Shield.",
-    "Your campus life, warm and cozy! Let's build a tight-knit community!"
-  ];
-
-  const clickResponses = [
-    "Ooh! What are we checking out?",
-    "Ready to coordinate some plans?",
-    "Let's stay safe and have fun on campus!",
-    "Spotted a cool hangout? Give it a join request!",
-    "Warm student support is always around you!"
-  ];
 
   // Auto-hide bubble after a period of inactivity
   useEffect(() => {
@@ -383,92 +321,39 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
   // Hook into activeTab changes
   useEffect(() => {
-    switch (activeTab) {
-      case "feed":
-        setBubbleText("Browse verified student plans! Choose public areas to socialise!");
-        setMood("excited");
-        setShowBubble(true);
-        setActionCount((prev) => prev + 1);
-        break;
-      case "create":
-        setBubbleText("Post an intention! Be exact but keep precise meetups hidden.");
-        setMood("bouncy");
-        setShowBubble(true);
-        setActionCount((prev) => prev + 1);
-        break;
-      case "my-plans":
-        setBubbleText("All approved peer activities are tracked here. Stay safe!");
-        setMood("happy");
-        setShowBubble(true);
-        setActionCount((prev) => prev + 1);
-        break;
-      case "chats":
-        setBubbleText("Encrypted chat coordinates! Use this to safely establish meetups!");
-        setMood("excited");
-        setShowBubble(true);
-        setActionCount((prev) => prev + 1);
-        break;
-      case "profile":
-        setBubbleText("Verify your identity with @xmu.edu.my to join peer plans!");
-        setMood("happy");
-        setShowBubble(true);
-        setActionCount((prev) => prev + 1);
-        break;
-      default:
-        break;
-    }
+    const response = companionTabResponses[activeTab];
+    if (!response) return;
+
+    setBubbleText(response.text);
+    setMood(response.mood);
+    setShowBubble(true);
+    setActionCount((prev) => prev + 1);
   }, [activeTab]);
 
   // Connection events
   useEffect(() => {
     if (currentUser) {
-      const userQuotes = [
-        `Meow! Hey ${fName}, let us find what's new on campus! ❤️`,
-        `Purrrr! Warm hug to ${fName}! Ready to study? ❤️`,
-        `Ah, ${fName} is here! My favorite student! *purr* ❤️`,
-        `Mew! Hey ${fName}, seen any cool hangouts lately? ❤️`,
-        `Meow! Warmest welcome back, ${fName}! Let us have fun!`,
-        `Oh, hello ${fName}! Let us explore campus plans together!`,
-        `Boop! Fluffy marshmallow helper is online for you, ${fName}!`,
-        "Mew! Want to meet friends or have a cozy study time?",
-        `Purrrr... Let's browse some plans, ${fName}!`,
-        `Yay, you are back, ${fName}! Need a cozy study break? ❤️`,
-        `Sending you positive energy, ${fName}! You are doing amazing! ❤️`
-      ];
-      setBubbleText(userQuotes[Math.floor(Math.random() * userQuotes.length)]);
+      setBubbleText(formatCompanionLine(pickCompanionLine(companionDialogue.signedIn), { name: fName }));
       setMood("excited");
-      setShowBubble(true);
-      setActionCount((prev) => prev + 1);
     } else {
-      const guestQuotes = [
-        "Please register or log in with your xmu.edu.my email! ❤️",
-        "Mew! Sign in to join plans and chat safely! ❤️",
-        "Logging in lets me keep track of your cute pats! ❤️",
-        "Hewwo! I am your fluffy kitty! Ready for some fun?",
-        "Kawaii kitten alert! Let us find your buddies today!",
-        "Purrrr! The sunshine is lovely! Want to walk?",
-        "Hi friend! Need a cozy studying companion? ❤️",
-        "Mew! Sending you fluffy good vibes!",
-        "Let us grab a warm tea and find some plans!",
-        "Boop! *nudges your hand* Let us make today extra cute! ❤️"
-      ];
-      setBubbleText(guestQuotes[Math.floor(Math.random() * guestQuotes.length)]);
+      setBubbleText(pickCompanionLine(companionDialogue.guest));
       setMood("happy");
-      setShowBubble(true);
-      setActionCount((prev) => prev + 1);
     }
-  }, [currentUser]);
+
+    setShowBubble(true);
+    setActionCount((prev) => prev + 1);
+  }, [currentUser, fName]);
 
   // Handle global error/success messages
   useEffect(() => {
     if (toast) {
       if (toast.type === "error") {
-        setBubbleText(`Oh no! Error occurred: "${toast.message}". Let me help you stay safe!`);
+        setBubbleText(formatCompanionLine(companionEventDialogue.toastError, { message: toast.message }));
         setMood("sleepy");
         setShowBubble(true);
         setActionCount((prev) => prev + 1);
       } else if (toast.type === "success") {
-        setBubbleText(`Mew! Success: "${toast.message}"! ❤️ Keep it up!`);
+        setBubbleText(formatCompanionLine(companionEventDialogue.toastSuccess, { message: toast.message }));
         setMood("excited");
         setShowBubble(true);
         setActionCount((prev) => prev + 1);
@@ -482,16 +367,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     if (currentLen > prevMessagesLen.current) {
       prevMessagesLen.current = currentLen;
       if (isReady) {
-        const variations = [
-          "Ooh! Fresh chat coordinates! Let's build real connections!",
-          `Meow! You have a new pin, ${fName}! A classmate wants to chat!`,
-          "Mew! A new message pinged! Time to make some study plans? ❤️",
-          "Yippee! Fresh chat bubbles! Keep the warm campus vibe alive!",
-          `Someone shared a thought, ${fName}! Let us read what they wrote!`,
-          "A peer is reaching out! Check coordinates to explore more! ❤️"
-        ];
-        const randomMsg = variations[Math.floor(Math.random() * variations.length)];
-        setBubbleText(randomMsg);
+        setBubbleText(formatCompanionLine(pickCompanionLine(companionEventDialogue.newMessage), { name: fName }));
         setReactionType("success");
         setMood("excited");
         setShowBubble(true);
@@ -509,7 +385,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     if (currentLen > prevCommentsLen.current) {
       prevCommentsLen.current = currentLen;
       if (isReady) {
-        setBubbleText("Eek! A peer left some words on a plan! Open details to join in!");
+        setBubbleText(companionEventDialogue.newComment);
         setReactionType("subtle");
         setMood("bouncy");
         setShowBubble(true);
@@ -527,7 +403,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     if (currentLen > prevHangoutsLen.current) {
       prevHangoutsLen.current = currentLen;
       if (isReady) {
-        setBubbleText("Purrrr! A brand new hangout has been published!");
+        setBubbleText(companionEventDialogue.newHangout);
         setReactionType("success");
         setMood("excited");
         setShowBubble(true);
@@ -545,7 +421,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     if (currentLen > prevApplicationsLen.current) {
       prevApplicationsLen.current = currentLen;
       if (isReady) {
-        setBubbleText("Hooray! A student made a join request! Go check My Plans!");
+        setBubbleText(companionEventDialogue.newApplication);
         setReactionType("success");
         setMood("excited");
         setShowBubble(true);
@@ -561,7 +437,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   useEffect(() => {
     if (viewedProfile && viewedProfile.id !== prevViewedProfileId.current) {
       prevViewedProfileId.current = viewedProfile.id;
-      setBubbleText(`Checking student profile of ${viewedProfile.name || "peer"}! Safe to trust!`);
+      setBubbleText(formatCompanionLine(companionEventDialogue.viewedProfile, { profile: viewedProfile.name || "peer" }));
       setReactionType("subtle");
       setMood("happy");
       setShowBubble(true);
@@ -590,7 +466,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     const handleSignoutIntent = (e: Event) => {
       const customEvent = e as CustomEvent;
       const userName = customEvent.detail?.name || "friend";
-      setBubbleText(`Nooo! Are you leaving me, ${userName}? Please stay! ❤️`);
+      setBubbleText(formatCompanionLine(companionEventDialogue.signout, { name: userName }));
       setMood("sleepy");
       setReactionType("error");
       setShowBubble(true);
@@ -608,7 +484,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     const handleHangoutEdited = (e: Event) => {
       const customEvent = e as CustomEvent;
       const intention = customEvent.detail?.intention || "your hangout";
-      setBubbleText(`Tiny update patrol noticed a refresh for "${intention}". Everyone will stay in the loop.`);
+      setBubbleText(formatCompanionLine(companionEventDialogue.hangoutEdited, { intention }));
       setMood("happy");
       setReactionType("success");
       setShowBubble(true);
@@ -618,7 +494,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     const handleHangoutCancelled = (e: Event) => {
       const customEvent = e as CustomEvent;
       const intention = customEvent.detail?.intention || "that hangout";
-      setBubbleText(`Plans changed for "${intention}". I helped send a gentle heads-up to everyone involved.`);
+      setBubbleText(formatCompanionLine(companionEventDialogue.hangoutCancelled, { intention }));
       setMood("sleepy");
       setReactionType("error");
       setShowBubble(true);
@@ -626,7 +502,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     };
 
     const handleAccountDeleted = () => {
-      setBubbleText("Account cleanup is complete. I made sure active plans were wrapped up carefully.");
+      setBubbleText(companionEventDialogue.accountDeleted);
       setMood("sleepy");
       setReactionType("success");
       setShowBubble(true);
@@ -663,7 +539,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     const handleProfanityWarned = () => {
       setIsCompanionAngry(true);
       setAngryPetCount(0);
-      setBubbleText(`HMPH! 😤 That's a bad word! I am very angry and sad! Speak nicely!`);
+      setBubbleText(companionDialogue.profanity);
       setShowBubble(true);
       setMood("sleepy");
       setReactionType("error");
@@ -684,14 +560,14 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     if (toast) {
       if (toast.type === "success") {
         setReactionType("success");
-        setBubbleText(`Meow! Perfect!\n${toast.message}`);
+        setBubbleText(formatCompanionLine(companionEventDialogue.toastSuccessShort, { message: toast.message }));
         setShowBubble(true);
         setActionCount((prev) => prev + 1);
         const timer = setTimeout(() => setReactionType("none"), 1500);
         return () => clearTimeout(timer);
       } else if (toast.type === "error") {
         setReactionType("error");
-        setBubbleText(`Oh dear!\n${toast.message}`);
+        setBubbleText(formatCompanionLine(companionEventDialogue.toastErrorShort, { message: toast.message }));
         setShowBubble(true);
         setActionCount((prev) => prev + 1);
         const timer = setTimeout(() => setReactionType("none"), 1500);
@@ -717,7 +593,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         // Very tiny chance to wake up with guidance
         const luckyChance = Math.random() < 0.08;
         if (luckyChance) {
-          const mix = [...clickResponses, ...safetyQuotes];
+          const mix = [...companionDialogue.click, ...companionDialogue.safety, ...companionDialogue.petHint];
           const choice = mix[Math.floor(Math.random() * mix.length)];
           setBubbleText(choice);
           setMood("bouncy");
@@ -738,13 +614,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         setTimeout(() => setReactionType("none"), 250);
 
         if (Math.random() < 0.04 && !showBubble) {
-          const scrollPrompts = [
-            "Weee! Let's see some other awesome campus plans!",
-            "Checking out what our fellow classmates posted?",
-            "So many exciting XMUM plans listed here!",
-            "Keep scrolling, new meetups might appear!"
-          ];
-          setBubbleText(scrollPrompts[Math.floor(Math.random() * scrollPrompts.length)]);
+          setBubbleText(pickCompanionLine(companionDialogue.scroll));
           setMood("happy");
           setShowBubble(true);
         }
@@ -761,23 +631,23 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   }, [showBubble]);
 
   const handlePetKitty = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Avoid triggering dismiss logic
+    e.stopPropagation();
     if (isCompanionAngry) {
       const nextAngryPets = angryPetCount + 1;
+      const remainingPets = Math.max(5 - nextAngryPets, 0);
       setAngryPetCount(nextAngryPets);
       if (nextAngryPets >= 5) {
         localStorage.removeItem("xmum_companion_anger_time");
         setIsCompanionAngry(false);
         setAngryPetCount(0);
         setMood("excited");
-        setBubbleText(`Mew! *purrr* Okay, your warm pets melted my anger! I forgive everyone! Let's stay best buddies and play nice! ❤️`);
+        setBubbleText(companionDialogue.forgiveness);
         setReactionType("milestone-rainbow");
         setShowBubble(true);
         setTimeout(() => {
           setReactionType("none");
         }, 2200);
 
-        // Spawn heart particles
         const colors = ["#fb7185", "#f43f5e", "#ec4899", "#fda4af"];
         const newP = Array.from({ length: 25 }).map((_, idx) => ({
           id: Date.now() + idx,
@@ -792,13 +662,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         return;
       }
 
-      const grumpyQuotes = [
-        `Hmph! I am still grumpy over bad words! (Pet me ${5 - nextAngryPets} more times to cheer me up...) 😤`,
-        `Mew... *ears twitch* Your pets feel nice, but I'm still pouting! (${5 - nextAngryPets} more pets...) 🥺`,
-        `*sighs fluffily* Clean language is so important! Just a little more petting... (${5 - nextAngryPets} more pets...) 😿`,
-        `*paws soften* Okay, I can feel your kind heart! Just one more pet... 💖`
-      ];
-      setBubbleText(grumpyQuotes[nextAngryPets - 1] || grumpyQuotes[0]);
+      const grumpyQuote = companionDialogue.grumpyPet[nextAngryPets - 1] || companionDialogue.grumpyPet[0];
+      setBubbleText(formatCompanionLine(grumpyQuote, { remaining: remainingPets }));
       setReactionType("error");
       setShowBubble(true);
       setTimeout(() => {
@@ -808,8 +673,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     }
 
     if (petCount >= 1000) {
-      setBubbleText("Level 1000: Max cozy companion mode is permanently saved! <3");
+      setBubbleText(companionDialogue.maxed);
       setReactionType("milestone-ultimate");
+      setAccessory("nova");
       return;
     }
 
@@ -819,73 +685,46 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     setShowBubble(true);
     setActionCount((prev) => prev + 1);
 
-    // Identify milestones
+    const milestone = getCompanionMilestone(nextCount);
+    const isExtendedMilestone = nextCount > 500 && nextCount < 1000 && nextCount % 50 === 0;
+    const isTenStep = nextCount % 10 === 0;
+    const shouldHint = !milestone && !isTenStep && Math.random() < 0.12;
+
     let milestoneMessage = "";
     let particlesToSpawn = 4;
     let isVerySpecial = false;
-    let rType: "none" | "success" | "error" | "subtle" | "milestone-small" | "milestone-medium" | "milestone-gold" | "milestone-rainbow" | "milestone-ultimate" = "success";
+    let rType: CompanionReaction = "success";
 
-    if (nextCount === 10) {
-      milestoneMessage = `Level 10 reached, ${fName}! You petted me 10 times! <3`;
-      particlesToSpawn = 12;
-      rType = "milestone-small";
-    } else if (nextCount === 20) {
-      milestoneMessage = `Level 20 reached, ${fName}! 20 pets! My heart is melting! <3`;
-      particlesToSpawn = 15;
-      rType = "milestone-small";
-    } else if (nextCount === 50) {
-      milestoneMessage = `Level 50 reached! 50 pets! You are my best buddy, ${fName}! <3`;
-      particlesToSpawn = 22;
-      rType = "milestone-medium";
-    } else if (nextCount === 100) {
-      milestoneMessage = `100 SPECIAL REACHED, ${fName}! Golden Heart Crown unlocked! <3`;
-      particlesToSpawn = 35;
-      isVerySpecial = true;
-      rType = "milestone-gold";
-    } else if (nextCount === 150) {
-      milestoneMessage = `150 PETS reached, ${fName}! Double-cute cozy aura enabled! <3`;
-      particlesToSpawn = 40;
-      isVerySpecial = true;
-      rType = "milestone-gold";
-    } else if (nextCount === 200) {
-      milestoneMessage = `200 PETS! You are my angel, ${fName}! Let us stay safe! <3`;
-      particlesToSpawn = 45;
-      isVerySpecial = true;
-      rType = "milestone-medium";
-    } else if (nextCount === 300) {
-      milestoneMessage = `300 PETS! Rainbow halo activated! Best friends forever, ${fName}! <3`;
-      particlesToSpawn = 55;
-      isVerySpecial = true;
-      rType = "milestone-rainbow";
-    } else if (nextCount === 500) {
-      milestoneMessage = `500 PETS reached, ${fName}! Supreme fluffy form manifested! <3`;
-      particlesToSpawn = 80;
-      isVerySpecial = true;
-      rType = "milestone-ultimate";
-    } else if (nextCount > 500 && nextCount < 1000 && nextCount % 50 === 0) {
-      milestoneMessage = `Milestone extend! Total pets: ${nextCount}! Keep petting, ${fName}! <3`;
+    if (milestone) {
+      milestoneMessage = formatCompanionLine(milestone.message, { name: fName, count: nextCount });
+      particlesToSpawn = milestone.particles;
+      isVerySpecial = Boolean(milestone.special);
+      rType = milestone.reaction;
+      if (milestone.accessory) {
+        setAccessory(milestone.accessory);
+        setTimeout(() => setAccessory("none"), rType === "milestone-ultimate" ? 4200 : 2600);
+      }
+    } else if (isExtendedMilestone) {
+      milestoneMessage = formatCompanionLine(companionDialogue.extendedMilestone, { name: fName, count: nextCount });
       particlesToSpawn = 30;
       rType = "milestone-medium";
       isVerySpecial = true;
-    } else if (nextCount === 1000) {
-      milestoneMessage = `1000 PETS! Permanent Ascension unlocked for ${fName}! <3`;
-      particlesToSpawn = 100;
-      isVerySpecial = true;
-      rType = "milestone-ultimate";
-    } else if (nextCount % 10 === 0) {
-      milestoneMessage = `Purrrr! ${nextCount} total pettings from ${fName}! You are so sweet! <3`;
+    } else if (isTenStep) {
+      milestoneMessage = formatCompanionLine(companionDialogue.genericMilestone, { name: fName, count: nextCount });
       particlesToSpawn = 8;
+    } else if (shouldHint) {
+      milestoneMessage = pickCompanionLine(companionDialogue.petHint);
+      particlesToSpawn = 5;
     } else {
-      milestoneMessage = petQuotes[Math.floor(Math.random() * petQuotes.length)];
+      milestoneMessage = formatCompanionLine(pickCompanionLine(companionDialogue.pet), { name: fName });
       particlesToSpawn = 4;
     }
 
     setReactionType(rType);
     setBubbleText(milestoneMessage);
 
-    // Save state persistently with week timers and permanent caps
     try {
-      const isMilestone = [10, 20, 50, 100, 150, 200, 300, 500, 1000].includes(nextCount) || (nextCount > 500 && nextCount % 50 === 0);
+      const isMilestone = companionMilestoneCounts.includes(nextCount) || isExtendedMilestone;
       const existingState = JSON.parse(localStorage.getItem("xmum_companion_state") || "{}");
       const savedStateObj = {
         petCount: nextCount,
@@ -900,16 +739,15 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
     setTimeout(() => {
       setReactionType("none");
-    }, rType === "milestone-ultimate" ? 2500 : rType === "milestone-rainbow" ? 1800 : 1200);
+    }, rType === "milestone-ultimate" ? 3000 : rType === "milestone-rainbow" ? 1900 : 1200);
 
-    // Spawn heart particles
-    const colors = isVerySpecial 
-      ? ["#fbbf24", "#fb7185", "#f43f5e", "#ec4899", "#fda4af", "#ffedd5", "#a78bfa", "#22d3ee"] 
+    const colors = isVerySpecial
+      ? ["#fbbf24", "#fb7185", "#f43f5e", "#ec4899", "#fda4af", "#ffedd5", "#a78bfa", "#22d3ee"]
       : ["#f43f5e", "#ec4899", "#fda4af", "#f472b6", "#f43f5e"];
-    
+
     const newParticles = Array.from({ length: particlesToSpawn }).map((_, i) => ({
       id: Date.now() + Math.random() + i,
-      x: (Math.random() - 0.5) * 85, // spread horizontally around cat
+      x: (Math.random() - 0.5) * 85,
       y: (Math.random() - 0.5) * 20 - 15,
       rotate: (Math.random() - 0.5) * 90,
       size: isVerySpecial ? Math.random() * 18 + 12 : Math.random() * 8 + 6,
@@ -918,159 +756,42 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
     setParticles(prev => [...prev.slice(-80), ...newParticles]);
   };
-
-  // Cute subtle responsive motion values for the entire sticker (body/paws/face stays rigid, ears/tail details move)
-  const restingAnimation = {
-    scaleY: [1, 1.015, 1.005, 1.02, 1.008, 1.01, 1],
-    scaleX: [1, 1.008, 1.012, 0.992, 1.01, 1.005, 1],
-    y: [0, -0.6, 0.2, -0.4, 0, 0.3, 0],
-    rotate: [0, 0.5, -0.5, 0.2, -0.2, 0, 0],
-    transition: {
-      duration: 7.5,
-      repeat: Infinity,
-      ease: "easeInOut"
-    }
-  };
-
-  const subtleEventAnimation = {
-    scaleY: [1, 1.05, 0.96, 1],
-    scaleX: [1, 0.97, 1.03, 1],
-    transition: {
-      duration: 0.35,
-      ease: "easeOut"
-    }
-  };
-
-  const successAnimation = {
-    scaleY: [1, 1.12, 0.9, 1.04, 1],
-    scaleX: [1, 0.92, 1.08, 0.98, 1],
-    transition: {
-      duration: 0.6,
-      ease: "easeInOut"
-    }
-  };
-
-  const errorAnimation = {
-    x: [0, -4, 4, -4, 4, -2, 2, 0],
-    scale: [1, 0.96, 1.04, 1],
-    transition: {
-      duration: 0.45,
-      ease: "easeInOut"
-    }
-  };
-
-  // Dedicated milestone visual loops
-  const smallMilestoneAnimation = {
-    scale: [1, 1.25, 0.85, 1.1, 1],
-    rotate: [0, -8, 8, -4, 4, 0],
-    transition: { duration: 0.65, ease: "easeInOut" }
-  };
-
-  const mediumMilestoneAnimation = {
-    scale: [1, 1.35, 0.75, 1.15, 0.95, 1.05, 1],
-    rotate: [0, 15, -15, 8, -8, 0],
-    y: [0, -20, 5, -5, 0],
-    transition: { duration: 0.85, ease: "easeOut" }
-  };
-
-  const goldMilestoneAnimation = {
-    scale: [1, 1.45, 0.7, 1.25, 0.88, 1.1, 1],
-    rotate: [0, -20, 20, -12, 12, 0],
-    y: [0, -35, 8, -10, 0],
-    transition: { duration: 1.0, ease: "backOut" }
-  };
-
-  const rainbowMilestoneAnimation = {
-    scale: [1, 1.5, 0.65, 1.3, 0.85, 1.15, 0.98, 1.03, 1],
-    rotate: [0, 35, -35, 18, -18, 0],
-    y: [0, -50, 12, -15, 0],
-    transition: { duration: 1.25, ease: "easeInOut" }
-  };
-
-  const ultimateMilestoneAnimation = {
-    scale: [1, 1.62, 0.55, 1.42, 0.8, 1.25, 0.9, 1.1, 0.96, 1.02, 1],
-    rotate: [0, 80, -80, 40, -40, 15, -15, 0],
-    y: [0, -70, 18, -30, 8, -2, 0],
-    transition: { duration: 1.75, ease: "easeInOut" }
-  };
-
-  const randomBounceAnimation = {
-    y: [0, -18, 4, -12, 2, -6, 1, -2, 0],
-    scaleY: [1, 1.15, 0.88, 1.08, 0.94, 1.03, 0.97, 1.01, 1],
-    scaleX: [1, 0.9, 1.1, 0.94, 1.05, 0.98, 1.02, 0.99, 1],
-    rotate: [0, -4, 4, -2, 2, 0],
-    transition: { duration: 2.8, ease: "easeInOut" }
-  };
-
-  const randomFlyAnimation = {
-    y: [0, -28, -20, -24, -10, 4, -2, 0],
-    x: [0, -12, 12, -6, 6, -2, 2, 0],
-    rotate: [0, -15, 15, -10, 8, -4, 0],
-    scale: [1, 1.05, 0.98, 1.03, 0.99, 1],
-    transition: { duration: 3.5, ease: "easeInOut" }
-  };
-
-  const randomWiggleAnimation = {
-    rotate: [0, -12, 12, -8, 8, -10, 10, -5, 5, -2, 2, 0],
-    scaleY: [1, 1.08, 0.96, 1.04, 0.98, 1.02, 1],
-    scaleX: [1, 1.04, 0.98, 1.02, 1],
-    y: [0, -2, 2, -1, 1, 0],
-    transition: { duration: 3.0, ease: "easeInOut" }
-  };
-
-  const randomSpinAnimation = {
-    rotate: [0, 180, 360, 350, 365, 360],
-    scale: [1, 1.15, 0.85, 1.05, 0.98, 1],
-    y: [0, -20, 5, -8, 0],
-    transition: { duration: 4.5, ease: "easeInOut" }
-  };
-
-  const randomStretchAnimation = {
-    scaleY: [1, 1.35, 0.8, 1.15, 0.95, 1.02, 1],
-    scaleX: [1, 0.75, 1.2, 0.88, 1.05, 0.98, 1],
-    y: [0, -10, 0, -2, 0],
-    transition: { duration: 4.0, ease: "easeInOut" }
-  };
-
-  const nappingAnimation = {
-    scaleY: [1, 1.04, 1.01, 1.05, 1],
-    scaleX: [1, 1.01, 1.03, 1.01, 1],
-    y: [0, 1.5, 0.5, 1.8, 0],
-    transition: {
-      duration: 10.0,
-      repeat: Infinity,
-      ease: "easeInOut"
-    }
-  };
-
-  let activeAnimation: any = isIdle ? nappingAnimation : restingAnimation;
+  let activeAnimation: any = isIdle ? companionAnimations.napping : companionAnimations.resting;
   if (reactionType === "success") {
-    activeAnimation = successAnimation;
+    activeAnimation = companionAnimations.success;
   } else if (reactionType === "error") {
-    activeAnimation = errorAnimation;
+    activeAnimation = companionAnimations.error;
   } else if (reactionType === "subtle") {
-    activeAnimation = subtleEventAnimation;
+    activeAnimation = companionAnimations.subtle;
   } else if (reactionType === "milestone-small") {
-    activeAnimation = smallMilestoneAnimation;
+    activeAnimation = companionAnimations.milestoneSmall;
   } else if (reactionType === "milestone-medium") {
-    activeAnimation = mediumMilestoneAnimation;
+    activeAnimation = companionAnimations.milestoneMedium;
   } else if (reactionType === "milestone-gold") {
-    activeAnimation = goldMilestoneAnimation;
+    activeAnimation = companionAnimations.milestoneGold;
   } else if (reactionType === "milestone-rainbow") {
-    activeAnimation = rainbowMilestoneAnimation;
+    activeAnimation = companionAnimations.milestoneRainbow;
   } else if (reactionType === "milestone-ultimate") {
-    activeAnimation = ultimateMilestoneAnimation;
+    activeAnimation = companionAnimations.milestoneUltimate;
   } else if (companionPose === "bounce") {
-    activeAnimation = randomBounceAnimation;
+    activeAnimation = companionAnimations.bounce;
   } else if (companionPose === "fly") {
-    activeAnimation = randomFlyAnimation;
+    activeAnimation = companionAnimations.fly;
   } else if (companionPose === "wiggle") {
-    activeAnimation = randomWiggleAnimation;
+    activeAnimation = companionAnimations.wiggle;
   } else if (companionPose === "spin") {
-    activeAnimation = randomSpinAnimation;
+    activeAnimation = companionAnimations.spin;
   } else if (companionPose === "stretch") {
-    activeAnimation = randomStretchAnimation;
-  }
+    activeAnimation = companionAnimations.stretch;
+  } else if (companionPose === "peek") {
+    activeAnimation = companionAnimations.peek;
+  } else if (companionPose === "dash") {
+    activeAnimation = companionAnimations.dash;
+  } else if (companionPose === "orbit") {
+    activeAnimation = companionAnimations.orbit;
+  } else if (companionPose === "curtsy") {
+    activeAnimation = companionAnimations.curtsy;
+  };
 
   // Eyes rendering based on states
   const renderEyes = () => {
@@ -1206,7 +927,11 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     <motion.div 
       ref={containerRef}
       initial={{ scale: 0, opacity: 0, y: 150, rotate: -25 }}
-      animate={{ scale: 1, opacity: 1, y: 0, rotate: 0 }}
+      animate={
+        travelMode === "home"
+          ? { scale: 1, opacity: 1, y: 0, rotate: 0 }
+          : { scale: 1, opacity: 1, ...companionTravelAnimations[travelMode] }
+      }
       transition={{ 
         type: "spring", 
         stiffness: 280, 
@@ -1243,11 +968,15 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         className={`pointer-events-auto cursor-pointer relative group flex items-center justify-center p-1 rounded-full transition-all duration-350 ${
           petCount >= 500
             ? "ring-4 ring-pink-500 ring-offset-2 scale-110"
-            : petCount >= 300
+          : petCount >= 300
             ? "ring-2 ring-purple-500 ring-offset-1 scale-105"
-            : petCount >= 100
+          : petCount >= 100
             ? "ring-2 ring-amber-400 ring-offset-1"
-            : ""
+          : petCount >= 50
+            ? "ring-2 ring-rose-300 ring-offset-1"
+          : petCount >= 30
+            ? "ring-1 ring-teal-300 ring-offset-1"
+          : ""
         }`}
         onClick={handlePetKitty}
         initial={{ scale: 1 }}
@@ -1324,7 +1053,15 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             : petCount >= 100
             ? "inset-[-3px] bg-gradient-to-r from-amber-400 via-rose-400 to-yellow-500 scale-110 opacity-90 animate-pulse"
             : petCount >= 50
-            ? "inset-[-1px] bg-rose-300/60 scale-105 opacity-80"
+            ? "inset-[-1px] bg-gradient-to-r from-rose-300 via-sky-200 to-amber-200 scale-105 opacity-80"
+            : petCount >= 40
+            ? "inset-0 bg-gradient-to-r from-teal-200 via-rose-200 to-amber-200 scale-[1.04] opacity-75"
+            : petCount >= 30
+            ? "inset-0 bg-teal-200/60 scale-[1.03] opacity-70"
+            : petCount >= 20
+            ? "inset-0 bg-amber-200/60 scale-[1.02] opacity-70"
+            : petCount >= 10
+            ? "inset-0 bg-rose-200/70 scale-[1.01] opacity-70"
             : "inset-1 bg-rose-200/40 group-hover:bg-rose-300/45"
         }`} />
 
@@ -1364,6 +1101,44 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
                   transition={{ duration: 0.35, repeat: Infinity }}
                 />
               </g>
+            )}
+
+            {(petCount >= 500 || accessory === "nova") && (
+              <g id="nova-aura">
+                <motion.circle
+                  cx="50"
+                  cy="50"
+                  r="46"
+                  fill="none"
+                  stroke="#22d3ee"
+                  strokeWidth="1.4"
+                  strokeDasharray="6 8"
+                  animate={{ rotate: 360, opacity: [0.35, 0.9, 0.35], scale: [0.94, 1.08, 0.94] }}
+                  transition={{ rotate: { repeat: Infinity, duration: 5.5, ease: "linear" }, opacity: { repeat: Infinity, duration: 2.2 }, scale: { repeat: Infinity, duration: 2.2 } }}
+                  style={{ originX: 0.5, originY: 0.5 }}
+                />
+                <motion.path
+                  d="M 50 0 L 54 11 L 66 7 L 61 19 L 74 23 L 61 29 L 68 40 L 55 37 L 50 50 L 45 37 L 32 40 L 39 29 L 26 23 L 39 19 L 34 7 L 46 11 Z"
+                  fill="rgba(255,255,255,0.55)"
+                  stroke="#f9a8d4"
+                  strokeWidth="1.2"
+                  animate={{ rotate: [0, 18, -18, 0], opacity: [0.2, 0.55, 0.2] }}
+                  transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ originX: 0.5, originY: 0.5 }}
+                />
+              </g>
+            )}
+
+            {accessory === "moon" && (
+              <motion.path
+                id="moon-charm"
+                d="M 70 12 C 61 16, 62 29, 72 32 C 65 35, 55 30, 54 21 C 53 12, 61 7, 70 12 Z"
+                fill="#fde68a"
+                stroke="#1e293b"
+                strokeWidth="1.6"
+                animate={{ y: [0, -2, 0], rotate: [-8, 8, -8] }}
+                transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+              />
             )}
 
             {/* 0. Fluffy Tail (Wags behind the body) */}
@@ -1495,6 +1270,20 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               <path d="M 57 16 Q 63 13, 60 19 Q 57 19, 57 16 Z" fill="#22c55e" stroke="#1e293b" strokeWidth="1" />
             </g>
 
+            {/* Level 10 ribbon state */}
+            {(petCount >= 10 || accessory === "ribbon") && (
+              <motion.g
+                id="ribbon-state"
+                animate={{ rotate: [-3, 3, -3], y: [0, -0.8, 0] }}
+                transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+                style={{ originX: 0.5, originY: 0.27 }}
+              >
+                <path d="M 43 27 C 35 22, 33 31, 42 33 Z" fill="#fb7185" stroke="#1e293b" strokeWidth="1.5" />
+                <path d="M 57 27 C 65 22, 67 31, 58 33 Z" fill="#fb7185" stroke="#1e293b" strokeWidth="1.5" />
+                <circle cx="50" cy="30" r="4" fill="#fda4af" stroke="#1e293b" strokeWidth="1.4" />
+              </motion.g>
+            )}
+
             {/* 5. Draw Dynamic Responsive Eyes */}
             {renderEyes()}
 
@@ -1545,6 +1334,49 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             <circle cx="59" cy="74" r="1.8" fill="#fda4af" />
             <circle cx="64" cy="72" r="1.8" fill="#fda4af" />
             <circle cx="69" cy="74" r="1.8" fill="#fda4af" />
+
+            {/* Level 20 bell state */}
+            {(petCount >= 20 || accessory === "bell") && (
+              <motion.g
+                id="bell-state"
+                animate={{ rotate: [-4, 4, -2, 2, 0] }}
+                transition={{ duration: 2.1, repeat: Infinity, ease: "easeInOut" }}
+                style={{ originX: 0.5, originY: 0.75 }}
+              >
+                <path d="M 39 72 Q 50 77, 61 72" stroke="#fb7185" strokeWidth="2.3" strokeLinecap="round" fill="none" />
+                <path d="M 45 75 C 45 69, 55 69, 55 75 L 57 82 L 43 82 Z" fill="#fbbf24" stroke="#1e293b" strokeWidth="1.7" strokeLinejoin="round" />
+                <circle cx="50" cy="82" r="2" fill="#d97706" />
+              </motion.g>
+            )}
+
+            {/* Level 30 study book charm */}
+            {petCount >= 30 && accessory !== "book" && (
+              <motion.g
+                id="study-book-charm"
+                animate={{ y: [0, -1.5, 0], rotate: [-2, 2, -2] }}
+                transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+              >
+                <path d="M 14 78 Q 22 75, 30 80 L 30 88 Q 22 84, 14 87 Z" fill="#fef3c7" stroke="#1e293b" strokeWidth="1.5" />
+                <path d="M 30 80 Q 38 75, 46 78 L 46 87 Q 38 84, 30 88 Z" fill="#fff7ed" stroke="#1e293b" strokeWidth="1.5" />
+                <line x1="18" y1="81" x2="27" y2="82" stroke="#78716c" strokeWidth="0.8" strokeLinecap="round" />
+                <line x1="34" y1="81" x2="42" y2="80" stroke="#78716c" strokeWidth="0.8" strokeLinecap="round" />
+              </motion.g>
+            )}
+
+            {/* Level 40 bubble tea charm */}
+            {(petCount >= 40 || accessory === "tea") && (
+              <motion.g
+                id="tea-charm"
+                animate={{ y: [0, -2, 0], rotate: [2, -2, 2] }}
+                transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
+              >
+                <path d="M 70 75 L 86 75 L 83 92 L 73 92 Z" fill="#fed7aa" stroke="#1e293b" strokeWidth="1.7" strokeLinejoin="round" />
+                <path d="M 72 79 L 84 79" stroke="#fb7185" strokeWidth="2" strokeLinecap="round" />
+                <path d="M 76 74 L 73 64" stroke="#1e293b" strokeWidth="1.5" strokeLinecap="round" />
+                <circle cx="76" cy="88" r="1.4" fill="#78350f" />
+                <circle cx="81" cy="87" r="1.4" fill="#78350f" />
+              </motion.g>
+            )}
 
             {/* Sparkle stars side additions for 50+ */}
             {petCount >= 50 && (

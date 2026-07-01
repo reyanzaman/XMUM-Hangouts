@@ -23,5 +23,31 @@
     "flag_status": "none",
     "appeal_count": 0,
     "is_demo_profile": true
+  },
+  {
+    "id": "b275d51d-9154-44e5-95cb-7b9fbaf6688c",
+    "email": "mcs2509008@xmu.edu.my",
+    "student_id": "mcs2509008",
+    "name": "Ashik",
+    "name_last_changed_at": "2026-07-01T14:59:38.339Z",
+    "country": "Malaysia",
+    "country_last_changed_at": null,
+    "languages": [
+      "English"
+    ],
+    "age": 20,
+    "program": "Software Engineering",
+    "year_of_study": "Year 1",
+    "gender": "Male",
+    "student_type": "degree",
+    "about_me": "Hey there! I am new here on XMUM Hangouts.",
+    "avatar_id": "panda",
+    "is_profile_complete": true,
+    "hide_details": false,
+    "is_admin": true,
+    "is_blocked_globally": false,
+    "flag_status": "none",
+    "appeal_count": 0,
+    "is_demo_profile": false
   }
 ]

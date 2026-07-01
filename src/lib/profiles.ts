@@ -1,4 +1,4 @@
-import { Profile } from "../types";
+import type { Profile } from "../types.js";
 
 export const DEMO_PROFILE_IDS = new Set(["sys_admin", "user_sarah", "user_ahmad", "user_xiaoming"]);
 export const DEMO_PROFILE_EMAILS = new Set([

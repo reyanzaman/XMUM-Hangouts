@@ -5,7 +5,6 @@
     "intention": "test this app",
     "location": "XMUM Campus",
     "event_datetime": "2026-07-23T07:34:00.000Z",
-    "meeting_point": "🔒 [Apply and get accepted to unlock]",
     "additional_info": "I want to write something but I dont know what to write.",
     "max_participants": 5,
     "restrictions": {
@@ -33,7 +32,8 @@
     "status": "expired",
     "created_at": "2026-06-30T18:34:30.753Z",
     "updated_at": "2026-06-30T18:52:24.616Z",
-    "is_anonymous": true
+    "is_anonymous": true,
+    "meeting_point": "🔒 [Apply and get accepted to unlock]"
   },
   {
     "id": "hangout_ezw9yqeju",
@@ -41,7 +41,6 @@
     "intention": "test this app",
     "location": "LY5",
     "event_datetime": "2026-06-30T12:30:00.000Z",
-    "meeting_point": "🔒 [Apply and get accepted to unlock]",
     "additional_info": "Don't expect too much",
     "max_participants": null,
     "restrictions": {
@@ -57,30 +56,7 @@
     "status": "expired",
     "created_at": "2026-06-30T10:21:52.943Z",
     "updated_at": "2026-06-30T18:52:24.616Z",
-    "is_anonymous": false
-  },
-  {
-    "id": "hangout_q2yw0ama0",
-    "creator_id": "deleted_user",
-    "intention": "study computer science together",
-    "location": "A3 Library",
-    "event_datetime": "2026-07-03T19:00:00.000Z",
-    "meeting_point": "Lets meet at the Xiamen University Bridge",
-    "additional_info": "",
-    "max_participants": 3,
-    "restrictions": {
-      "years": [],
-      "age_max": null,
-      "age_min": null,
-      "genders": [],
-      "programs": [],
-      "countries": [],
-      "languages": [],
-      "student_types": []
-    },
-    "status": "expired",
-    "created_at": "2026-06-30T10:20:41.470Z",
-    "updated_at": "2026-06-30T18:52:24.616Z",
-    "is_anonymous": false
+    "is_anonymous": false,
+    "meeting_point": "🔒 [Apply and get accepted to unlock]"
   }
 ]

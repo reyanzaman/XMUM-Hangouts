@@ -1,8 +1,8 @@
 import { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
-import { collapseProfilesByEmail, normalizeProfileEmail, pickCanonicalProfile } from "../lib/profiles";
-import { hashPassword, matchesStoredPassword } from "../lib/security";
+import { collapseProfilesByEmail, normalizeProfileEmail, pickCanonicalProfile } from "../lib/profiles.js";
+import { hashPassword, matchesStoredPassword } from "../lib/security.js";
 import type {
   AppNotification,
   Block,
@@ -13,8 +13,8 @@ import type {
   Profile,
   Report,
   ReportAppeal
-} from "../types";
-import { deleteOtpRecord, getOtpRecord, OtpStorageConfigurationError, saveOtpRecord } from "./otp-store";
+} from "../types.js";
+import { deleteOtpRecord, getOtpRecord, OtpStorageConfigurationError, saveOtpRecord } from "./otp-store.js";
 
 const ADMIN_EMAIL = "mcs2509008@xmu.edu.my";
 const SYSTEM_DELETED_USER_ID = "deleted_user";
