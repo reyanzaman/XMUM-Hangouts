@@ -193,7 +193,7 @@ function buildDeletedUserProfile() {
     is_blocked_globally: false,
     flag_status: "none",
     appeal_count: 0,
-    is_demo_profile: true
+    is_demo_profile: false
   };
 }
 
@@ -225,8 +225,14 @@ function sanitizeProfileForDatabase(profile: any) {
 }
 
 function isMissingPasswordHashColumnError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error || "");
-  return message.includes("password_hash") && message.includes("does not exist");
+  const maybeError = error as { message?: unknown; code?: unknown };
+  const message = typeof maybeError?.message === "string"
+    ? maybeError.message
+    : error instanceof Error
+      ? error.message
+      : String(error || "");
+  const code = typeof maybeError?.code === "string" ? maybeError.code : "";
+  return message.includes("password_hash") && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
 }
 
 async function upsertProfileWithFallback(profile: any) {

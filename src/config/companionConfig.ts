@@ -9,9 +9,24 @@ export type CompanionPose =
   | "peek"
   | "dash"
   | "orbit"
-  | "curtsy";
-export type CompanionAccessory = "none" | "book" | "wizard" | "saiyan" | "ribbon" | "bell" | "tea" | "moon" | "nova";
-export type CompanionTravel = "home" | "peek-left" | "peek-up" | "hop-out" | "orbit-loop";
+  | "curtsy"
+  | "walk"
+  | "study"
+  | "cook"
+  | "exercise";
+export type CompanionAccessory =
+  | "none"
+  | "book"
+  | "wizard"
+  | "saiyan"
+  | "ribbon"
+  | "bell"
+  | "tea"
+  | "moon"
+  | "nova"
+  | "glasses"
+  | "apron";
+export type CompanionTravel = "home" | "peek-left" | "peek-up" | "hop-out" | "orbit-loop" | "stroll-right";
 export type CompanionReaction =
   | "none"
   | "success"
@@ -31,6 +46,9 @@ export type CompanionAction = {
   travel?: CompanionTravel;
   speechChance?: number;
   durationMs?: number;
+  minPetCount?: number;
+  maxPetCount?: number;
+  preferredTabs?: string[];
 };
 
 export type CompanionMilestone = {
@@ -226,7 +244,42 @@ export const companionRandomActions: CompanionAction[] = [
   { text: "Tiny ribbon twirl completed.", pose: "curtsy", mood: "happy", accessory: "ribbon" },
   { text: "Tea charm inspection complete. Warm and approved.", pose: "peek", mood: "happy", accessory: "tea" },
   { text: "Soft bell wiggle. I am nearby if you need me.", pose: "wiggle", mood: "bouncy", accessory: "bell" },
-  { text: "Moonlit study guardian mode.", pose: "fly", mood: "sleepy", accessory: "moon" }
+  { text: "Moonlit study guardian mode.", pose: "fly", mood: "sleepy", accessory: "moon" },
+  {
+    text: "Tiny campus walk complete. I circled around and came back.",
+    pose: "walk",
+    mood: "happy",
+    accessory: "none",
+    travel: "stroll-right",
+    speechChance: 0.22,
+    durationMs: 5200
+  },
+  {
+    text: "Study mode on. I am reviewing one neat page at a time.",
+    pose: "study",
+    mood: "sleepy",
+    accessory: "glasses",
+    minPetCount: 30,
+    preferredTabs: ["feed", "profile", "my-plans"],
+    speechChance: 0.2
+  },
+  {
+    text: "Warm kitchen routine complete. Soup stirred, hearts warmed.",
+    pose: "cook",
+    mood: "happy",
+    accessory: "apron",
+    minPetCount: 40,
+    preferredTabs: ["feed", "create"],
+    speechChance: 0.18
+  },
+  {
+    text: "Gentle exercise set done. Tiny paws feel strong and cozy.",
+    pose: "exercise",
+    mood: "bouncy",
+    accessory: "none",
+    minPetCount: 50,
+    speechChance: 0.18
+  }
 ];
 
 export const companionGrumpyActions: CompanionAction[] = [
@@ -273,6 +326,35 @@ export const companionRareActions: CompanionAction[] = [
     travel: "peek-up",
     speechChance: 0.3,
     durationMs: 4000
+  },
+  {
+    text: "Quick study sprint with reading glasses complete.",
+    pose: "study",
+    mood: "happy",
+    accessory: "glasses",
+    minPetCount: 50,
+    preferredTabs: ["profile", "my-plans"],
+    speechChance: 0.24,
+    durationMs: 4500
+  },
+  {
+    text: "I walked to check every corner and returned safely.",
+    pose: "walk",
+    mood: "excited",
+    accessory: "ribbon",
+    travel: "stroll-right",
+    minPetCount: 20,
+    speechChance: 0.22,
+    durationMs: 5000
+  },
+  {
+    text: "Tiny workout circuit finished. Breathing in, breathing out.",
+    pose: "exercise",
+    mood: "excited",
+    accessory: "bell",
+    minPetCount: 80,
+    speechChance: 0.2,
+    durationMs: 4200
   }
 ];
 
@@ -337,9 +419,39 @@ export const companionPetMilestones: CompanionMilestone[] = [
     special: true
   },
   {
+    count: 250,
+    message: "250 pets reached, {name}. Cozy Study Captain state unlocked.",
+    particles: 48,
+    reaction: "milestone-gold",
+    accessory: "glasses",
+    special: true
+  },
+  {
     count: 300,
     message: "300 pets reached, {name}. Rainbow Halo state unlocked.",
     particles: 55,
+    reaction: "milestone-rainbow",
+    special: true
+  },
+  {
+    count: 350,
+    message: "350 pets reached, {name}. Tiny Chef Apron state unlocked.",
+    particles: 60,
+    reaction: "milestone-gold",
+    accessory: "apron",
+    special: true
+  },
+  {
+    count: 400,
+    message: "400 pets reached, {name}. Happy Walker state unlocked.",
+    particles: 68,
+    reaction: "milestone-rainbow",
+    special: true
+  },
+  {
+    count: 450,
+    message: "450 pets reached, {name}. Gentle Workout state unlocked.",
+    particles: 76,
     reaction: "milestone-rainbow",
     special: true
   },
@@ -480,6 +592,31 @@ export const companionAnimations = {
     scaleY: [1, 0.9, 1.08, 0.98, 1],
     transition: { duration: 2.7, ease: "easeInOut" }
   },
+  walk: {
+    x: [0, 8, -8, 10, -10, 0],
+    y: [0, -2, 0, -3, 0, -1, 0],
+    rotate: [0, -4, 4, -5, 5, 0],
+    transition: { duration: 3.1, ease: "easeInOut" }
+  },
+  study: {
+    y: [0, -1, 0, -1, 0],
+    scaleY: [1, 1.02, 1, 1.02, 1],
+    rotate: [0, -1.5, 1.5, 0],
+    transition: { duration: 3.2, ease: "easeInOut" }
+  },
+  cook: {
+    x: [0, -3, 3, -2, 2, 0],
+    y: [0, -1, 0, -1, 0],
+    rotate: [0, -6, 6, -3, 3, 0],
+    transition: { duration: 2.8, ease: "easeInOut" }
+  },
+  exercise: {
+    y: [0, -14, 2, -10, 1, -6, 0],
+    scaleY: [1, 1.1, 0.9, 1.06, 0.96, 1.02, 1],
+    scaleX: [1, 0.94, 1.06, 0.96, 1.03, 0.99, 1],
+    rotate: [0, -6, 6, -4, 4, 0],
+    transition: { duration: 2.9, ease: "easeInOut" }
+  },
   napping: {
     scaleY: [1, 1.04, 1.01, 1.05, 1],
     scaleX: [1, 1.01, 1.03, 1.01, 1],
@@ -513,6 +650,12 @@ export const companionTravelAnimations: Record<CompanionTravel, any> = {
     y: [0, -92, -24, -118, 0],
     rotate: [0, -22, 18, -10, 0],
     transition: { duration: 5.2, ease: "easeInOut" }
+  },
+  "stroll-right": {
+    x: [0, 42, 80, 52, 0],
+    y: [0, -3, -8, -2, 0],
+    rotate: [0, 3, -2, 2, 0],
+    transition: { duration: 5.1, ease: "easeInOut" }
   }
 };
 

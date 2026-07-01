@@ -61,6 +61,9 @@ import {
   Trash2
 } from "lucide-react";
 
+const ADMIN_TEST_CARD_EMAIL = "mcs2509008@xmu.edu.my";
+const SYSTEM_DELETED_USER_ID = "deleted_user";
+
 const AppContent: React.FC = () => {
   const {
     currentUser,
@@ -128,6 +131,19 @@ const AppContent: React.FC = () => {
   const [genderFilter, setGenderFilter] = useState<"all" | "male" | "female">("all");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const normalizedCurrentEmail = currentUser?.email?.trim().toLowerCase() || "";
+  const canViewTestUserCards = normalizedCurrentEmail === ADMIN_TEST_CARD_EMAIL;
+  const isTestCreatorHangout = (creatorId: string) => {
+    if (creatorId === SYSTEM_DELETED_USER_ID) return false;
+    const creatorProfile = profiles.find(profile => profile.id === creatorId);
+    if (creatorProfile) {
+      if (creatorProfile.id === SYSTEM_DELETED_USER_ID) return false;
+      return isDemoProfile(creatorProfile);
+    }
+
+    const normalizedCreatorId = creatorId.trim().toLowerCase();
+    return /^(test|demo|mock|sample|dummy)([._-]|$)/i.test(normalizedCreatorId);
+  };
 
   // Reset pagination to page 1 whenever search, activeTab, or filters change
   useEffect(() => {
@@ -323,7 +339,7 @@ const AppContent: React.FC = () => {
             avatar_id: "panda",
             is_profile_complete: false,
             hide_details: false,
-            is_admin: email.toLowerCase() === "mcs2509008@xmu.edu.my" || email.toLowerCase().startsWith("admin"),
+            is_admin: email.toLowerCase() === ADMIN_TEST_CARD_EMAIL || email.toLowerCase().startsWith("admin"),
             is_blocked_globally: false,
             flag_status: "none",
             appeal_count: 0
@@ -678,6 +694,14 @@ const AppContent: React.FC = () => {
             return hostGender.includes("female");
           });
         }
+
+        // Always show deleted-user cards, but restrict demo/test cards to the primary admin account.
+        feed = feed.filter(h => {
+          if (h.creator_id === SYSTEM_DELETED_USER_ID) {
+            return true;
+          }
+          return canViewTestUserCards || !isTestCreatorHangout(h.creator_id);
+        });
 
         // Slice for pagination: 20 per page
         const itemsPerPage = 20;
@@ -2819,4 +2843,3 @@ export default function App() {
     </AppProvider>
   );
 }
-

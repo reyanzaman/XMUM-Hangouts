@@ -208,55 +208,6 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     return () => clearInterval(interval);
   }, [isIdle]);
 
-  // Periodic subtle cute random companion movement triggers and rare screen hops.
-  useEffect(() => {
-    if (isIdle) return;
-
-    const triggerRandomMovement = () => {
-      const rareAction = !isCompanionAngry && Math.random() < 0.12;
-      const actionsToUse = isCompanionAngry
-        ? companionGrumpyActions
-        : rareAction
-        ? companionRareActions
-        : companionRandomActions;
-      const action = actionsToUse[Math.floor(Math.random() * actionsToUse.length)];
-
-      setCompanionPose(action.pose);
-      setMood(action.mood);
-      setAccessory(action.accessory);
-      if (action.travel) setTravelMode(action.travel);
-
-      const speechChance = action.speechChance ?? (rareAction ? 0.3 : 0.15);
-      if (Math.random() < speechChance) {
-        setBubbleText(formatCompanionLine(action.text, { name: fName }));
-      }
-
-      setTimeout(() => {
-        setCompanionPose("rest");
-        setMood(isCompanionAngry ? "sleepy" : "happy");
-        setAccessory("none");
-        setTravelMode("home");
-      }, action.durationMs ?? 8000);
-    };
-
-    let timerId: any;
-
-    const scheduleNext = () => {
-      const delay = Math.floor(Math.random() * 22000) + 26000;
-      timerId = setTimeout(() => {
-        triggerRandomMovement();
-        scheduleNext();
-      }, delay);
-    };
-
-    timerId = setTimeout(() => {
-      triggerRandomMovement();
-      scheduleNext();
-    }, 22000);
-
-    return () => clearTimeout(timerId);
-  }, [isIdle, isCompanionAngry, fName]);
-
   // Suppress transient hydration alarms during database loading on mount
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -290,6 +241,62 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     }
     return 0;
   });
+
+  // Periodic subtle cute random companion movement triggers and rare screen hops.
+  useEffect(() => {
+    if (isIdle) return;
+
+    const triggerRandomMovement = () => {
+      const rareAction = !isCompanionAngry && Math.random() < (petCount >= 50 ? 0.2 : 0.12);
+      const baseActions = isCompanionAngry
+        ? companionGrumpyActions
+        : rareAction
+        ? [...companionRandomActions, ...companionRareActions]
+        : companionRandomActions;
+      const eligibleActions = baseActions.filter(action => {
+        const reachedMin = action.minPetCount === undefined || petCount >= action.minPetCount;
+        const underMax = action.maxPetCount === undefined || petCount <= action.maxPetCount;
+        const tabMatch = !action.preferredTabs || action.preferredTabs.includes(activeTab);
+        return reachedMin && underMax && tabMatch;
+      });
+      const actionsToUse = eligibleActions.length > 0 ? eligibleActions : baseActions;
+      const action = actionsToUse[Math.floor(Math.random() * actionsToUse.length)];
+
+      setCompanionPose(action.pose);
+      setMood(action.mood);
+      setAccessory(action.accessory);
+      if (action.travel) setTravelMode(action.travel);
+
+      const speechChance = action.speechChance ?? (rareAction ? 0.22 : 0.1);
+      if (Math.random() < speechChance) {
+        setBubbleText(formatCompanionLine(action.text, { name: fName }));
+      }
+
+      setTimeout(() => {
+        setCompanionPose("rest");
+        setMood(isCompanionAngry ? "sleepy" : "happy");
+        setAccessory("none");
+        setTravelMode("home");
+      }, action.durationMs ?? 8000);
+    };
+
+    let timerId: any;
+
+    const scheduleNext = () => {
+      const delay = Math.floor(Math.random() * 22000) + 26000;
+      timerId = setTimeout(() => {
+        triggerRandomMovement();
+        scheduleNext();
+      }, delay);
+    };
+
+    timerId = setTimeout(() => {
+      triggerRandomMovement();
+      scheduleNext();
+    }, 22000);
+
+    return () => clearTimeout(timerId);
+  }, [isIdle, isCompanionAngry, fName, petCount, activeTab]);
 
   const [particles, setParticles] = useState<{ id: number; x: number; y: number; rotate: number; size: number; color: string }[]>([]);
   
@@ -791,6 +798,14 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     activeAnimation = companionAnimations.orbit;
   } else if (companionPose === "curtsy") {
     activeAnimation = companionAnimations.curtsy;
+  } else if (companionPose === "walk") {
+    activeAnimation = companionAnimations.walk;
+  } else if (companionPose === "study") {
+    activeAnimation = companionAnimations.study;
+  } else if (companionPose === "cook") {
+    activeAnimation = companionAnimations.cook;
+  } else if (companionPose === "exercise") {
+    activeAnimation = companionAnimations.exercise;
   };
 
   // Eyes rendering based on states
@@ -1287,9 +1302,28 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             {/* 5. Draw Dynamic Responsive Eyes */}
             {renderEyes()}
 
+            {accessory === "glasses" && (
+              <g id="reading-glasses">
+                <circle cx="34" cy="46" r="8.5" fill="none" stroke="#0f172a" strokeWidth="1.8" />
+                <circle cx="66" cy="46" r="8.5" fill="none" stroke="#0f172a" strokeWidth="1.8" />
+                <line x1="42.5" y1="46" x2="57.5" y2="46" stroke="#0f172a" strokeWidth="1.8" strokeLinecap="round" />
+                <line x1="25.5" y1="43" x2="21" y2="40" stroke="#0f172a" strokeWidth="1.5" strokeLinecap="round" />
+                <line x1="74.5" y1="43" x2="79" y2="40" stroke="#0f172a" strokeWidth="1.5" strokeLinecap="round" />
+              </g>
+            )}
+
             {/* 6. Soft Rosy Cheek Blush */}
             <circle cx="22" cy="62" r="5" fill="#fda4af" opacity="0.95" />
             <circle cx="78" cy="62" r="5" fill="#fda4af" opacity="0.95" />
+
+            {accessory === "apron" && (
+              <g id="chef-apron">
+                <path d="M 36 59 Q 50 53, 64 59 L 61 83 Q 50 87, 39 83 Z" fill="#f8fafc" stroke="#1e293b" strokeWidth="1.8" strokeLinejoin="round" />
+                <path d="M 41 58 C 43 54, 47 53, 50 54 C 53 53, 57 54, 59 58" fill="none" stroke="#1e293b" strokeWidth="1.4" strokeLinecap="round" />
+                <path d="M 43 69 L 57 69" stroke="#fb7185" strokeWidth="1.8" strokeLinecap="round" />
+                <circle cx="50" cy="76" r="2" fill="#fb7185" />
+              </g>
+            )}
 
             {/* 7. Cute Curved Soft Whiskers with subtle bounce */}
             <motion.g
