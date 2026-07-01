@@ -27,7 +27,7 @@ export class OtpStorageConfigurationError extends Error {}
 
 const isMissingTableError = (error: any) =>
   error?.code === "PGRST205" ||
-  typeof error?.message === "string" && error.message.includes(`public.${OTP_TABLE}`);
+  (typeof error?.message === "string" && error.message.includes(`public.${OTP_TABLE}`));
 
 const parseHistory = (value: unknown): number[] => {
   if (!Array.isArray(value)) return [];
