@@ -124,6 +124,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const queueRef = useRef<string[]>([]);
   const processingQueueRef = useRef<boolean>(false);
   const lastSpeechTimeRef = useRef<number>(0);
+  const lastCompanionMessageRef = useRef<string>(bubbleText);
   const draggedRef = useRef<boolean>(false);
   const dragHistoryRef = useRef<number[]>([]);
   const [showBubble, setShowBubble] = useState<boolean>(true);
@@ -150,6 +151,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     const nextText = queueRef.current.shift();
     if (nextText) {
       setBubbleTextInternal(nextText);
+      lastCompanionMessageRef.current = nextText;
       setShowBubble(true);
       lastSpeechTimeRef.current = Date.now();
       
@@ -169,12 +171,25 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
   const setBubbleText = (val: string | ((prev: string) => string)) => {
     const textStr = typeof val === "function" ? (val as any)(bubbleText) : val;
+    const normalizedText = textStr.trim();
+
+    if (!normalizedText) {
+      return;
+    }
     
-    if (textStr.includes("Zzz... Napping") && queueRef.current.some(t => t.includes("Zzz... Napping"))) {
+    if (normalizedText.includes("Zzz... Napping") && queueRef.current.some(t => t.includes("Zzz... Napping"))) {
       return; // prevent spamming idle napping text
     }
 
-    queueRef.current.push(textStr);
+    const mostRecentQueuedText = queueRef.current.length > 0
+      ? queueRef.current[queueRef.current.length - 1]
+      : lastCompanionMessageRef.current;
+
+    if (mostRecentQueuedText?.trim() === normalizedText) {
+      return;
+    }
+
+    queueRef.current.push(normalizedText);
     processQueue();
   };
 

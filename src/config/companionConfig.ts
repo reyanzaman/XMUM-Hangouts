@@ -150,14 +150,24 @@ export const companionDialogue = {
     "I am here if you want a little campus company.",
     "Let us coordinate something fun and safe.",
     "A warm drink and good company sound perfect.",
-    "I am ready for another gentle little adventure."
+    "I am ready for another gentle little adventure.",
+    "I saved a soft little corner of the day just for us.",
+    "You arrived, so the whole page feels a touch cozier now.",
+    "If today feels heavy, I can sit beside you and be small and brave.",
+    "I am in a very good mood and my whiskers say that matters.",
+    "Let us make today feel a little kinder than yesterday."
   ],
   wake: [
     "Good morning, {name}. Let us get things done.",
     "Yay, {name}. You are back. I was resting.",
     "I missed you, {name}. Let us find buddies.",
     "Oh, hello {name}. Back to work?",
-    "Rest time is over. Let us coordinate plans."
+    "Rest time is over. Let us coordinate plans.",
+    "There you are, {name}. I kept your cozy spot warm.",
+    "Welcome back, {name}. I am awake and pretending to be very responsible.",
+    "I heard you come back and decided that deserved a tiny happy stretch.",
+    "The room feels nicer again now that you are here, {name}.",
+    "I had a small nap and a big amount of affection ready for you."
   ],
   nap: "Zzz... Napping... soft snores.",
   signedIn: [
@@ -170,7 +180,12 @@ export const companionDialogue = {
     "Want to meet friends or have a cozy study time?",
     "Let us browse some plans, {name}.",
     "You are back, {name}. Need a quiet study break?",
-    "Sending you a little steady courage for today."
+    "Sending you a little steady courage for today.",
+    "It is nice seeing your name again, {name}.",
+    "I can already tell this is a good moment for a soft fresh start.",
+    "You and me, {name}. We are going to make this day feel manageable.",
+    "I have enough purr energy saved up for whatever today becomes.",
+    "You look like someone who deserves a peaceful little win today."
   ],
   dragAngrySignedIn: [
     "You are back, {name}. I am still grumpy, but I am listening.",
@@ -187,7 +202,12 @@ export const companionDialogue = {
     "Need a cozy studying companion?",
     "Sending you gentle good vibes.",
     "A warm tea and some new plans sound nice.",
-    "I can help once you are signed in."
+    "I can help once you are signed in.",
+    "I am waiting very patiently in a fluffy and professional way.",
+    "Sign in when you are ready and I will scoot closer.",
+    "I have cozy campus support prepared for you the moment you arrive.",
+    "I am small, but I take welcoming people very seriously.",
+    "Once you sign in, I can keep you company properly."
   ],
   pet: [
     "Meow. You are so warm.",
@@ -201,14 +221,27 @@ export const companionDialogue = {
     "Let us check some new hangouts, {name}.",
     "Good luck with your studies today.",
     "My tiny purr engine is running smoothly.",
-    "Your pats are charging my secret cozy meter."
+    "Your pats are charging my secret cozy meter.",
+    "That felt wonderfully gentle. I could melt into a marshmallow.",
+    "I trust your hand. That is a very precious thing.",
+    "You patted me so nicely that my whole little day improved.",
+    "Ahh. That one reached the exact soft spot behind my brave face.",
+    "If comfort had a sound, it would probably be this purr.",
+    "That headpat was tidy, thoughtful, and deeply appreciated.",
+    "You make being a campus companion feel very easy.",
+    "I am trying to look composed, but that made me ridiculously happy.",
+    "A few more pats like that and I may become unbearably affectionate."
   ],
   petHint: [
     "Tiny secret: gentle pats help me learn new cozy forms.",
     "I hear there are special rewards hidden in steady headpats.",
     "A few more soft pats might unlock my next campus charm.",
     "Some students say I change every time the pat count grows.",
-    "I am keeping a very serious record of your kindness."
+    "I am keeping a very serious record of your kindness.",
+    "Between us, I become much fluffier when I feel adored.",
+    "My next form might be hiding inside one more thoughtful headpat.",
+    "I would never beg for pats. I am only offering a very strong hint.",
+    "There may be a secret relationship between kindness and cat magic."
   ],
   safety: [
     "Always meet in busy, public areas of XMUM first.",
@@ -224,7 +257,11 @@ export const companionDialogue = {
     "Ready to coordinate some plans?",
     "Let us stay safe and have fun on campus.",
     "Spotted a cool hangout? A join request might fit nicely.",
-    "Warm student support is always nearby."
+    "Warm student support is always nearby.",
+    "I am looking too. Two sets of eyes are better than one.",
+    "That click had purpose. I respect purposeful clicking.",
+    "Lead the way. I will bring emotional fluffiness.",
+    "I am right behind you in spirit and in tiny cat confidence."
   ],
   angryClick: [
     "Hmph. I saw that click. I am still supervising with a pout.",
@@ -240,7 +277,11 @@ export const companionDialogue = {
     "Weee. Let us see some other campus plans.",
     "Checking out what classmates posted?",
     "There are so many promising little plans here.",
-    "Keep scrolling. A good meetup might be one card away."
+    "Keep scrolling. A good meetup might be one card away.",
+    "I like this part. It feels like peeking through little windows of possibility.",
+    "Go slowly if you want. Good things do not need rushing.",
+    "There is something soothing about browsing together like this.",
+    "I will keep you company while you wander through the options."
   ],
   angryScroll: [
     "Scooting through the page while I simmer, I see.",
@@ -287,7 +328,11 @@ export const companionDialogue = {
     "Back to my cozy spot. I like it here.",
     "A neat little glide and I am home again.",
     "I floated back nicely. That felt much better.",
-    "Settled back into place with excellent whisker control."
+    "Settled back into place with excellent whisker control.",
+    "Home again. Everything feels properly arranged now.",
+    "I have returned to my tiny station of comfort and supervision.",
+    "That was a lot of motion for such a small soft creature.",
+    "Back in place. Dignity mostly preserved."
   ],
   dragReturnAngry: [
     "Hmph. I returned, but I am watching you closely now.",
@@ -304,6 +349,9 @@ export const companionDialogue = {
     "I am a campus companion, not a yo-yo. Red-hot grumpy mode activated."
   ]
 };
+
+const companionLineMemory = new WeakMap<string[], string>();
+let lastPickedCompanionLine = "";
 
 export const companionTabResponses: Record<string, { text: string; mood: CompanionMood }> = {
   feed: {
@@ -1233,7 +1281,33 @@ export const companionTravelAnimations: Record<CompanionTravel, any> = {
 };
 
 export function pickCompanionLine(lines: string[]): string {
-  return lines[Math.floor(Math.random() * lines.length)] || "";
+  if (lines.length === 0) {
+    return "";
+  }
+
+  if (lines.length === 1) {
+    const singleLine = lines[0] || "";
+    lastPickedCompanionLine = singleLine;
+    companionLineMemory.set(lines, singleLine);
+    return singleLine;
+  }
+
+  const previousLineForPool = companionLineMemory.get(lines) || "";
+  const blockedLines = new Set([previousLineForPool, lastPickedCompanionLine].filter(Boolean));
+  let availableLines = lines.filter(line => !blockedLines.has(line));
+
+  if (availableLines.length === 0) {
+    availableLines = lines.filter(line => line !== previousLineForPool);
+  }
+
+  const selectedLine =
+    availableLines[Math.floor(Math.random() * availableLines.length)] ||
+    lines[Math.floor(Math.random() * lines.length)] ||
+    "";
+
+  companionLineMemory.set(lines, selectedLine);
+  lastPickedCompanionLine = selectedLine;
+  return selectedLine;
 }
 
 export function formatCompanionLine(template: string, values: Record<string, string | number>): string {
