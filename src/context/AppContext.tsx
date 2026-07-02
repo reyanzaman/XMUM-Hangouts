@@ -558,6 +558,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const syncPasswordCredential = async (password: string) => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (sessionData.session?.access_token) {
+        headers.Authorization = `Bearer ${sessionData.session.access_token}`;
+      }
+
+      const localAuthToken = getLocalAuthToken();
+      if (localAuthToken) {
+        headers["X-Local-Auth"] = localAuthToken;
+      }
+
+      const response = await fetch("/api/auth/set-password", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ password })
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        console.warn("Password credential sync failed:", payload.error || response.statusText);
+      }
+    } catch (error) {
+      console.warn("Password credential sync request failed:", error);
+    }
+  };
+
   const resolveProfileByEmail = async (email: string, authUserId?: string | null): Promise<Profile | null> => {
     const normalizedEmail = normalizeProfileEmail(email);
     const candidates: Profile[] = [];
@@ -633,10 +663,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...getStoredProfilesSnapshot()
     );
 
-    return pickCanonicalProfile(normalizeProfiles(candidates), { email: normalizedEmail, authUserId });
+    const profile = pickCanonicalProfile(normalizeProfiles(candidates), { email: normalizedEmail, authUserId });
+    if (!profile) return null;
+
+    try {
+      const {
+        data: { user }
+      } = await supabase.auth.getUser();
+      if (user?.email && normalizeProfileEmail(user.email) === normalizedEmail) {
+        return mergeProfileWithAuthMetadata(profile, user);
+      }
+    } catch {
+      // Session metadata is only a resilience layer; the profile row remains valid without it.
+    }
+
+    return profile;
   };
 
-  const applyAuthenticatedProfile = async (email: string, authUserId?: string | null) => {
+  const mergeProfileWithAuthMetadata = (profile: Profile, authUser?: any | null): Profile => {
+    const profileMetadata = authUser?.user_metadata?.xmum_profile || {};
+    const passwordHash = authUser?.app_metadata?.xmum_password_hash || profile.password_hash || null;
+
+    return normalizeProfileRecord({
+      ...profile,
+      birthdate: profile.birthdate ?? profileMetadata.birthdate ?? null,
+      companion_pet_count: Math.max(
+        0,
+        Number(profile.companion_pet_count ?? profileMetadata.companion_pet_count ?? 0)
+      ),
+      companion_selected_state_id:
+        profile.companion_selected_state_id ?? profileMetadata.companion_selected_state_id ?? null,
+      password_hash: passwordHash
+    });
+  };
+
+  const applyAuthenticatedProfile = async (email: string, authUserId?: string | null, authUser?: any | null) => {
     const normalizedEmail = normalizeProfileEmail(email);
 
     if (!normalizedEmail.endsWith("@xmu.edu.my")) {
@@ -686,7 +747,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    const normalizedCurrentUser = normalizeProfileRecord(profile);
+    const normalizedCurrentUser = mergeProfileWithAuthMetadata(profile, authUser);
     setCurrentUser(normalizedCurrentUser);
     setProfiles(prev => {
       const nextProfiles = prev.some(
@@ -903,6 +964,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         let pendingAuthEmail: string | null = null;
         let pendingAuthUserId: string | null = null;
+        let pendingAuthUser: any | null = null;
         const shouldWaitForAuthSession =
           sessionStorage.getItem(authRedirectStorageKey) === "true" ||
           window.location.search.includes("code=") ||
@@ -938,6 +1000,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 refresh_token: maybeRefreshToken
               });
               if (!sessionSetErr) {
+                pendingAuthUser = restoredSession.session?.user || pendingAuthUser;
                 pendingAuthEmail = restoredSession.session?.user?.email
                   ? normalizeProfileEmail(restoredSession.session.user.email)
                   : pendingAuthEmail;
@@ -956,6 +1019,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             console.log("Exchanging Supabase OAuth code for a session...");
             const { data: exchangedSession, error: exchangeErr } = await supabase.auth.exchangeCodeForSession(authCode);
             if (!exchangeErr) {
+              pendingAuthUser = exchangedSession.session?.user || pendingAuthUser;
               pendingAuthEmail = exchangedSession.session?.user?.email
                 ? normalizeProfileEmail(exchangedSession.session.user.email)
                 : pendingAuthEmail;
@@ -1109,7 +1173,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const authSubscription = supabase.auth.onAuthStateChange(async (_event, session) => {
           try {
             if (session?.user?.email) {
-              await applyAuthenticatedProfile(session.user.email, session.user.id);
+              await applyAuthenticatedProfile(session.user.email, session.user.id, session.user);
             }
           } catch (callbackErr) {
             console.error("Auth state change callback exception:", callbackErr);
@@ -1118,12 +1182,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         authSubscriptionCleanup = () => authSubscription.data.subscription.unsubscribe();
 
         const settledSession =
-          pendingAuthEmail && pendingAuthUserId
+          pendingAuthUser
+            ? { user: pendingAuthUser } as any
+            : pendingAuthEmail && pendingAuthUserId
             ? { user: { email: pendingAuthEmail, id: pendingAuthUserId } } as any
             : await waitForSessionSnapshot();
 
         if (settledSession?.user?.email) {
-          await applyAuthenticatedProfile(settledSession.user.email, settledSession.user.id);
+          await applyAuthenticatedProfile(settledSession.user.email, settledSession.user.id, settledSession.user);
         }
 
         // --- 2. Hangouts ---
@@ -1493,7 +1559,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (hasLiveSession && sessionSnapshot.session?.user?.email) {
           await applyAuthenticatedProfile(
             sessionSnapshot.session.user.email,
-            sessionSnapshot.session.user.id
+            sessionSnapshot.session.user.id,
+            sessionSnapshot.session.user
           );
         }
 
@@ -2619,6 +2686,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const trimmedPassword = update.password.trim();
       if (trimmedPassword.length > 0) {
         update.password_hash = hashPassword(currentUser.email, trimmedPassword);
+        void syncPasswordCredential(trimmedPassword);
       }
       delete update.password;
     }

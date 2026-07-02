@@ -298,6 +298,98 @@ function generateLocalAuthToken(profile: { id: string; email: string }) {
   return `${encodedPayload}.${signature}`;
 }
 
+async function findAuthUserByEmail(email: string) {
+  if (!supabaseAdmin) return null;
+
+  const normalizedEmail = normalizeProfileEmail(email);
+  for (let page = 1; page <= 20; page += 1) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) {
+      console.warn("Supabase auth user lookup failed:", error.message);
+      return null;
+    }
+
+    const users = (data?.users || []) as Array<{ id: string; email?: string | null; user_metadata?: any; app_metadata?: any }>;
+    const match = users.find(user => normalizeProfileEmail(user.email || "") === normalizedEmail);
+    if (match) return match;
+    if (users.length < 1000) return null;
+  }
+
+  return null;
+}
+
+function mergeProfileWithAuthMetadata(profile: Profile, authUser?: any | null): Profile {
+  const userMetadata = authUser?.user_metadata || {};
+  const appMetadata = authUser?.app_metadata || {};
+  const profileMetadata = userMetadata.xmum_profile || {};
+  const passwordHash = appMetadata.xmum_password_hash || profile.password_hash || null;
+
+  return {
+    ...profile,
+    birthdate: profile.birthdate ?? profileMetadata.birthdate ?? null,
+    companion_pet_count: Math.max(
+      0,
+      Number(profile.companion_pet_count ?? profileMetadata.companion_pet_count ?? 0)
+    ),
+    companion_selected_state_id:
+      profile.companion_selected_state_id ?? profileMetadata.companion_selected_state_id ?? null,
+    password_hash: passwordHash
+  };
+}
+
+async function mirrorProfileToAuthUser(profile: Profile, password?: string) {
+  if (!supabaseAdmin || !profile?.email) return;
+
+  try {
+    let authUser = await findAuthUserByEmail(profile.email);
+    const passwordHash = profile.password_hash || (password ? hashPassword(profile.email, password) : null);
+    const userMetadata = {
+      ...(authUser?.user_metadata || {}),
+      xmum_profile: {
+        ...((authUser?.user_metadata || {}).xmum_profile || {}),
+        birthdate: profile.birthdate ?? null,
+        companion_pet_count: Math.max(0, Number(profile.companion_pet_count || 0)),
+        companion_selected_state_id: profile.companion_selected_state_id ?? null
+      }
+    };
+    const appMetadata = {
+      ...(authUser?.app_metadata || {}),
+      ...(passwordHash ? { xmum_password_hash: passwordHash } : {})
+    };
+
+    if (!authUser && password) {
+      const created = await supabaseAdmin.auth.admin.createUser({
+        email: normalizeProfileEmail(profile.email),
+        password,
+        email_confirm: true,
+        user_metadata: userMetadata,
+        app_metadata: appMetadata
+      });
+      if (created.error) {
+        console.warn("Supabase auth mirror user creation failed:", created.error.message);
+      }
+      return;
+    }
+
+    if (!authUser) return;
+
+    const updatePayload: any = {
+      user_metadata: userMetadata,
+      app_metadata: appMetadata
+    };
+    if (password) {
+      updatePayload.password = password;
+    }
+
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, updatePayload);
+    if (error) {
+      console.warn("Supabase auth mirror update failed:", error.message);
+    }
+  } catch (error) {
+    console.warn("Supabase auth metadata mirror failed:", error);
+  }
+}
+
 function verifyLocalAuthToken(token: string | undefined | null) {
   if (!token || !token.includes(".")) return null;
 
@@ -380,7 +472,11 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
     }
   }
 
-  return pickCanonicalProfile(candidateProfiles, { email: formattedEmail });
+  const profile = pickCanonicalProfile(candidateProfiles, { email: formattedEmail });
+  if (!profile) return null;
+
+  const authUser = await findAuthUserByEmail(formattedEmail);
+  return mergeProfileWithAuthMetadata(profile, authUser);
 }
 
 async function upsertProfileWithFallback(profile: Profile) {
@@ -414,6 +510,14 @@ async function prepareProfileRowsForSupabase(rows: Profile[], client = supabaseA
   if (emails.length === 0) {
     return collapsedRows;
   }
+
+  await Promise.all(
+    collapsedRows.map(row =>
+      mirrorProfileToAuthUser(row as Profile).catch(error => {
+        console.warn("Auth metadata mirror during profile sync failed:", error);
+      })
+    )
+  );
 
   let existingProfiles: Profile[] = [];
   try {
@@ -879,6 +983,9 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
     await upsertProfileWithFallback(profile);
   }
 
+  profile = mergeProfileWithAuthMetadata(profile, authResponse.data?.user);
+  await mirrorProfileToAuthUser(profile);
+
   if (authResponse.error || !authResponse.data?.session) {
     return res.status(200).json({
       success: true,
@@ -920,25 +1027,72 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
   }
 
   const formattedEmail = normalizeProfileEmail(email);
-  const profile = await resolveBestProfileByEmail(formattedEmail);
+  let profile = await resolveBestProfileByEmail(formattedEmail);
 
   if (!profile) {
-    return res.status(404).json({
-      error: "No registered profile found with this email. Registrations require a verified verification code first."
+    const authOnlyResponse = await supabase.auth.signInWithPassword({
+      email: formattedEmail,
+      password
+    });
+
+    if (authOnlyResponse.error || !authOnlyResponse.data?.user?.email) {
+      return res.status(404).json({
+        error: "No registered profile found with this email. Please log in with a verification code or Microsoft first."
+      });
+    }
+
+    const studentId = formattedEmail.split("@")[0];
+    profile = {
+      id: authOnlyResponse.data.user.id,
+      email: formattedEmail,
+      student_id: studentId,
+      name: studentId,
+      name_last_changed_at: null,
+      country: "Malaysia",
+      country_last_changed_at: null,
+      languages: ["English"],
+      age: 18,
+      program: "Software Engineering",
+      year_of_study: "Year 1",
+      gender: "Male",
+      student_type: "degree",
+      about_me: "Hey there! I am new here on XMUM Hangouts.",
+      avatar_id: "panda",
+      is_profile_complete: false,
+      hide_details: false,
+      is_admin: isConfiguredAdminEmail(formattedEmail) || formattedEmail.startsWith("admin"),
+      is_blocked_globally: false,
+      flag_status: "none",
+      appeal_count: 0,
+      password_hash: hashPassword(formattedEmail, password)
+    };
+    await upsertProfileWithFallback(profile);
+    await mirrorProfileToAuthUser(profile, password);
+  }
+
+  let authResponse = await supabase.auth.signInWithPassword({
+    email: formattedEmail,
+    password
+  });
+
+  const hasAppPassword = Boolean(profile.password_hash || (profile as any).password);
+  const appPasswordMatches = hasAppPassword && matchesStoredPassword(formattedEmail, password, profile);
+
+  if (!appPasswordMatches && (authResponse.error || !authResponse.data?.session)) {
+    return res.status(hasAppPassword ? 401 : 400).json({
+      error: hasAppPassword
+        ? "Incorrect password. Please try again."
+        : "No password has been configured for this account. Please log in with a verification code or Microsoft, then set a password from your profile."
     });
   }
 
-  if (!profile.password_hash && !(profile as any).password) {
-    return res.status(400).json({
-      error: "No password has been configured for this account. Please log in with a verification code to set your password."
-    });
+  if (!appPasswordMatches && authResponse.data?.session) {
+    profile.password_hash = hashPassword(formattedEmail, password);
+    await upsertProfileWithFallback(profile);
+    await mirrorProfileToAuthUser(profile, password);
   }
 
-  if (!matchesStoredPassword(formattedEmail, password, profile)) {
-    return res.status(401).json({ error: "Incorrect password. Please try again." });
-  }
-
-  if (!profile.password_hash) {
+  if (appPasswordMatches && !profile.password_hash) {
     profile.password_hash = hashPassword(formattedEmail, password);
     delete (profile as any).password;
     await upsertProfileWithFallback(profile);
@@ -950,11 +1104,13 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  const deterministicPassword = getDeterministicPassword(formattedEmail);
-  const authResponse = await supabase.auth.signInWithPassword({
-    email: formattedEmail,
-    password: deterministicPassword
-  });
+  if (appPasswordMatches && (authResponse.error || !authResponse.data?.session)) {
+    await mirrorProfileToAuthUser(profile, password);
+    authResponse = await supabase.auth.signInWithPassword({
+      email: formattedEmail,
+      password
+    });
+  }
 
   if (authResponse.error || !authResponse.data?.session) {
     return res.status(200).json({
@@ -988,6 +1144,70 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
       user: authResponse.data.user
     }
   });
+}
+
+async function handleSetPassword(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: "Password sync requires SUPABASE_SERVICE_ROLE_KEY." });
+  }
+
+  const password = String(req.body?.password || "").trim();
+  if (password.length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 characters." });
+  }
+
+  const authHeader = req.headers.authorization || "";
+  const accessToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  const localAuth = verifyLocalAuthToken(
+    typeof req.headers["x-local-auth"] === "string" ? req.headers["x-local-auth"] : undefined
+  );
+
+  let authUserId = "";
+  let formattedEmail = "";
+
+  if (accessToken) {
+    const {
+      data: { user },
+      error
+    } = await supabase.auth.getUser(accessToken);
+    if (error || !user?.email || !user.id) {
+      return res.status(401).json({ error: "Please sign in again before changing your password." });
+    }
+    authUserId = user.id;
+    formattedEmail = normalizeProfileEmail(user.email);
+  } else if (localAuth) {
+    authUserId = localAuth.profileId;
+    formattedEmail = localAuth.email;
+  } else {
+    return res.status(401).json({ error: "Please sign in again before changing your password." });
+  }
+
+  const profile = await resolveBestProfileByEmail(formattedEmail);
+  if (!profile) {
+    return res.status(404).json({ error: "Profile could not be found for password setup." });
+  }
+
+  const nextProfile: Profile = {
+    ...profile,
+    password_hash: hashPassword(formattedEmail, password)
+  };
+
+  const authUser = authUserId ? { id: authUserId } : await findAuthUserByEmail(formattedEmail);
+  if (authUser?.id) {
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, { password });
+    if (error) {
+      return res.status(500).json({ error: "Could not update Supabase Auth password." });
+    }
+  }
+
+  await upsertProfileWithFallback(nextProfile);
+  await mirrorProfileToAuthUser(nextProfile, password);
+
+  return res.status(200).json({ success: true });
 }
 
 async function handleLoginBackup(req: VercelRequest, res: VercelResponse) {
@@ -1299,6 +1519,10 @@ export async function handleAuthRoute(req: VercelRequest, res: VercelResponse, a
     if (action === "login-password") {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       return await handlePasswordLogin(req, res);
+    }
+
+    if (action === "set-password") {
+      return await handleSetPassword(req, res);
     }
 
     if (action === "login-backup") {

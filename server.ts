@@ -384,6 +384,14 @@ async function prepareProfileRowsForSupabase(rows: any[], client = supabaseAdmin
     return collapsedRows;
   }
 
+  await Promise.all(
+    collapsedRows.map(row =>
+      mirrorProfileToAuthUser(row).catch(error => {
+        console.warn("Auth metadata mirror during profile sync failed:", error);
+      })
+    )
+  );
+
   let existingProfiles: any[] = [];
   try {
     let { data, error } = await client.from("xmum_profiles").select(getProfileSelectColumns()).in("email", emails);
@@ -476,6 +484,97 @@ function findLocalProfileByEmail(email: string): any | null {
   return pickCanonicalProfile(list as any[], { email: formatted }) || null;
 }
 
+async function findAuthUserByEmail(email: string) {
+  if (!supabaseAdmin) return null;
+
+  const normalizedEmail = normalizeProfileEmail(email);
+  for (let page = 1; page <= 20; page += 1) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) {
+      console.warn("Supabase auth user lookup failed:", error.message);
+      return null;
+    }
+
+    const users = (data?.users || []) as Array<{ id: string; email?: string | null; user_metadata?: any; app_metadata?: any }>;
+    const match = users.find(user => normalizeProfileEmail(user.email || "") === normalizedEmail);
+    if (match) return match;
+    if (users.length < 1000) return null;
+  }
+
+  return null;
+}
+
+function mergeProfileWithAuthMetadata(profile: any, authUser?: any | null) {
+  const userMetadata = authUser?.user_metadata || {};
+  const appMetadata = authUser?.app_metadata || {};
+  const profileMetadata = userMetadata.xmum_profile || {};
+
+  return {
+    ...profile,
+    birthdate: profile.birthdate ?? profileMetadata.birthdate ?? null,
+    companion_pet_count: Math.max(
+      0,
+      Number(profile.companion_pet_count ?? profileMetadata.companion_pet_count ?? 0)
+    ),
+    companion_selected_state_id:
+      profile.companion_selected_state_id ?? profileMetadata.companion_selected_state_id ?? null,
+    password_hash: appMetadata.xmum_password_hash || profile.password_hash || null
+  };
+}
+
+async function mirrorProfileToAuthUser(profile: any, password?: string) {
+  if (!supabaseAdmin || !profile?.email) return;
+
+  try {
+    const authUser = await findAuthUserByEmail(profile.email);
+    const passwordHash = profile.password_hash || (password ? hashPassword(profile.email, password) : null);
+    const userMetadata = {
+      ...(authUser?.user_metadata || {}),
+      xmum_profile: {
+        ...((authUser?.user_metadata || {}).xmum_profile || {}),
+        birthdate: profile.birthdate ?? null,
+        companion_pet_count: Math.max(0, Number(profile.companion_pet_count || 0)),
+        companion_selected_state_id: profile.companion_selected_state_id ?? null
+      }
+    };
+    const appMetadata = {
+      ...(authUser?.app_metadata || {}),
+      ...(passwordHash ? { xmum_password_hash: passwordHash } : {})
+    };
+
+    if (!authUser && password) {
+      const created = await supabaseAdmin.auth.admin.createUser({
+        email: normalizeProfileEmail(profile.email),
+        password,
+        email_confirm: true,
+        user_metadata: userMetadata,
+        app_metadata: appMetadata
+      });
+      if (created.error) {
+        console.warn("Supabase auth mirror user creation failed:", created.error.message);
+      }
+      return;
+    }
+
+    if (!authUser) return;
+
+    const updatePayload: any = {
+      user_metadata: userMetadata,
+      app_metadata: appMetadata
+    };
+    if (password) {
+      updatePayload.password = password;
+    }
+
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, updatePayload);
+    if (error) {
+      console.warn("Supabase auth mirror update failed:", error.message);
+    }
+  } catch (error) {
+    console.warn("Supabase auth metadata mirror failed:", error);
+  }
+}
+
 async function resolveBestProfileByEmail(email: string): Promise<any | null> {
   const formattedEmail = normalizeProfileEmail(email);
   const candidates: any[] = [];
@@ -535,7 +634,11 @@ async function resolveBestProfileByEmail(email: string): Promise<any | null> {
 
   candidates.push(...getLocalProfiles().filter((profile: any) => normalizeProfileEmail(profile.email || "") === formattedEmail));
 
-  return pickCanonicalProfile(candidates as any[], { email: formattedEmail }) || null;
+  const profile = pickCanonicalProfile(candidates as any[], { email: formattedEmail }) || null;
+  if (!profile) return null;
+
+  const authUser = await findAuthUserByEmail(formattedEmail);
+  return mergeProfileWithAuthMetadata(profile, authUser);
 }
 
 function upsertLocalProfiles(profilesToUpsert: any[]) {
@@ -843,21 +946,72 @@ async function startServer() {
       let profile = await resolveBestProfileByEmail(formattedEmail);
 
       if (!profile) {
-        return res.status(404).json({ error: "No registered profile found with this email. Registrations require a verified verification code first." });
+        const authOnlyResponse = await supabase.auth.signInWithPassword({
+          email: formattedEmail,
+          password
+        });
+
+        if (authOnlyResponse.error || !authOnlyResponse.data?.user?.email) {
+          return res.status(404).json({
+            error: "No registered profile found with this email. Please log in with a verification code or Microsoft first."
+          });
+        }
+
+        const studentId = formattedEmail.split("@")[0];
+        profile = {
+          id: authOnlyResponse.data.user.id,
+          email: formattedEmail,
+          student_id: studentId,
+          name: studentId,
+          name_last_changed_at: null,
+          country: "Malaysia",
+          country_last_changed_at: null,
+          languages: ["English"],
+          age: 18,
+          program: "Software Engineering",
+          year_of_study: "Year 1",
+          gender: "Male",
+          student_type: "degree",
+          about_me: "Hey there! I am new here on XMUM Hangouts.",
+          avatar_id: "panda",
+          is_profile_complete: false,
+          hide_details: false,
+          is_admin: isConfiguredAdminEmail(formattedEmail) || formattedEmail.startsWith("admin"),
+          is_blocked_globally: false,
+          flag_status: "none",
+          appeal_count: 0,
+          password_hash: hashPassword(formattedEmail, password)
+        };
+        await upsertProfileWithFallback(profile);
+        await mirrorProfileToAuthUser(profile, password);
       }
 
       // Sync local cache
       upsertLocalProfiles([profile]);
 
-      if (!profile.password_hash && !profile.password) {
-        return res.status(400).json({ error: "No password has been configured for this account. Please log in with a verification code to set your password." });
+      let authResponse = await supabase.auth.signInWithPassword({
+        email: formattedEmail,
+        password
+      });
+
+      const hasAppPassword = Boolean(profile.password_hash || profile.password);
+      const appPasswordMatches = hasAppPassword && matchesStoredPassword(formattedEmail, password, profile);
+
+      if (!appPasswordMatches && (authResponse.error || !authResponse.data?.session)) {
+        return res.status(hasAppPassword ? 401 : 400).json({
+          error: hasAppPassword
+            ? "Incorrect password. Please try again."
+            : "No password has been configured for this account. Please log in with a verification code or Microsoft, then set a password from your profile."
+        });
       }
 
-      if (!matchesStoredPassword(formattedEmail, password, profile)) {
-        return res.status(401).json({ error: "Incorrect password. Please try again." });
+      if (!appPasswordMatches && authResponse.data?.session) {
+        profile.password_hash = hashPassword(formattedEmail, password);
+        await upsertProfileWithFallback(profile);
+        await mirrorProfileToAuthUser(profile, password);
       }
 
-      if (!profile.password_hash) {
+      if (appPasswordMatches && !profile.password_hash) {
         profile.password_hash = hashPassword(formattedEmail, password);
         delete profile.password;
 
@@ -873,23 +1027,15 @@ async function startServer() {
         return res.status(400).json({ error: "Your account is permanently locked due to security reviews." });
       }
 
-      // Match deterministic backend credentials for clean Supabase Auth session token generation
-      const deterministicPassword = getDeterministicPassword(formattedEmail);
-      let sessionData = null;
-      let sessionErr = null;
-      try {
-        const ret = await supabase.auth.signInWithPassword({
+      if (appPasswordMatches && (authResponse.error || !authResponse.data?.session)) {
+        await mirrorProfileToAuthUser(profile, password);
+        authResponse = await supabase.auth.signInWithPassword({
           email: formattedEmail,
-          password: deterministicPassword
+          password
         });
-        sessionData = ret.data;
-        sessionErr = ret.error;
-      } catch (authErr: any) {
-        console.warn("Supabase auth signInWithPassword on password flow failed (offline/paused):", authErr);
-        sessionErr = authErr;
       }
 
-      if (sessionErr || !sessionData?.session) {
+      if (authResponse.error || !authResponse.data?.session) {
         // Fallback with profile payload
         return res.status(200).json({
           success: true,
@@ -916,16 +1062,82 @@ async function startServer() {
         profile,
         local_auth_token: generateLocalAuthToken(profile),
         session: {
-          access_token: sessionData.session.access_token,
-          refresh_token: sessionData.session.refresh_token,
-          expires_at: sessionData.session.expires_at,
-          user: sessionData.user
+          access_token: authResponse.data.session.access_token,
+          refresh_token: authResponse.data.session.refresh_token,
+          expires_at: authResponse.data.session.expires_at,
+          user: authResponse.data.user
         }
       });
 
     } catch (err) {
       console.error("Password login exception:", err);
       return res.status(500).json({ error: "An error occurred during password authentication." });
+    }
+  });
+
+  app.post("/api/auth/set-password", async (req, res) => {
+    try {
+      if (!supabaseAdmin) {
+        return res.status(503).json({ error: "Password sync requires SUPABASE_SERVICE_ROLE_KEY." });
+      }
+
+      const password = String(req.body?.password || "").trim();
+      if (password.length < 6) {
+        return res.status(400).json({ error: "Password must be at least 6 characters." });
+      }
+
+      const authHeader = req.headers.authorization || "";
+      const accessToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+      const localAuth = verifyLocalAuthToken(
+        typeof req.headers["x-local-auth"] === "string" ? req.headers["x-local-auth"] : undefined
+      );
+
+      let authUserId = "";
+      let formattedEmail = "";
+
+      if (accessToken) {
+        const {
+          data: { user },
+          error
+        } = await supabase.auth.getUser(accessToken);
+        if (error || !user?.email || !user.id) {
+          return res.status(401).json({ error: "Please sign in again before changing your password." });
+        }
+        authUserId = user.id;
+        formattedEmail = normalizeProfileEmail(user.email);
+      } else if (localAuth) {
+        authUserId = localAuth.profileId;
+        formattedEmail = localAuth.email;
+      } else {
+        return res.status(401).json({ error: "Please sign in again before changing your password." });
+      }
+
+      const profile = await resolveBestProfileByEmail(formattedEmail);
+      if (!profile) {
+        return res.status(404).json({ error: "Profile could not be found for password setup." });
+      }
+
+      const nextProfile = {
+        ...profile,
+        password_hash: hashPassword(formattedEmail, password)
+      };
+
+      const authUser = authUserId ? { id: authUserId } : await findAuthUserByEmail(formattedEmail);
+      if (authUser?.id) {
+        const { error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, { password });
+        if (error) {
+          return res.status(500).json({ error: "Could not update Supabase Auth password." });
+        }
+      }
+
+      upsertLocalProfiles([nextProfile]);
+      await upsertProfileWithFallback(nextProfile);
+      await mirrorProfileToAuthUser(nextProfile, password);
+
+      return res.status(200).json({ success: true });
+    } catch (err) {
+      console.error("Set password endpoint failed:", err);
+      return res.status(500).json({ error: "Could not update password right now." });
     }
   });
 
@@ -1074,6 +1286,9 @@ async function startServer() {
           profileErrorFallback = newProfile;
         }
 
+        profileErrorFallback = mergeProfileWithAuthMetadata(profileErrorFallback, sessionData?.user);
+        await mirrorProfileToAuthUser(profileErrorFallback);
+
         // Mirrors the profile in our local file cache registry to guarantee persistent authentication state
         upsertLocalProfiles([profileErrorFallback]);
 
@@ -1129,6 +1344,8 @@ async function startServer() {
         }
       }
 
+      profile = mergeProfileWithAuthMetadata(profile, sessionData.user);
+      await mirrorProfileToAuthUser(profile);
       upsertLocalProfiles([profile]);
 
       // Return the tokens safely to the client browser
