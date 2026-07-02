@@ -31,6 +31,11 @@ const supabaseAdmin = supabaseServiceRoleKey
   : null;
 
 const isProduction = process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
+const backendProfileClient = supabaseAdmin || supabase;
+
+function escapeSupabaseLikePattern(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
 
 function isConfiguredAdminEmail(email: string) {
   return normalizeProfileEmail(email) === ADMIN_ACCOUNT_EMAIL;
@@ -308,7 +313,7 @@ function verifyLocalAuthToken(token: string | undefined | null) {
 
 async function resolveBestProfileByEmail(email: string): Promise<Profile | null> {
   const formattedEmail = normalizeProfileEmail(email);
-  let { data: profilesByEmail, error: profileError } = await supabase
+  let { data: profilesByEmail, error: profileError } = await backendProfileClient
     .from("xmum_profiles")
     .select(getProfileSelectColumns())
     .eq("email", formattedEmail);
@@ -322,7 +327,7 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
     )
   ) {
     markUnsupportedProfileColumns(profileError);
-    ({ data: profilesByEmail, error: profileError } = await supabase
+    ({ data: profilesByEmail, error: profileError } = await backendProfileClient
       .from("xmum_profiles")
       .select(getProfileSelectColumns())
       .eq("email", formattedEmail));
@@ -332,14 +337,46 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
     console.warn("Backend Supabase profile load failed:", profileError);
   }
 
-  return pickCanonicalProfile((profilesByEmail || []) as Profile[], { email: formattedEmail });
+  let candidateProfiles = (profilesByEmail || []) as Profile[];
+
+  if (candidateProfiles.length === 0) {
+    let { data: insensitiveProfiles, error: insensitiveError } = await backendProfileClient
+      .from("xmum_profiles")
+      .select(getProfileSelectColumns())
+      .ilike("email", escapeSupabaseLikePattern(formattedEmail));
+
+    if (
+      insensitiveError &&
+      (
+        isMissingPasswordHashColumnError(insensitiveError) ||
+        isMissingProfileColumnError(insensitiveError, "companion_pet_count") ||
+        isMissingProfileColumnError(insensitiveError, "companion_selected_state_id")
+      )
+    ) {
+      markUnsupportedProfileColumns(insensitiveError);
+      ({ data: insensitiveProfiles, error: insensitiveError } = await backendProfileClient
+        .from("xmum_profiles")
+        .select(getProfileSelectColumns())
+        .ilike("email", escapeSupabaseLikePattern(formattedEmail)));
+    }
+
+    if (insensitiveError) {
+      console.warn("Backend case-insensitive profile load failed:", insensitiveError);
+    } else if (insensitiveProfiles?.length) {
+      candidateProfiles = (insensitiveProfiles as Profile[]).filter(
+        profile => normalizeProfileEmail(profile.email) === formattedEmail
+      );
+    }
+  }
+
+  return pickCanonicalProfile(candidateProfiles, { email: formattedEmail });
 }
 
 async function upsertProfileWithFallback(profile: Profile) {
   const [preparedProfile] = await prepareProfileRowsForSupabase([profile], supabaseAdmin || supabase);
   if (!preparedProfile) return;
 
-  const { error } = await supabase.from("xmum_profiles").upsert([preparedProfile]);
+  const { error } = await backendProfileClient.from("xmum_profiles").upsert([preparedProfile]);
   if (error) {
     if (
       isMissingPasswordHashColumnError(error) ||
@@ -348,7 +385,7 @@ async function upsertProfileWithFallback(profile: Profile) {
     ) {
       markUnsupportedProfileColumns(error);
       const [fallbackProfile] = stripUnsupportedProfileColumns([preparedProfile as Record<string, any>], error);
-      const fallback = await supabase.from("xmum_profiles").upsert([fallbackProfile]);
+      const fallback = await backendProfileClient.from("xmum_profiles").upsert([fallbackProfile]);
       if (fallback.error) {
         throw fallback.error;
       }
@@ -792,7 +829,7 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  const { data: matchedProfiles } = await supabase
+  const { data: matchedProfiles } = await backendProfileClient
     .from("xmum_profiles")
     .select("*")
     .eq("email", formattedEmail);

@@ -21,6 +21,7 @@ const supabaseAdmin = supabaseServiceRoleKey
       auth: { autoRefreshToken: false, persistSession: false }
     })
   : null;
+const backendProfileClient = supabaseAdmin || supabase;
 
 const PORT = 3000;
 const ADMIN_ACCOUNT_EMAIL = normalizeProfileEmail(process.env.ADMIN_ACCOUNT_EMAIL || "");
@@ -82,6 +83,10 @@ function getConfiguredAppOrigin() {
   } catch {
     return "";
   }
+}
+
+function escapeSupabaseLikePattern(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
 function resolveAppUrl(req: express.Request) {
@@ -337,11 +342,10 @@ function stripUnsupportedProfileColumns(rows: Array<Record<string, any>>, error:
 }
 
 async function upsertProfileWithFallback(profile: any) {
-  const client = supabaseAdmin || supabase;
-  const [preparedProfile] = await prepareProfileRowsForSupabase([profile], client);
+  const [preparedProfile] = await prepareProfileRowsForSupabase([profile], backendProfileClient);
   if (!preparedProfile) return;
 
-  const { error } = await supabase.from("xmum_profiles").upsert([preparedProfile]);
+  const { error } = await backendProfileClient.from("xmum_profiles").upsert([preparedProfile]);
   if (error) {
     if (
       isMissingPasswordHashColumnError(error) ||
@@ -350,7 +354,7 @@ async function upsertProfileWithFallback(profile: any) {
     ) {
       markUnsupportedProfileColumns(error);
       const [fallbackProfile] = stripUnsupportedProfileColumns([preparedProfile], error);
-      const fallback = await supabase.from("xmum_profiles").upsert([fallbackProfile]);
+      const fallback = await backendProfileClient.from("xmum_profiles").upsert([fallbackProfile]);
       if (fallback.error) {
         throw fallback.error;
       }
@@ -466,7 +470,7 @@ async function resolveBestProfileByEmail(email: string): Promise<any | null> {
   const candidates: any[] = [];
 
   try {
-    let { data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", formattedEmail);
+    let { data, error } = await backendProfileClient.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", formattedEmail);
     if (
       error &&
       (
@@ -476,12 +480,44 @@ async function resolveBestProfileByEmail(email: string): Promise<any | null> {
       )
     ) {
       markUnsupportedProfileColumns(error);
-      ({ data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", formattedEmail));
+      ({ data, error } = await backendProfileClient.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", formattedEmail));
     }
     if (error) {
       console.warn("Supabase profile lookup returned an error:", error.message);
     }
     candidates.push(...(data || []));
+
+    if (candidates.length === 0) {
+      let { data: insensitiveData, error: insensitiveError } = await backendProfileClient
+        .from("xmum_profiles")
+        .select(getProfileSelectColumns())
+        .ilike("email", escapeSupabaseLikePattern(formattedEmail));
+
+      if (
+        insensitiveError &&
+        (
+          isMissingPasswordHashColumnError(insensitiveError) ||
+          isMissingProfileColumnError(insensitiveError, "companion_pet_count") ||
+          isMissingProfileColumnError(insensitiveError, "companion_selected_state_id")
+        )
+      ) {
+        markUnsupportedProfileColumns(insensitiveError);
+        ({ data: insensitiveData, error: insensitiveError } = await backendProfileClient
+          .from("xmum_profiles")
+          .select(getProfileSelectColumns())
+          .ilike("email", escapeSupabaseLikePattern(formattedEmail)));
+      }
+
+      if (insensitiveError) {
+        console.warn("Case-insensitive Supabase profile lookup returned an error:", insensitiveError.message);
+      } else if (insensitiveData?.length) {
+        candidates.push(
+          ...(insensitiveData as any[]).filter(
+            profile => normalizeProfileEmail(profile.email || "") === formattedEmail
+          )
+        );
+      }
+    }
   } catch (dbErr) {
     console.warn("Supabase profile lookup failed, continuing with local fallback:", dbErr);
   }

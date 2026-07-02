@@ -168,6 +168,9 @@ const getAuthRedirectOrigin = () => {
   return window.location.origin;
 };
 
+const escapeSupabaseLikePattern = (value: string) =>
+  value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+
 const isMissingPasswordHashColumnError = (error: unknown) => {
   const maybeError = error as { message?: unknown; code?: unknown };
   const message = typeof maybeError?.message === "string"
@@ -558,6 +561,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       candidates.push(...normalizeProfiles((data || []) as Profile[]));
+
+      if ((!data || data.length === 0) && normalizedEmail) {
+        let fallbackData: any[] | null = null;
+        let fallbackError: any = null;
+        try {
+          const response = await supabase
+            .from("xmum_profiles")
+            .select(getProfileSelectColumns())
+            .ilike("email", escapeSupabaseLikePattern(normalizedEmail));
+          fallbackData = response.data as any[] | null;
+          fallbackError = response.error;
+        } catch (fallbackErr) {
+          fallbackError = fallbackErr;
+        }
+
+        if (
+          fallbackError &&
+          (
+            isMissingPasswordHashColumnError(fallbackError) ||
+            isMissingProfileColumnError(fallbackError, "companion_pet_count") ||
+            isMissingProfileColumnError(fallbackError, "companion_selected_state_id")
+          )
+        ) {
+          markUnsupportedProfileColumns(fallbackError);
+          const retryResponse = await supabase
+            .from("xmum_profiles")
+            .select(getProfileSelectColumns())
+            .ilike("email", escapeSupabaseLikePattern(normalizedEmail));
+          fallbackData = retryResponse.data as any[] | null;
+          fallbackError = retryResponse.error;
+        }
+
+        if (fallbackError) {
+          console.warn("Supabase case-insensitive profile lookup returned an error:", fallbackError.message || fallbackError);
+        } else if (fallbackData?.length) {
+          candidates.push(
+            ...normalizeProfiles(
+              (fallbackData as Profile[]).filter(
+                profile => normalizeProfileEmail(profile.email) === normalizedEmail
+              )
+            )
+          );
+        }
+      }
     } catch (dbErr) {
       console.warn("Supabase profile lookup by email failed, falling back to local cache:", dbErr);
     }
@@ -829,9 +876,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // --- INITIAL SEEDING ---
   useEffect(() => {
+    let authSubscriptionCleanup: (() => void) | null = null;
+
     const initData = async () => {
       setIsAuthInitializing(true);
       try {
+        let pendingAuthEmail: string | null = null;
+        let pendingAuthUserId: string | null = null;
+        const shouldWaitForAuthSession =
+          sessionStorage.getItem(authRedirectStorageKey) === "true" ||
+          window.location.search.includes("code=") ||
+          window.location.hash.includes("access_token=") ||
+          window.location.hash.includes("refresh_token=");
+
+        const waitForSessionSnapshot = async () => {
+          const maxAttempts = shouldWaitForAuthSession ? 12 : 3;
+          for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+            const { data } = await supabase.auth.getSession();
+            if (data.session?.user?.email) {
+              return data.session;
+            }
+            if (attempt < maxAttempts - 1) {
+              await new Promise(resolve => window.setTimeout(resolve, shouldWaitForAuthSession ? 250 : 120));
+            }
+          }
+          return null;
+        };
+
         // Parse URL segment/hash to automatically process redirect authentication keys from external emails
         try {
           const authHashStr = window.location.hash || window.location.search;
@@ -842,11 +913,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const maybeRefreshToken = tempSearchObj.get("refresh_token");
             if (maybeAccessToken && maybeRefreshToken) {
               console.log("Restoring Supabase auth session from copied token link URL...");
-              const { error: sessionSetErr } = await supabase.auth.setSession({
+              const { data: restoredSession, error: sessionSetErr } = await supabase.auth.setSession({
                 access_token: maybeAccessToken,
                 refresh_token: maybeRefreshToken
               });
               if (!sessionSetErr) {
+                pendingAuthEmail = restoredSession.session?.user?.email
+                  ? normalizeProfileEmail(restoredSession.session.user.email)
+                  : pendingAuthEmail;
+                pendingAuthUserId = restoredSession.session?.user?.id || pendingAuthUserId;
                 // Clear URL address bar hash to keep UI clean
                 window.history.replaceState(null, "", window.location.pathname + window.location.search);
               } else {
@@ -859,8 +934,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const authCode = searchParams.get("code");
           if (authCode) {
             console.log("Exchanging Supabase OAuth code for a session...");
-            const { error: exchangeErr } = await supabase.auth.exchangeCodeForSession(authCode);
+            const { data: exchangedSession, error: exchangeErr } = await supabase.auth.exchangeCodeForSession(authCode);
             if (!exchangeErr) {
+              pendingAuthEmail = exchangedSession.session?.user?.email
+                ? normalizeProfileEmail(exchangedSession.session.user.email)
+                : pendingAuthEmail;
+              pendingAuthUserId = exchangedSession.session?.user?.id || pendingAuthUserId;
               window.history.replaceState(null, "", window.location.pathname);
             } else {
               console.warn("OAuth code exchange error:", exchangeErr.message);
@@ -1005,6 +1084,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           } catch (syncErr) {
             console.warn("Initial normalized profile upsert failed:", syncErr);
           }
+        }
+
+        const authSubscription = supabase.auth.onAuthStateChange(async (_event, session) => {
+          try {
+            if (session?.user?.email) {
+              await applyAuthenticatedProfile(session.user.email, session.user.id);
+            }
+          } catch (callbackErr) {
+            console.error("Auth state change callback exception:", callbackErr);
+          }
+        });
+        authSubscriptionCleanup = () => authSubscription.data.subscription.unsubscribe();
+
+        const settledSession =
+          pendingAuthEmail && pendingAuthUserId
+            ? { user: { email: pendingAuthEmail, id: pendingAuthUserId } } as any
+            : await waitForSessionSnapshot();
+
+        if (settledSession?.user?.email) {
+          await applyAuthenticatedProfile(settledSession.user.email, settledSession.user.id);
         }
 
         // --- 2. Hangouts ---
@@ -1365,21 +1464,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setNotifications(finalNotifs);
         localStorage.setItem("xmum_notifications", JSON.stringify(finalNotifs));
 
-        // Listen for Auth Session updates automatically
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-          try {
-            if (session?.user) {
-              const email = session.user.email;
-              if (!email) {
-                return;
-              }
-              await applyAuthenticatedProfile(email, session.user.id);
-            }
-          } catch (callbackErr) {
-            console.error("Auth state change callback exception:", callbackErr);
-          }
-        });
-
         const { data: sessionSnapshot } = await supabase.auth.getSession();
         const hasLiveSession = Boolean(sessionSnapshot.session?.user?.email);
         if (hasLiveSession && sessionSnapshot.session?.user?.email) {
@@ -1445,10 +1529,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
           }
         }
-
-        return () => {
-          subscription.unsubscribe();
-        };
 
       } catch (err) {
         console.error("Failed to fetch primary tables from Supabase, resolving from LocalStorage fallback:", err);
@@ -1534,6 +1614,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
     initData();
+
+    return () => {
+      authSubscriptionCleanup?.();
+    };
   }, []);
 
   // --- PERSISTENCE SYNCS ---
