@@ -28,6 +28,8 @@ export interface Profile {
   is_blocked_globally: boolean;
   flag_status: "none" | "potentially_unsafe" | "confirmed_unsafe";
   appeal_count: number;
+  companion_pet_count?: number;
+  companion_selected_state_id?: string | null;
   password?: string; // set during onboarding/profile update
   password_hash?: string;
   is_demo_profile?: boolean;

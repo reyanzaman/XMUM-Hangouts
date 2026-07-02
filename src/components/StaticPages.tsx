@@ -9,6 +9,7 @@ import { ShieldCheck, Lock, Heart, MessageSquare, Coffee, Clipboard, HelpCircle,
 import { Logo } from "./Logo";
 
 const tngQrImage = new URL("../assets/images/touch_n_go_qr_solid_1781590124889.jpg", import.meta.url).href;
+const supportRequestKindStorageKey = "xmum_support_request_kind";
 
 interface StaticPageProps {
   pageName: "terms" | "privacy" | "safety" | "about" | "donation" | "bug-report";
@@ -18,9 +19,25 @@ interface StaticPageProps {
 
 export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToChats, onNavigateToBugReport }) => {
   const { currentUser, profiles, getOrCreateChat, sendChatMessage, submitBugReport, showToast } = useApp();
+  const [supportRequestKind, setSupportRequestKind] = useState<"bug" | "feature">(() => {
+    try {
+      return sessionStorage.getItem(supportRequestKindStorageKey) === "feature" ? "feature" : "bug";
+    } catch {
+      return "bug";
+    }
+  });
   const [bugSubject, setBugSubject] = useState("");
   const [bugDescription, setBugDescription] = useState("");
   const [isSubmittingBug, setIsSubmittingBug] = useState(false);
+
+  const syncSupportRequestKind = (nextKind: "bug" | "feature") => {
+    setSupportRequestKind(nextKind);
+    try {
+      sessionStorage.setItem(supportRequestKindStorageKey, nextKind);
+    } catch {
+      // Ignore storage issues and keep the page usable.
+    }
+  };
 
   const handleContactAdmin = (type: "general" | "feature" | "bug") => {
     if (!currentUser) {
@@ -35,21 +52,19 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
     }
 
     try {
-      // Create chat thread between user and admin
       const chat = getOrCreateChat(adminUser.id, null);
-      
-      // Determine label & system notice
+
       let label = "General Support Inquiry";
       let text = "General Support Inquiry / Safety Report Coordinate Feedback";
       if (type === "feature") {
         label = "Feature Request Ticket";
-        text = "💡 SUGGESTED FEATURE REQUEST";
+        text = "Suggested feature request";
       } else if (type === "bug") {
         label = "Bug Report Ticket";
-        text = "🐛 REGISTERED BUG REPORT";
+        text = "Registered bug report";
       }
 
-      const adminNoticeMsg = `🚨 [SYSTEM HELPDESK ROUTER]\nThe student '${currentUser.name}' has initiated a support coord coordinate by clicking: [${text}].\nPlease exchange messages below to coordinate details!`;
+      const adminNoticeMsg = `[SYSTEM HELPDESK ROUTER]\nThe student '${currentUser.name}' has initiated a support ticket by clicking: [${text}].\nPlease exchange messages below to coordinate details.`;
       sendChatMessage(chat.id, adminNoticeMsg);
 
       showToast(`Helpdesk page created for: ${label}!`, "success");
@@ -66,9 +81,10 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
     setIsSubmittingBug(true);
 
     const result = await submitBugReport({
+      kind: supportRequestKind,
       subject: bugSubject,
       description: bugDescription,
-      sourcePage: "Footer bug report page"
+      sourcePage: supportRequestKind === "feature" ? "Footer feature request page" : "Footer bug report page"
     });
 
     setIsSubmittingBug(false);
@@ -82,7 +98,7 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
       return;
     }
 
-    showToast(result.error || "Bug report could not be sent.", "error");
+    showToast(result.error || `${supportRequestKind === "feature" ? "Feature request" : "Bug report"} could not be sent.`, "error");
   };
 
   const getQRPlaceHolderSVG = () => {
@@ -370,7 +386,14 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
                   {/* Request Feature */}
                   <button
                     id="contact-admin-feature-btn"
-                    onClick={() => handleContactAdmin("feature")}
+                    onClick={() => {
+                      syncSupportRequestKind("feature");
+                      if (onNavigateToBugReport) {
+                        onNavigateToBugReport();
+                        return;
+                      }
+                      handleContactAdmin("feature");
+                    }}
                     className="p-4 bg-teal-50/50 hover:bg-teal-100/40 border border-teal-100/50 rounded-2xl text-left cursor-pointer transition-all duration-200 hover:scale-[1.01] active:translate-y-0.5"
                   >
                     <span className="inline-block p-1 bg-white rounded-lg mb-2 shadow-sm">💡</span>
@@ -384,6 +407,7 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
                   <button
                     id="contact-admin-bug-btn"
                     onClick={() => {
+                      syncSupportRequestKind("bug");
                       if (onNavigateToBugReport) {
                         onNavigateToBugReport();
                         return;
@@ -412,11 +436,11 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
         <div id="bug-report-page" className="bg-white border border-gray-100 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6 font-sans max-w-2xl mx-auto">
           <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
             <Bug className="w-5 h-5 text-rose-500" />
-            <h2 className="text-lg font-black text-gray-900 tracking-tight">Report a Bug</h2>
+            <h2 className="text-lg font-black text-gray-900 tracking-tight">Support Requests</h2>
           </div>
 
           <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
-            Tell us what broke, where it happened, and what you expected instead. Your report will be sent to the admin account inside XMUM Hangouts and emailed to <strong>mcs2509008@xmu.edu.my</strong>.
+            Tell us what broke or what you would love to see improved. Your request will be sent to the XMUM Hangouts admin team inside the app and also routed through the configured support email channel.
           </p>
 
           {!currentUser ? (
@@ -425,6 +449,34 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
             </div>
           ) : (
             <form onSubmit={handleBugReportSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-gray-700">Request type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => syncSupportRequestKind("bug")}
+                    className={`rounded-2xl border px-4 py-3 text-xs font-bold transition-colors cursor-pointer ${
+                      supportRequestKind === "bug"
+                        ? "border-rose-300 bg-rose-50 text-rose-700"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-rose-200 hover:bg-rose-50/40"
+                    }`}
+                  >
+                    Report a bug
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => syncSupportRequestKind("feature")}
+                    className={`rounded-2xl border px-4 py-3 text-xs font-bold transition-colors cursor-pointer ${
+                      supportRequestKind === "feature"
+                        ? "border-teal-300 bg-teal-50 text-teal-700"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-teal-200 hover:bg-teal-50/40"
+                    }`}
+                  >
+                    Request a feature
+                  </button>
+                </div>
+              </div>
+
               <div className="space-y-1.5">
                 <label htmlFor="bug-report-subject" className="block text-xs font-bold text-gray-700">
                   Short summary
@@ -435,14 +487,18 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
                   maxLength={120}
                   value={bugSubject}
                   onChange={e => setBugSubject(e.target.value)}
-                  placeholder="Example: Create hangout date picker allows past times"
+                  placeholder={
+                    supportRequestKind === "feature"
+                      ? "Example: Let hosts duplicate an old hangout plan"
+                      : "Example: Create hangout date picker allows past times"
+                  }
                   className="w-full bg-slate-50 border border-gray-200 focus:border-rose-400 focus:bg-white focus:ring-1 focus:ring-rose-100 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-slate-800 outline-none transition-all"
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label htmlFor="bug-report-description" className="block text-xs font-bold text-gray-700">
-                  What happened? <span className="text-rose-500">*</span>
+                  {supportRequestKind === "feature" ? "What would you like to see?" : "What happened?"} <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   id="bug-report-description"
@@ -450,11 +506,17 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
                   onChange={e => setBugDescription(e.target.value)}
                   maxLength={2000}
                   required
-                  placeholder="Describe the steps, the issue, and what you expected to happen."
+                  placeholder={
+                    supportRequestKind === "feature"
+                      ? "Describe the feature, why it would help, and how you imagine it working."
+                      : "Describe the steps, the issue, and what you expected to happen."
+                  }
                   className="w-full min-h-36 bg-slate-50 border border-gray-200 focus:border-rose-400 focus:bg-white focus:ring-1 focus:ring-rose-100 rounded-2xl px-4 py-3 text-xs sm:text-sm text-slate-800 outline-none transition-all resize-y"
                 />
                 <p className="text-[10px] text-gray-400">
-                  Include the page, action, and any error text if you saw one.
+                  {supportRequestKind === "feature"
+                    ? "Include the page, workflow, and the problem this feature would solve for you."
+                    : "Include the page, action, and any error text if you saw one."}
                 </p>
               </div>
 
@@ -466,7 +528,7 @@ export const StaticPages: React.FC<StaticPageProps> = ({ pageName, onNavigateToC
                   className="inline-flex items-center justify-center gap-2 bg-rose-500 hover:bg-rose-600 disabled:bg-slate-300 text-white font-bold px-5 py-3 rounded-2xl text-xs sm:text-sm transition-colors cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
-                  {isSubmittingBug ? "Sending..." : "Send Bug Report"}
+                  {isSubmittingBug ? "Sending..." : supportRequestKind === "feature" ? "Send Feature Request" : "Send Bug Report"}
                 </button>
 
                 <button

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import {
   Profile,
   Hangout,
@@ -20,6 +20,8 @@ import {
 } from "../types";
 
 import { XMUM_PROGRAMS } from "../config/xmum-config";
+import { matchesPrimaryAdminEmail } from "../lib/admin";
+import type { StoredCompanionState } from "../lib/companionState";
 import { supabase } from "../lib/supabase";
 import { encryptMessage, decryptMessage } from "../lib/encryption";
 import { hashPassword, matchesStoredPassword } from "../lib/security";
@@ -30,7 +32,6 @@ import {
 } from "../lib/hangouts";
 import { collapseProfilesByEmail, isDemoProfile, isDemoProfileId, normalizeProfileEmail, pickCanonicalProfile, reconcileProfilesByEmail } from "../lib/profiles";
 
-const ADMIN_EMAIL = "mcs2509008@xmu.edu.my";
 const SYSTEM_DELETED_USER_ID = "deleted_user";
 const SYSTEM_DELETED_USER_EMAIL = "deleted.user@system.local";
 
@@ -49,7 +50,7 @@ const normalizeProfileRecord = (profile: Profile): Profile => {
 
 const normalizeProfiles = (profiles: Profile[]): Profile[] => reconcileProfilesByEmail(profiles.map(normalizeProfileRecord));
 
-const onboardingStorageKey = (userId: string) => `xmum_onboarding_seen_${userId}`;
+const onboardingStorageKey = (email: string) => `xmum_onboarding_seen_${normalizeProfileEmail(email)}`;
 const authRedirectStorageKey = "xmum_auth_redirect_pending";
 const localAuthTokenStorageKey = "xmum_local_auth_token";
 const demoDataEnabled = import.meta.env.VITE_ENABLE_DEMO_DATA === "true";
@@ -106,17 +107,17 @@ const filterBlocksForRuntime = (items: Block[]) =>
 const filterNotificationsForRuntime = (items: AppNotification[]) =>
   demoDataEnabled ? items : items.filter(notification => !isDemoProfileId(notification.user_id));
 
-const hasSeenOnboarding = (userId: string): boolean => {
+const hasSeenOnboarding = (email: string): boolean => {
   try {
-    return localStorage.getItem(onboardingStorageKey(userId)) === "true";
+    return localStorage.getItem(onboardingStorageKey(email)) === "true";
   } catch {
     return false;
   }
 };
 
-const markOnboardingSeen = (userId: string) => {
+const markOnboardingSeen = (email: string) => {
   try {
-    localStorage.setItem(onboardingStorageKey(userId), "true");
+    localStorage.setItem(onboardingStorageKey(email), "true");
   } catch {
     // Ignore storage issues and keep the session usable.
   }
@@ -178,6 +179,99 @@ const isMissingPasswordHashColumnError = (error: unknown) => {
   return message.includes("password_hash") && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
 };
 
+const isMissingProfileColumnError = (error: unknown, columnName: string) => {
+  const maybeError = error as { message?: unknown; code?: unknown };
+  const message = typeof maybeError?.message === "string"
+    ? maybeError.message
+    : error instanceof Error
+      ? error.message
+      : String(error || "");
+  const code = typeof maybeError?.code === "string" ? maybeError.code : "";
+  return message.includes(columnName) && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
+};
+
+const profileColumnSupport = {
+  password_hash: true,
+  companion_pet_count: true,
+  companion_selected_state_id: true
+};
+
+const markUnsupportedProfileColumns = (error: unknown) => {
+  if (isMissingPasswordHashColumnError(error)) {
+    profileColumnSupport.password_hash = false;
+  }
+  if (isMissingProfileColumnError(error, "companion_pet_count")) {
+    profileColumnSupport.companion_pet_count = false;
+  }
+  if (isMissingProfileColumnError(error, "companion_selected_state_id")) {
+    profileColumnSupport.companion_selected_state_id = false;
+  }
+};
+
+const getProfileSelectColumns = () => {
+  const baseColumns = [
+    "id",
+    "email",
+    "student_id",
+    "name",
+    "name_last_changed_at",
+    "country",
+    "country_last_changed_at",
+    "languages",
+    "age",
+    "birthdate",
+    "program",
+    "year_of_study",
+    "gender",
+    "student_type",
+    "about_me",
+    "avatar_id",
+    "is_profile_complete",
+    "hide_details",
+    "is_admin",
+    "is_blocked_globally",
+    "flag_status",
+    "appeal_count"
+  ];
+
+  if (profileColumnSupport.companion_pet_count) {
+    baseColumns.push("companion_pet_count");
+  }
+  if (profileColumnSupport.companion_selected_state_id) {
+    baseColumns.push("companion_selected_state_id");
+  }
+  if (profileColumnSupport.password_hash) {
+    baseColumns.push("password_hash");
+  }
+
+  return baseColumns.join(",");
+};
+
+const stripUnsupportedColumnsFromProfileRow = (row: Record<string, any>) => {
+  const nextRow = { ...row };
+  if (!profileColumnSupport.password_hash) {
+    delete nextRow.password_hash;
+  }
+  if (!profileColumnSupport.companion_pet_count) {
+    delete nextRow.companion_pet_count;
+  }
+  if (!profileColumnSupport.companion_selected_state_id) {
+    delete nextRow.companion_selected_state_id;
+  }
+  return nextRow;
+};
+
+const stripUnsupportedProfileColumns = (rows: Array<Record<string, any>>, error: unknown) => {
+  markUnsupportedProfileColumns(error);
+  return rows.map(row => {
+    const nextRow = stripUnsupportedColumnsFromProfileRow(row);
+    if (isMissingPasswordHashColumnError(error)) delete nextRow.password_hash;
+    if (isMissingProfileColumnError(error, "companion_pet_count")) delete nextRow.companion_pet_count;
+    if (isMissingProfileColumnError(error, "companion_selected_state_id")) delete nextRow.companion_selected_state_id;
+    return nextRow;
+  });
+};
+
 const stripEmojiCharacters = (message: string) =>
   message
     .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
@@ -203,7 +297,9 @@ const humanizeToastMessage = (message: string): string => {
     [/^Application retracted\.?$/i, "Your join request has been withdrawn."],
     [/^Profile updated successfully!?$/i, "Your profile has been updated."],
     [/^Bug report sent to the admin team\.?$/i, "Your bug report has been sent to the admin team."],
-    [/^Bug report saved for the admin account\. Email delivery needs attention\.?$/i, "Your bug report reached the admin inbox. Email delivery still needs to be checked."],
+    [/^Bug report saved for the admin team\. Email delivery needs attention\.?$/i, "Your bug report reached the admin inbox. Email delivery still needs to be checked."],
+    [/^Feature Request sent to the admin team\.?$/i, "Your feature request has been sent to the admin team."],
+    [/^Feature Request saved for the admin team\. Email delivery needs attention\.?$/i, "Your feature request reached the admin inbox. Email delivery still needs to be checked."],
     [/^Please login\b/i, "Please log in"],
     [/^Authentication failed\. Try again\.?$/i, "We couldn't sign you in. Please try again."],
     [/^Password authentication failed\.?$/i, "Your password didn't work. Please try again."],
@@ -243,6 +339,8 @@ const buildDeletedUserProfile = (): Profile => ({
   is_blocked_globally: false,
   flag_status: "none",
   appeal_count: 0,
+  companion_pet_count: 0,
+  companion_selected_state_id: null,
   is_demo_profile: false
 });
 
@@ -283,6 +381,7 @@ interface AppContextType {
 
   // Profile Functions
   updateProfile: (data: Partial<Profile>) => { success: boolean; error?: string };
+  syncCompanionProgress: (progress: StoredCompanionState) => void;
   setHideDetails: (hide: boolean) => void;
   deleteCurrentAccount: () => Promise<{ success: boolean; error?: string }>;
   
@@ -313,6 +412,7 @@ interface AppContextType {
     subject: string;
     description: string;
     sourcePage?: string;
+    kind?: "bug" | "feature";
   }) => Promise<{ success: boolean; error?: string; warning?: string }>;
   submitAppeal: (reportId: string, description: string) => { success: boolean; error?: string };
   
@@ -368,6 +468,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentUser]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
+  const companionProfileSyncTimeoutRef = useRef<number | null>(null);
   const [hangouts, setHangouts] = useState<Hangout[]>([]);
   const [applications, setApplications] = useState<HangoutApplication[]>([]);
   const [likes, setLikes] = useState<HangoutLike[]>([]);
@@ -392,6 +493,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [onboardingStep, setOnboardingStep] = useState<number>(0);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const [viewedProfile, setViewedProfile] = useState<Profile | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (companionProfileSyncTimeoutRef.current) {
+        window.clearTimeout(companionProfileSyncTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Rate limits state tracker for simulation
   const [lastHangoutCreatedTime, setLastHangoutCreatedTime] = useState<number>(0);
@@ -432,7 +541,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const candidates: Profile[] = [];
 
     try {
-      const { data, error } = await supabase.from("xmum_profiles").select("*").eq("email", normalizedEmail);
+      let { data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", normalizedEmail);
+      if (
+        error &&
+        (
+          isMissingPasswordHashColumnError(error) ||
+          isMissingProfileColumnError(error, "companion_pet_count") ||
+          isMissingProfileColumnError(error, "companion_selected_state_id")
+        )
+      ) {
+        markUnsupportedProfileColumns(error);
+        ({ data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", normalizedEmail));
+      }
       if (error) {
         console.warn("Supabase profile lookup by email returned an error:", error.message);
       }
@@ -469,6 +589,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (!profile) {
       const student_id = normalizedEmail.split("@")[0];
+      const isPrimaryAdmin = await matchesPrimaryAdminEmail(normalizedEmail);
       profile = {
         id: authUserId || ("user_" + Math.random().toString(36).substring(2, 11)),
         email: normalizedEmail,
@@ -487,7 +608,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         avatar_id: "panda",
         is_profile_complete: false,
         hide_details: false,
-        is_admin: normalizedEmail === ADMIN_EMAIL || normalizedEmail.startsWith("admin"),
+        is_admin: isPrimaryAdmin || normalizedEmail.startsWith("admin"),
         is_blocked_globally: false,
         flag_status: "none",
         appeal_count: 0
@@ -519,13 +640,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem("xmum_current_user_id", normalizedCurrentUser.id);
     localStorage.setItem("xmum_current_user_profile", JSON.stringify(normalizedCurrentUser));
 
-    if (normalizedCurrentUser.is_profile_complete) {
-      if (!hasSeenOnboarding(normalizedCurrentUser.id)) {
-        setOnboardingStep(0);
-        setShowOnboarding(true);
-      } else {
-        setShowOnboarding(false);
-      }
+    if (!normalizedCurrentUser.is_profile_complete) {
+      setShowOnboarding(false);
+      setOnboardingStep(0);
     }
 
     return normalizedCurrentUser;
@@ -545,14 +662,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!currentUser || !currentUser.is_profile_complete) {
       setShowOnboarding(false);
       setOnboardingStep(0);
+    }
+  }, [currentUser?.id, currentUser?.is_profile_complete]);
+
+  useEffect(() => {
+    if (!currentUser?.email) {
       return;
     }
 
-    if (!hasSeenOnboarding(currentUser.id)) {
-      setOnboardingStep(0);
-      setShowOnboarding(true);
+    const canonical = pickCanonicalProfile(normalizeProfiles([...profiles, currentUser]), {
+      email: currentUser.email,
+      authUserId: currentUser.id
+    });
+
+    if (!canonical) {
+      return;
     }
-  }, [currentUser?.id, currentUser?.is_profile_complete]);
+
+    const normalizedCanonical = normalizeProfileRecord(canonical);
+    if (JSON.stringify(normalizedCanonical) !== JSON.stringify(currentUser)) {
+      setCurrentUser(normalizedCanonical);
+    }
+  }, [profiles, currentUser]);
 
   const mergeByField = <T extends { id: string }>(arrSupa: T[], arrLocal: T[]): T[] => {
     const mapObj = new Map<string, T>();
@@ -585,7 +716,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     is_anonymous: !!h.is_anonymous
   });
 
-  const sanitizeProfileForDatabase = (profile: Profile) => ({
+  const sanitizeProfileForDatabase = (profile: Profile) => stripUnsupportedColumnsFromProfileRow({
     id: profile.id,
     email: profile.email,
     student_id: profile.student_id,
@@ -607,6 +738,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     is_blocked_globally: Boolean(profile.is_blocked_globally),
     flag_status: profile.flag_status,
     appeal_count: profile.appeal_count ?? 0,
+    companion_pet_count: Math.max(0, Number(profile.companion_pet_count || 0)),
+    companion_selected_state_id: profile.companion_selected_state_id ?? null,
     password_hash: profile.password_hash ?? null
   });
 
@@ -619,13 +752,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     created_at: c.created_at
   });
 
+  const prepareProfileRowsForSupabase = async (items: Profile[]) => {
+    const collapsedItems = collapseProfilesByEmail(items).map(sanitizeProfileForDatabase);
+    const emails = Array.from(new Set(collapsedItems.map(item => normalizeProfileEmail(item.email || "")).filter(Boolean)));
+
+    if (emails.length === 0) {
+      return collapsedItems;
+    }
+
+    let existingProfiles: Profile[] = [];
+    try {
+      let { data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).in("email", emails);
+      if (
+        error &&
+        (
+          isMissingPasswordHashColumnError(error) ||
+          isMissingProfileColumnError(error, "companion_pet_count") ||
+          isMissingProfileColumnError(error, "companion_selected_state_id")
+        )
+      ) {
+        markUnsupportedProfileColumns(error);
+        ({ data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).in("email", emails));
+      }
+      if (error) {
+        console.warn("Existing profile lookup during client sync failed:", error.message);
+      } else {
+        existingProfiles = (data as Profile[]) || [];
+      }
+    } catch (error) {
+      console.warn("Existing profile reconciliation failed before client sync:", error);
+    }
+
+    return collapsedItems.map(item => {
+      const existing = pickCanonicalProfile(existingProfiles, { email: item.email });
+      if (!existing) {
+        return item;
+      }
+
+      return sanitizeProfileForDatabase({
+        ...existing,
+        ...item,
+        id: existing.id,
+        email: normalizeProfileEmail(existing.email || item.email),
+        is_profile_complete: Boolean(existing.is_profile_complete || item.is_profile_complete),
+        companion_pet_count: Math.max(
+          Number(item.companion_pet_count || 0),
+          Number(existing.companion_pet_count || 0)
+        ),
+        companion_selected_state_id: item.companion_selected_state_id ?? existing.companion_selected_state_id ?? null,
+        password_hash: item.password_hash ?? existing.password_hash ?? null
+      } as Profile);
+    });
+  };
+
   const upsertProfilesDirect = async (items: Profile[]) => {
-    const rows = collapseProfilesByEmail(items).map(sanitizeProfileForDatabase);
+    const rows = await prepareProfileRowsForSupabase(items);
     const { error } = await supabase.from("xmum_profiles").upsert(rows);
 
     if (error) {
-      if (isMissingPasswordHashColumnError(error)) {
-        const fallbackRows = rows.map(({ password_hash, ...rest }) => rest);
+      if (
+        isMissingPasswordHashColumnError(error) ||
+        isMissingProfileColumnError(error, "companion_pet_count") ||
+        isMissingProfileColumnError(error, "companion_selected_state_id")
+      ) {
+        const fallbackRows = stripUnsupportedProfileColumns(rows, error);
         const fallback = await supabase.from("xmum_profiles").upsert(fallbackRows);
         if (fallback.error) {
           throw fallback.error;
@@ -683,7 +873,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.log("Loading primary tables from Supabase...");
         
         // --- 1. Profiles ---
-        let { data: dbProfiles, error: errProfiles } = await supabase.from("xmum_profiles").select("*");
+        let { data: dbProfiles, error: errProfiles } = await supabase.from("xmum_profiles").select(getProfileSelectColumns());
+        if (
+          errProfiles &&
+          (
+            isMissingPasswordHashColumnError(errProfiles) ||
+            isMissingProfileColumnError(errProfiles, "companion_pet_count") ||
+            isMissingProfileColumnError(errProfiles, "companion_selected_state_id")
+          )
+        ) {
+          markUnsupportedProfileColumns(errProfiles);
+          ({ data: dbProfiles, error: errProfiles } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()));
+        }
         if (errProfiles) throw errProfiles;
         
         if ((!dbProfiles || dbProfiles.length === 0) && demoDataEnabled) {
@@ -785,18 +986,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           dbProfiles = seedProfiles;
         }
 
-        // Force admin for mcs2509008@xmu.edu.my if it exists
-        let adminChanged = false;
-        dbProfiles = dbProfiles.map(p => {
-          if (p.email.toLowerCase().trim() === "mcs2509008@xmu.edu.my" && !p.is_admin) {
-            adminChanged = true;
-            return { ...p, is_admin: true };
-          }
-          return p;
-        });
-        if (adminChanged) {
-          await upsertProfilesDirect(dbProfiles as Profile[]);
-        }
         const storedProfilesSnapshot = getStoredProfilesSnapshot();
         const normalizedProfiles = filterProfilesForRuntime(normalizeProfiles([
           ...storedProfilesSnapshot,
@@ -1204,14 +1393,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const storedActiveUser = localStorage.getItem("xmum_current_user_id");
         if (!hasLiveSession && storedActiveUser) {
           try {
-            const { data: userProfile } = await supabase.from("xmum_profiles").select("*").eq("id", storedActiveUser).maybeSingle();
-            if (userProfile) {
-              setCurrentUser(normalizeProfileRecord(userProfile));
-            } else {
+            let restoredProfile: Profile | null = null;
+            const cachedCurrentUser = localStorage.getItem("xmum_current_user_profile");
+            if (cachedCurrentUser) {
+              try {
+                const parsedCachedUser = normalizeProfileRecord(JSON.parse(cachedCurrentUser));
+                restoredProfile = await resolveProfileByEmail(parsedCachedUser.email, storedActiveUser) || parsedCachedUser;
+              } catch (cachedErr) {
+                console.warn("Cached current user could not be restored directly:", cachedErr);
+              }
+            }
+
+            if (!restoredProfile) {
+              let { data: userProfile, error: userProfileError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", storedActiveUser).maybeSingle();
+              if (
+                userProfileError &&
+                (
+                  isMissingPasswordHashColumnError(userProfileError) ||
+                  isMissingProfileColumnError(userProfileError, "companion_pet_count") ||
+                  isMissingProfileColumnError(userProfileError, "companion_selected_state_id")
+                )
+              ) {
+                markUnsupportedProfileColumns(userProfileError);
+                ({ data: userProfile, error: userProfileError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", storedActiveUser).maybeSingle());
+              }
+              if (userProfile) {
+                restoredProfile =
+                  await resolveProfileByEmail(userProfile.email, storedActiveUser) || normalizeProfileRecord(userProfile);
+              }
+            }
+
+            if (!restoredProfile) {
               const fallbackLocal = profiles.find(p => p.id === storedActiveUser);
               if (fallbackLocal) {
-                setCurrentUser(normalizeProfileRecord(fallbackLocal));
+                restoredProfile =
+                  pickCanonicalProfile(normalizeProfiles([fallbackLocal, ...profiles]), {
+                    email: fallbackLocal.email,
+                    authUserId: storedActiveUser
+                  }) || normalizeProfileRecord(fallbackLocal);
               }
+            }
+
+            if (restoredProfile) {
+              setCurrentUser(normalizeProfileRecord(restoredProfile));
             }
           } catch (actErr) {
             console.warn("Active user profile fetch errored, resolving from local profiles cache:", actErr);
@@ -1337,11 +1561,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return !matchingPrev || JSON.stringify(matchingPrev) !== JSON.stringify(item);
       });
       if (changed.length > 0) {
-        const rows = changed.map(sanitizeProfileForDatabase);
+        const rows = await prepareProfileRowsForSupabase(changed);
         const { error } = await supabase.from("xmum_profiles").upsert(rows);
         if (error) {
-          if (isMissingPasswordHashColumnError(error)) {
-            const fallbackRows = rows.map(({ password_hash, ...rest }) => rest);
+          if (
+            isMissingPasswordHashColumnError(error) ||
+            isMissingProfileColumnError(error, "companion_pet_count") ||
+            isMissingProfileColumnError(error, "companion_selected_state_id")
+          ) {
+            const fallbackRows = stripUnsupportedProfileColumns(rows, error);
             const fallback = await supabase.from("xmum_profiles").upsert(fallbackRows);
             if (fallback.error) {
               throw fallback.error;
@@ -1355,6 +1583,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error("Profiles sync exception:", e);
     }
   };
+
+  const syncCompanionProgress = (progress: StoredCompanionState) => {
+    if (!currentUser) return;
+
+    const nextPetCount = Math.max(
+      0,
+      Math.min(1000, Number(progress.petCount ?? currentUser.companion_pet_count ?? 0))
+    );
+    const nextSelectedStateId =
+      progress.selectedStateId !== undefined
+        ? progress.selectedStateId || null
+        : currentUser.companion_selected_state_id ?? null;
+
+    const updatedUser = normalizeProfileRecord({
+      ...currentUser,
+      companion_pet_count: nextPetCount,
+      companion_selected_state_id: nextSelectedStateId
+    });
+
+    setCurrentUser(updatedUser);
+    setProfiles(prev => {
+      const nextProfiles = normalizeProfiles(
+        prev.map(profile =>
+          profile.id === updatedUser.id || normalizeProfileEmail(profile.email) === updatedUser.email
+            ? {
+                ...profile,
+                companion_pet_count: nextPetCount,
+                companion_selected_state_id: nextSelectedStateId
+              }
+            : profile
+        )
+      );
+      localStorage.setItem("xmum_profiles", JSON.stringify(nextProfiles));
+
+      if (companionProfileSyncTimeoutRef.current) {
+        window.clearTimeout(companionProfileSyncTimeoutRef.current);
+      }
+
+      companionProfileSyncTimeoutRef.current = window.setTimeout(() => {
+        void saveProfiles(nextProfiles);
+      }, 900);
+
+      return nextProfiles;
+    });
+  };
+
   const saveHangouts = async (data: Hangout[]) => {
     const prev = hangouts;
     setHangouts(data);
@@ -1876,6 +2150,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!profile) {
         const student_id = formattedEmail.split("@")[0];
         const newId = "user_" + Math.random().toString(36).substring(2, 11);
+        const isPrimaryAdmin = await matchesPrimaryAdminEmail(formattedEmail);
         const newProfile: Profile = {
           id: newId,
           email: formattedEmail,
@@ -1894,7 +2169,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           avatar_id: "panda",
           is_profile_complete: false,
           hide_details: false,
-          is_admin: formattedEmail === "mcs2509008@xmu.edu.my" || formattedEmail.startsWith("admin"),
+          is_admin: isPrimaryAdmin || formattedEmail.startsWith("admin"),
           is_blocked_globally: false,
           flag_status: "none",
           appeal_count: 0
@@ -2068,7 +2343,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const completeOnboarding = () => {
     if (currentUser) {
-      markOnboardingSeen(currentUser.id);
+      markOnboardingSeen(currentUser.email);
     }
     setShowOnboarding(false);
   };
@@ -2094,7 +2369,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     try {
-      const { data: found } = await supabase.from("xmum_profiles").select("*").eq("id", profileId).maybeSingle();
+      let { data: found, error: foundError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", profileId).maybeSingle();
+      if (
+        foundError &&
+        (
+          isMissingPasswordHashColumnError(foundError) ||
+          isMissingProfileColumnError(foundError, "companion_pet_count") ||
+          isMissingProfileColumnError(foundError, "companion_selected_state_id")
+        )
+      ) {
+        markUnsupportedProfileColumns(foundError);
+        ({ data: found, error: foundError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", profileId).maybeSingle());
+      }
       if (found) {
         const normalizedFound = normalizeProfileRecord(found);
         setCurrentUser(normalizedFound);
@@ -2200,6 +2486,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     delete update.flag_status;
     delete update.appeal_count;
     delete update.is_demo_profile;
+    if (original.is_profile_complete) {
+      delete update.gender;
+    }
 
     if (typeof update.password === "string") {
       const trimmedPassword = update.password.trim();
@@ -2215,6 +2504,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
     saveProfiles(nextProfiles);
     setCurrentUser(updatedUser);
+    if (!original.is_profile_complete && updatedUser.is_profile_complete && !hasSeenOnboarding(updatedUser.email)) {
+      setOnboardingStep(0);
+      setShowOnboarding(true);
+    }
     showToast("Profile updated successfully!", "success");
     return { success: true };
   };
@@ -3082,22 +3375,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
-  const submitBugReport = async (data: { subject: string; description: string; sourcePage?: string }) => {
+  const submitBugReport = async (data: { subject: string; description: string; sourcePage?: string; kind?: "bug" | "feature" }) => {
     if (!currentUser) {
-      return { success: false, error: "Please sign in to submit a bug report." };
+      return { success: false, error: "Please sign in before sending this request." };
     }
 
+    const kind = data.kind === "feature" ? "feature" : "bug";
+    const kindLabel = kind === "feature" ? "Feature Request" : "Bug Report";
+    const kindLabelLower = kind === "feature" ? "feature request" : "bug report";
     const subject = data.subject.trim().slice(0, 120);
     const description = data.description.trim().slice(0, 2000);
     const sourcePage = data.sourcePage?.trim().slice(0, 120) || "XMUM Hangouts";
 
     if (!description || description.length < 10) {
-      return { success: false, error: "Please describe the bug in at least 10 characters." };
+      return { success: false, error: `Please describe your ${kindLabelLower} in at least 10 characters.` };
     }
 
-    const primaryAdmin =
-      profiles.find(profile => profile.email.trim().toLowerCase() === ADMIN_EMAIL) ||
-      profiles.find(profile => profile.is_admin);
+    const primaryAdmin = profiles.find(profile => profile.is_admin);
 
     if (!primaryAdmin) {
       return { success: false, error: "Admin account could not be found. Please try again shortly." };
@@ -3105,10 +3399,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const adminChat = getOrCreateChat(primaryAdmin.id, null);
     const chatMessage = [
-      "[BUG REPORT]",
+      `[${kindLabel.toUpperCase()}]`,
       `Reporter: ${currentUser.name} (${currentUser.email})`,
       `Page: ${sourcePage}`,
-      `Subject: ${subject || "General bug report"}`,
+      `Subject: ${subject || `General ${kindLabelLower}`}`,
       "",
       description
     ].join("\n");
@@ -3132,7 +3426,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         type: "new_report_admin",
         payload: {
           reporter_name: currentUser.name,
-          custom_text: `New bug report from ${currentUser.name}: ${subject || "General bug report"}`
+          custom_text: `New ${kindLabelLower} from ${currentUser.name}: ${subject || `General ${kindLabelLower}`}`
         },
         is_read: false,
         created_at: new Date().toISOString()
@@ -3151,6 +3445,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             name: currentUser.name,
             email: currentUser.email
           },
+          kind,
           subject,
           description,
           sourcePage,
@@ -3160,16 +3455,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        warning = payload.error || "The admin email could not be confirmed, but your report reached the in-app admin inbox.";
+        warning = payload.error || `The support email route could not be confirmed, but your ${kindLabelLower} reached the in-app admin inbox.`;
       } else if (payload.warning) {
         warning = payload.warning;
       }
     } catch (err) {
-      warning = "The admin email could not be confirmed, but your report reached the in-app admin inbox.";
+      warning = `The support email route could not be confirmed, but your ${kindLabelLower} reached the in-app admin inbox.`;
     }
 
     showToast(
-      warning ? "Bug report saved for the admin account. Email delivery needs attention." : "Bug report sent to the admin team.",
+      warning ? `${kindLabel} saved for the admin team. Email delivery needs attention.` : `${kindLabel} sent to the admin team.`,
       warning ? "info" : "success"
     );
 
@@ -3494,6 +3789,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createMockUser,
 
         updateProfile,
+        syncCompanionProgress,
         setHideDetails,
         deleteCurrentAccount,
         

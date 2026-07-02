@@ -5,7 +5,7 @@
 
 import React, { useState } from "react";
 import { useApp } from "../context/AppContext";
-import { XMUM_PROGRAMS, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
+import { COUNTRIES, XMUM_PROGRAMS, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
 import { AvatarPicker } from "./AvatarPicker";
 import { Plus, X, Heart, ShieldAlert, Calendar } from "lucide-react";
 
@@ -38,11 +38,14 @@ export const ProfileSetupForm: React.FC = () => {
   const [aboutMe, setAboutMe] = useState(currentUser.about_me || "");
   const [avatarId, setAvatarId] = useState(currentUser.avatar_id || "panda");
   const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   
   // Custom language input state
   const [customLang, setCustomLang] = useState("");
   const [errorText, setErrorText] = useState("");
   const hasExistingPassword = Boolean(currentUser.password_hash || currentUser.password);
+  const [showPasswordResetSection, setShowPasswordResetSection] = useState(!hasExistingPassword);
+  const availableCountries = COUNTRIES.includes(country) ? COUNTRIES : [country, ...COUNTRIES];
 
   const handleToggleLanguage = (lang: string) => {
     if (languages.includes(lang)) {
@@ -92,6 +95,10 @@ export const ProfileSetupForm: React.FC = () => {
       setErrorText("For security, your password must be at least 6 characters.");
       return;
     }
+    if (password.trim() && password.trim() !== passwordConfirm.trim()) {
+      setErrorText("Please enter the same password in both fields.");
+      return;
+    }
 
     const { success, error } = updateProfile({
       name: name.trim(),
@@ -105,7 +112,7 @@ export const ProfileSetupForm: React.FC = () => {
       student_type: (studentType as any) || "Not Specified",
       about_me: aboutMe.trim(),
       avatar_id: avatarId,
-      ...(password.trim() ? { password: password.trim() } : {}),
+      ...(showPasswordResetSection && password.trim() ? { password: password.trim() } : {}),
       is_profile_complete: true
     });
 
@@ -170,20 +177,24 @@ export const ProfileSetupForm: React.FC = () => {
             />
           </div>
 
-          {/* Country input during onboarding */}
+          {/* Country dropdown during onboarding */}
           <div className="space-y-1.5">
             <label className="block text-xs font-bold text-gray-500">
               Country / Place of Origin <span className="text-rose-500">*</span>
             </label>
-            <input
+            <select
               id="setup-country-input"
-              type="text"
               value={country}
               onChange={e => setCountry(e.target.value)}
-              placeholder="e.g. Malaysia"
               required
               className="w-full bg-white border border-gray-200 focus:border-rose-400 focus:ring-1 focus:ring-rose-400 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-gray-700 outline-none transition-colors"
-            />
+            >
+              {availableCountries.map(option => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
             <div className="text-[10px] text-gray-400 italic">
               You can set this now. It becomes restricted after your profile is completed.
             </div>
@@ -293,21 +304,71 @@ export const ProfileSetupForm: React.FC = () => {
             </select>
           </div>
 
-          {/* Secure Password input */}
-          <div className="space-y-1.5 sm:col-span-1">
-            <label className="block text-xs font-bold text-gray-700">
-              Set Up Password <span className="text-rose-500">*</span>
-            </label>
-            <input
-              id="setup-password-input"
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder={hasExistingPassword ? "Leave blank to keep your current password" : "Min 6 characters"}
-              className="w-full bg-white border border-gray-200 focus:border-rose-400 focus:ring-1 focus:ring-rose-400 rounded-xl px-4 py-2.5 text-xs sm:text-sm outline-none transition-colors text-slate-800"
-              required={!hasExistingPassword}
-            />
+        </div>
+
+        <div className="space-y-3 rounded-2xl border border-gray-100 bg-slate-50/55 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <h3 className="text-sm font-black text-gray-900">
+                {hasExistingPassword ? "Password Reset" : "Set Password for Password Login"}
+              </h3>
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                {hasExistingPassword
+                  ? "You can keep your current password or open this section to set a new one."
+                  : "Create a password now so you can also sign in with email and password later."}
+              </p>
+            </div>
+
+            {hasExistingPassword && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPasswordResetSection(prev => !prev);
+                  if (showPasswordResetSection) {
+                    setPassword("");
+                    setPasswordConfirm("");
+                  }
+                }}
+                className="inline-flex items-center justify-center rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50"
+              >
+                {showPasswordResetSection ? "Cancel Reset" : "Reset Password"}
+              </button>
+            )}
           </div>
+
+          {showPasswordResetSection && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-gray-700">
+                  New Password <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  id="setup-password-input"
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="Minimum 6 characters"
+                  className="w-full bg-white border border-gray-200 focus:border-rose-400 focus:ring-1 focus:ring-rose-400 rounded-xl px-4 py-2.5 text-xs sm:text-sm outline-none transition-colors text-slate-800"
+                  required={!hasExistingPassword}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-gray-700">
+                  Confirm Password <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  id="setup-password-confirm-input"
+                  type="password"
+                  value={passwordConfirm}
+                  onChange={e => setPasswordConfirm(e.target.value)}
+                  placeholder="Re-enter the same password"
+                  className="w-full bg-white border border-gray-200 focus:border-rose-400 focus:ring-1 focus:ring-rose-400 rounded-xl px-4 py-2.5 text-xs sm:text-sm outline-none transition-colors text-slate-800"
+                  required={!hasExistingPassword}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Spoken languages multi select (optional) */}

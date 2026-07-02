@@ -16,6 +16,7 @@ import {
   MIN_HANGOUT_DESCRIPTION_LENGTH,
   validateFutureHangoutDate
 } from "./lib/hangouts";
+import { matchesPrimaryAdminEmail } from "./lib/admin";
 import { isDemoProfile, normalizeProfileEmail, pickCanonicalProfile } from "./lib/profiles";
 import { NotificationBell } from "./components/NotificationBell";
 import { HangoutCard } from "./components/HangoutCard";
@@ -61,8 +62,113 @@ import {
   Trash2
 } from "lucide-react";
 
-const ADMIN_TEST_CARD_EMAIL = "mcs2509008@xmu.edu.my";
 const SYSTEM_DELETED_USER_ID = "deleted_user";
+const ADMIN_TOOL_TEST_PROFILES: Profile[] = [
+  {
+    id: "sys_admin",
+    email: "admin@xmu.edu.my",
+    student_id: "admin",
+    name: "Dean Hangouts",
+    name_last_changed_at: null,
+    country: "Malaysia",
+    country_last_changed_at: null,
+    languages: ["English", "Malay (Bahasa Melayu)", "Mandarin (Chinese)"],
+    age: 26,
+    program: "Software Engineering",
+    year_of_study: "Year 5+",
+    gender: "Male",
+    student_type: "postgraduate",
+    about_me: "The official seeded admin profile for internal testing.",
+    avatar_id: "owl",
+    is_profile_complete: true,
+    hide_details: false,
+    is_admin: true,
+    is_blocked_globally: false,
+    flag_status: "none",
+    appeal_count: 0,
+    companion_pet_count: 0,
+    companion_selected_state_id: null,
+    is_demo_profile: true
+  },
+  {
+    id: "user_sarah",
+    email: "sarah.lin@xmu.edu.my",
+    student_id: "sarah.lin",
+    name: "Sarah Lin",
+    name_last_changed_at: null,
+    country: "Singapore",
+    country_last_changed_at: null,
+    languages: ["English", "Mandarin (Chinese)"],
+    age: 20,
+    program: "Computer Science & Technology",
+    year_of_study: "Year 2",
+    gender: "Female",
+    student_type: "degree",
+    about_me: "Seeded test profile for admin-side simulation.",
+    avatar_id: "cat",
+    is_profile_complete: true,
+    hide_details: false,
+    is_admin: false,
+    is_blocked_globally: false,
+    flag_status: "none",
+    appeal_count: 0,
+    companion_pet_count: 0,
+    companion_selected_state_id: null,
+    is_demo_profile: true
+  },
+  {
+    id: "user_ahmad",
+    email: "ahmad.fauzi@xmu.edu.my",
+    student_id: "ahmad.fauzi",
+    name: "Ahmad Fauzi",
+    name_last_changed_at: null,
+    country: "Malaysia",
+    country_last_changed_at: null,
+    languages: ["Malay (Bahasa Melayu)", "English"],
+    age: 19,
+    program: "Artificial Intelligence",
+    year_of_study: "Year 1",
+    gender: "Male",
+    student_type: "degree",
+    about_me: "Seeded test profile for admin-side simulation.",
+    avatar_id: "koala",
+    is_profile_complete: true,
+    hide_details: false,
+    is_admin: false,
+    is_blocked_globally: false,
+    flag_status: "none",
+    appeal_count: 0,
+    companion_pet_count: 0,
+    companion_selected_state_id: null,
+    is_demo_profile: true
+  },
+  {
+    id: "user_xiaoming",
+    email: "xiaoming@xmu.edu.my",
+    student_id: "xiaoming",
+    name: "Xiao Ming",
+    name_last_changed_at: null,
+    country: "China",
+    country_last_changed_at: null,
+    languages: ["Mandarin (Chinese)", "English"],
+    age: 21,
+    program: "Digital Media Technology",
+    year_of_study: "Year 3",
+    gender: "Male",
+    student_type: "degree",
+    about_me: "Seeded test profile for admin-side simulation.",
+    avatar_id: "panda",
+    is_profile_complete: true,
+    hide_details: false,
+    is_admin: false,
+    is_blocked_globally: false,
+    flag_status: "none",
+    appeal_count: 0,
+    companion_pet_count: 0,
+    companion_selected_state_id: null,
+    is_demo_profile: true
+  }
+];
 
 const AppContent: React.FC = () => {
   const {
@@ -119,6 +225,11 @@ const AppContent: React.FC = () => {
 
   // Navigation states
   const [activeTab, setActiveTab] = useState<"feed" | "create" | "profile" | "my-plans" | "chats" | "admin" | "terms" | "privacy" | "safety" | "about" | "donation" | "bug-report">("feed");
+  const adminToolProfiles = Array.from(
+    new Map<string, Profile>(
+      [...ADMIN_TOOL_TEST_PROFILES, ...profiles].map(profile => [profile.id, profile])
+    ).values()
+  );
   const [portalSubTab, setPortalSubTab] = useState<"hosted" | "requested">("hosted");
   const [showLoginModal, setShowLoginModal] = useState(false);
 
@@ -131,8 +242,7 @@ const AppContent: React.FC = () => {
   const [genderFilter, setGenderFilter] = useState<"all" | "male" | "female">("all");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const normalizedCurrentEmail = currentUser?.email?.trim().toLowerCase() || "";
-  const canViewTestUserCards = normalizedCurrentEmail === ADMIN_TEST_CARD_EMAIL;
+  const canViewTestUserCards = Boolean(currentUser?.is_admin);
   const isTestCreatorHangout = (creatorId: string) => {
     if (creatorId === SYSTEM_DELETED_USER_ID) return false;
     const creatorProfile = profiles.find(profile => profile.id === creatorId);
@@ -210,6 +320,7 @@ const AppContent: React.FC = () => {
   const [loginMode, setLoginMode] = useState<"otp" | "password">("otp");
   const [loginPassword, setLoginPassword] = useState("");
   const [isMicrosoftLoading, setIsMicrosoftLoading] = useState(false);
+  const [showPasswordResetHelp, setShowPasswordResetHelp] = useState(false);
   const [showNavLogoutConfirm, setShowNavLogoutConfirm] = useState(false);
 
   const minimumCreateDateTime = getRoundedMinimumTime();
@@ -321,6 +432,7 @@ const AppContent: React.FC = () => {
 
         if (!profile) {
           const student_id = email.split("@")[0];
+          const isPrimaryAdmin = await matchesPrimaryAdminEmail(email.toLowerCase());
           profile = {
             id: resData.session?.user?.id || ("user_" + Math.random().toString(36).substring(2, 11)),
             email: email.toLowerCase(),
@@ -339,7 +451,7 @@ const AppContent: React.FC = () => {
             avatar_id: "panda",
             is_profile_complete: false,
             hide_details: false,
-            is_admin: email.toLowerCase() === ADMIN_TEST_CARD_EMAIL || email.toLowerCase().startsWith("admin"),
+            is_admin: isPrimaryAdmin || email.toLowerCase().startsWith("admin"),
             is_blocked_globally: false,
             flag_status: "none",
             appeal_count: 0
@@ -610,6 +722,7 @@ const AppContent: React.FC = () => {
     const isChatMember = chat.user_a_id === currentUser.id || chat.user_b_id === currentUser.id;
     return isChatMember && m.sender_id !== currentUser.id && !m.is_read;
   }).length : 0;
+  const hasUnreadInbox = myUnreadMsgsCount > 0;
 
   // Render main user content views
   const renderTabContent = () => {
@@ -1603,24 +1716,46 @@ const AppContent: React.FC = () => {
 
       case "admin":
         // Admin stats calculations
+        const adminVisibleProfiles = Array.from(
+          new Map<string, Profile>(
+            [...ADMIN_TOOL_TEST_PROFILES, ...profiles].map(profile => [profile.id, profile])
+          ).values()
+        );
+        const isCountableProfile = (profile: Profile) => {
+          const normalizedEmail = normalizeProfileEmail(profile.email || "");
+          if (!normalizedEmail) return false;
+          if (profile.id === "deleted_user" || normalizedEmail === "deleted.user@system.local") return false;
+          if (isDemoProfile(profile)) return false;
+          return normalizedEmail.endsWith("@xmu.edu.my");
+        };
         const allRealProfilesByEmail = new Map<string, Profile>(
-          profiles
-            .filter(profile => !isDemoProfile(profile))
+          adminVisibleProfiles
+            .filter(profile => isCountableProfile(profile))
             .map(profile => [normalizeProfileEmail(profile.email), profile])
         );
         const testProfilesByEmail = new Map<string, Profile>(
-          profiles
+          adminVisibleProfiles
             .filter(profile => isDemoProfile(profile))
             .map(profile => [normalizeProfileEmail(profile.email), profile])
         );
         const countableProfiles = Array.from(allRealProfilesByEmail.values());
         const statsProfiles = countableProfiles.filter(profile => !profile.is_admin);
-        const statsProfileIds = new Set(statsProfiles.map(profile => profile.id));
+        const analyticsProfiles = statsProfiles.length > 0 ? statsProfiles : countableProfiles;
+        const statsProfileIds = new Set(analyticsProfiles.map(profile => profile.id));
         const testUsersCount = testProfilesByEmail.size;
         const totalActive = hangouts.filter(h => h.status === "active" && statsProfileIds.has(h.creator_id)).length;
         const totalExpired = hangouts.filter(h => h.status === "expired" && statsProfileIds.has(h.creator_id)).length;
         const totalUsersCount = countableProfiles.length;
         const statsUsersCount = statsProfiles.length;
+        const analyticsUsersCount = analyticsProfiles.length;
+        const totalCompanionPets = analyticsProfiles.reduce(
+          (sum, profile) => sum + Math.max(0, Number(profile.companion_pet_count || 0)),
+          0
+        );
+        const topCompanionProfile = [...analyticsProfiles].sort(
+          (a, b) => Number(b.companion_pet_count || 0) - Number(a.companion_pet_count || 0)
+        )[0] || null;
+        const showingAdminFallbackStats = statsProfiles.length === 0 && countableProfiles.length > 0;
         const pendingReportsList = reports.filter(r => r.status === "pending");
         const pendingAppealsList = appeals.filter(a => a.status === "pending");
 
@@ -1634,9 +1769,14 @@ const AppContent: React.FC = () => {
               <p className="text-xs text-purple-800 leading-relaxed max-w-2xl">
                 Dear XMUM administrator, manage reports, evaluate appeals, and monitor safe statistics directly.
               </p>
+              {showingAdminFallbackStats && (
+                <p className="text-[11px] text-purple-700 leading-relaxed">
+                  Activity analytics are using your admin profile for now because no non-admin student profiles are active yet.
+                </p>
+              )}
 
               {/* Admin metrics counters */}
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 pt-3">
+              <div className="grid grid-cols-2 md:grid-cols-7 gap-3 pt-3">
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
                   <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Active Posts</span>
                   <strong className="text-xl text-gray-800 block mt-1">{totalActive}</strong>
@@ -1652,6 +1792,10 @@ const AppContent: React.FC = () => {
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
                   <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Test users</span>
                   <strong className="text-xl text-gray-800 block mt-1">{testUsersCount}</strong>
+                </div>
+                <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
+                  <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Total Pets</span>
+                  <strong className="text-xl text-gray-800 block mt-1">{totalCompanionPets}</strong>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center bg-rose-50/20">
                   <span className="text-xs text-rose-600 block uppercase tracking-wider font-semibold">Pending Reports</span>
@@ -1673,8 +1817,8 @@ const AppContent: React.FC = () => {
                 
                 {/* Demographics Card */}
                 {(() => {
-                  const maleCount = statsProfiles.filter(p => (p.gender || "").toLowerCase() === "male").length;
-                  const femaleCount = statsProfiles.filter(p => (p.gender || "").toLowerCase() === "female").length;
+                  const maleCount = analyticsProfiles.filter(p => (p.gender || "").toLowerCase() === "male").length;
+                  const femaleCount = analyticsProfiles.filter(p => (p.gender || "").toLowerCase() === "female").length;
                   return (
                     <div className="bg-slate-50 p-4.5 rounded-2xl border border-gray-100/60 flex flex-col justify-between">
                       <div>
@@ -1683,19 +1827,19 @@ const AppContent: React.FC = () => {
                           <div>
                             <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
                               <span>Male Students</span>
-                              <span>{maleCount} ({statsUsersCount > 0 ? Math.round((maleCount/statsUsersCount)*100) : 0}%)</span>
+                              <span>{maleCount} ({analyticsUsersCount > 0 ? Math.round((maleCount/analyticsUsersCount)*100) : 0}%)</span>
                             </div>
                             <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                              <div className="bg-blue-500 h-full" style={{ width: `${statsUsersCount > 0 ? (maleCount/statsUsersCount)*100 : 0}%` }} />
+                              <div className="bg-blue-500 h-full" style={{ width: `${analyticsUsersCount > 0 ? (maleCount/analyticsUsersCount)*100 : 0}%` }} />
                             </div>
                           </div>
                           <div>
                             <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
                               <span>Female Students</span>
-                              <span>{femaleCount} ({statsUsersCount > 0 ? Math.round((femaleCount/statsUsersCount)*100) : 0}%)</span>
+                              <span>{femaleCount} ({analyticsUsersCount > 0 ? Math.round((femaleCount/analyticsUsersCount)*100) : 0}%)</span>
                             </div>
                             <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                              <div className="bg-pink-500 h-full" style={{ width: `${statsUsersCount > 0 ? (femaleCount/statsUsersCount)*100 : 0}%` }} />
+                              <div className="bg-pink-500 h-full" style={{ width: `${analyticsUsersCount > 0 ? (femaleCount/analyticsUsersCount)*100 : 0}%` }} />
                             </div>
                           </div>
                         </div>
@@ -1706,6 +1850,33 @@ const AppContent: React.FC = () => {
                     </div>
                   );
                 })()}
+
+                <div className="bg-slate-50 p-4.5 rounded-2xl border border-gray-100/60 flex flex-col justify-between">
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Companion Activity</h4>
+                    <div className="space-y-2 mt-4 text-xs text-gray-600">
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Total pets recorded</span>
+                        <strong className="text-gray-900">{totalCompanionPets}</strong>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Average per real profile</span>
+                        <strong className="text-gray-900">
+                          {analyticsUsersCount > 0 ? Math.round(totalCompanionPets / analyticsUsersCount) : 0}
+                        </strong>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Top petter</span>
+                        <strong className="text-gray-900 text-right">
+                          {topCompanionProfile ? `${topCompanionProfile.name} (${Math.max(0, Number(topCompanionProfile.companion_pet_count || 0))})` : "None yet"}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-4 leading-normal">
+                    These values are synced per student profile so they can be tracked in both the app and Supabase.
+                  </p>
+                </div>
 
                 {/* Plan categories shares */}
                 {(() => {
@@ -1971,12 +2142,15 @@ const AppContent: React.FC = () => {
                   <button
                     id="tab-chats-btn"
                     onClick={() => setActiveTab("chats")}
-                    className={`px-4 py-2 rounded-2xl text-xs font-black transition-all duration-250 cursor-pointer hover:scale-[1.02] active:scale-95 flex items-center gap-1.5 ${
+                    className={`relative px-4 py-2 rounded-2xl text-xs font-black transition-all duration-250 cursor-pointer hover:scale-[1.02] active:scale-95 flex items-center gap-1.5 ${
                       activeTab === "chats" ? "bg-rose-50 text-rose-600 shadow-sm" : "text-gray-500 hover:bg-slate-50/70 hover:text-rose-600"
                     }`}
                   >
+                    {hasUnreadInbox && (
+                      <span className="absolute top-1.5 left-2.5 h-2 w-2 rounded-full bg-rose-500 animate-pulse" aria-hidden="true" />
+                    )}
                     Inbox
-                    {myUnreadMsgsCount > 0 && (
+                    {hasUnreadInbox && (
                       <span className="bg-rose-500 text-[10px] text-white px-1.5 py-0.5 rounded-full font-bold animate-pulse font-sans">
                         {myUnreadMsgsCount}
                       </span>
@@ -2116,7 +2290,7 @@ const AppContent: React.FC = () => {
             </div>
           
             <div className="flex flex-wrap gap-2 items-center">
-              {profiles.map(p => (
+              {adminToolProfiles.map(p => (
                 <button
                   id={`tester-user-switch-${p.id}`}
                   key={p.id}
@@ -2316,18 +2490,36 @@ const AppContent: React.FC = () => {
                     </div>
 
                     {loginMode === "password" && (
-                      <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
-                        <label className="text-xs font-bold text-gray-700 block">Password <span className="text-rose-500">*</span></label>
-                        <input
-                          id="login-password-input"
-                          type="password"
-                          value={loginPassword}
-                          onChange={e => setLoginPassword(e.target.value)}
-                          placeholder="Enter your security password"
-                          required
-                          disabled={isLoginLoading}
-                          className="w-full bg-slate-50 border border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-2 focus:ring-rose-100 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-slate-800 outline-none transition-all disabled:opacity-60"
-                        />
+                      <div className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-gray-700 block">Password <span className="text-rose-500">*</span></label>
+                          <input
+                            id="login-password-input"
+                            type="password"
+                            value={loginPassword}
+                            onChange={e => setLoginPassword(e.target.value)}
+                            placeholder="Enter your security password"
+                            required
+                            disabled={isLoginLoading}
+                            className="w-full bg-slate-50 border border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-2 focus:ring-rose-100 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-slate-800 outline-none transition-all disabled:opacity-60"
+                          />
+                        </div>
+
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setShowPasswordResetHelp(prev => !prev)}
+                            className="text-[11px] font-bold text-rose-600 transition-colors hover:text-rose-700"
+                          >
+                            {showPasswordResetHelp ? "Hide password reset help" : "Need to reset your password?"}
+                          </button>
+                        </div>
+
+                        {showPasswordResetHelp && (
+                          <div className="rounded-2xl border border-rose-100 bg-rose-50/70 p-3 text-[11px] leading-relaxed text-rose-900">
+                            Sign in with your XMUM Microsoft account first, then open <strong>My Profile</strong> and use <strong>Reset Password</strong> there.
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -2765,7 +2957,10 @@ const AppContent: React.FC = () => {
           >
             <MessageSquare className="w-5 h-5" />
             <span className="text-[9px] font-black tracking-wide font-sans">Inbox</span>
-            {myUnreadMsgsCount > 0 && (
+            {hasUnreadInbox && (
+              <span className="absolute top-1 right-2 h-2 w-2 rounded-full bg-rose-500 animate-pulse" aria-hidden="true" />
+            )}
+            {hasUnreadInbox && (
               <span className="absolute top-2 right-1.5 bg-rose-500 text-[8px] text-white px-1 py-0.2 rounded-full font-bold">
                 {myUnreadMsgsCount}
               </span>

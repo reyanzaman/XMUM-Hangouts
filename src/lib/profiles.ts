@@ -34,6 +34,25 @@ export function normalizeProfileEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function hasMeaningfulDisplayName(profile: Profile): boolean {
+  const normalizedName = profile.name.trim().toLowerCase();
+  const normalizedId = profile.id.trim().toLowerCase();
+  const normalizedStudentId = profile.student_id.trim().toLowerCase();
+  const emailLocalPart = normalizeProfileEmail(profile.email).split("@")[0] || "";
+
+  if (!normalizedName) {
+    return false;
+  }
+
+  return (
+    normalizedName !== emailLocalPart &&
+    normalizedName !== normalizedStudentId &&
+    normalizedName !== normalizedId &&
+    normalizedName !== "friend" &&
+    normalizedName !== "student"
+  );
+}
+
 export function pickCanonicalProfile(
   profiles: Profile[],
   options?: { email?: string; authUserId?: string | null }
@@ -54,6 +73,7 @@ export function pickCanonicalProfile(
       if (!isDemoProfile(profile)) total += 200;
       if (normalizedEmail && normalizeProfileEmail(profile.email) === normalizedEmail) total += 1000;
       if (profile.is_profile_complete) total += 400;
+      if (hasMeaningfulDisplayName(profile)) total += 175;
       if (profile.password_hash) total += 125;
       if (options?.authUserId && profile.id === options.authUserId) total += 100;
       if (!profile.is_blocked_globally) total += 10;

@@ -1,5 +1,57 @@
 [
   {
+    "id": "hangout_odi2os3nw",
+    "creator_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "intention": "play board games together!",
+    "location": "B1",
+    "event_datetime": "2026-07-04T06:00:00.000Z",
+    "additional_info": "I really do want to play but I just posted this to test this app again. Sorry!",
+    "max_participants": null,
+    "restrictions": {
+      "years": [],
+      "age_max": null,
+      "age_min": null,
+      "genders": [],
+      "programs": [],
+      "countries": [],
+      "languages": [],
+      "student_types": []
+    },
+    "status": "active",
+    "created_at": "2026-07-02T05:48:26.449Z",
+    "updated_at": "2026-07-02T05:48:26.449Z",
+    "is_anonymous": true,
+    "meeting_point": "🔒 [Apply and get accepted to unlock]"
+  },
+  {
+    "id": "hangout_61stot4ql",
+    "creator_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "intention": "study together!",
+    "location": "Library",
+    "event_datetime": "2026-07-03T07:30:00.000Z",
+    "additional_info": "Don't believe me. I don't want to study. I am just testing this app.",
+    "max_participants": 5,
+    "restrictions": {
+      "years": [],
+      "age_max": null,
+      "age_min": null,
+      "genders": [],
+      "programs": [],
+      "countries": [],
+      "languages": [
+        "English"
+      ],
+      "student_types": [
+        "degree"
+      ]
+    },
+    "status": "active",
+    "created_at": "2026-07-02T05:47:28.598Z",
+    "updated_at": "2026-07-02T05:47:28.598Z",
+    "is_anonymous": false,
+    "meeting_point": "🔒 [Apply and get accepted to unlock]"
+  },
+  {
     "id": "hangout_u018pg5k9",
     "creator_id": "deleted_user",
     "intention": "test this app",

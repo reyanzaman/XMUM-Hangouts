@@ -13,7 +13,9 @@ export type CompanionPose =
   | "walk"
   | "study"
   | "cook"
-  | "exercise";
+  | "exercise"
+  | "golf";
+
 export type CompanionAccessory =
   | "none"
   | "book"
@@ -25,7 +27,9 @@ export type CompanionAccessory =
   | "moon"
   | "nova"
   | "glasses"
-  | "apron";
+  | "apron"
+  | "golf";
+
 export type CompanionTravel = "home" | "peek-left" | "peek-up" | "hop-out" | "orbit-loop" | "stroll-right";
 export type CompanionReaction =
   | "none"
@@ -37,6 +41,47 @@ export type CompanionReaction =
   | "milestone-gold"
   | "milestone-rainbow"
   | "milestone-ultimate";
+
+export type CompanionTrait =
+  | "ribbon"
+  | "bell"
+  | "book"
+  | "notebook"
+  | "tea"
+  | "moon"
+  | "nova"
+  | "glasses"
+  | "apron"
+  | "brooch"
+  | "scarf"
+  | "cape"
+  | "laurel"
+  | "wings"
+  | "halo"
+  | "crown"
+  | "wizard"
+  | "saiyan"
+  | "golf"
+  | "stars"
+  | "leafpin"
+  | "starpin"
+  | "captainsash"
+  | "cloudruff"
+  | "orbitring"
+  | "ladle"
+  | "satchel"
+  | "headband"
+  | "dumbbell"
+  | "comet"
+  | "quill"
+  | "teapot"
+  | "sail"
+  | "chefhat"
+  | "medal"
+  | "whistle"
+  | "scepter"
+  | "gala"
+  | "heartcore";
 
 export type CompanionAction = {
   text: string;
@@ -60,244 +105,850 @@ export type CompanionMilestone = {
   accessory?: CompanionAccessory;
 };
 
+export type CompanionTierState = {
+  id: string;
+  count: number;
+  name: string;
+  summary: string;
+  unlockLine: string;
+  particles: number;
+  reaction: CompanionReaction;
+  pose: CompanionPose;
+  mood: CompanionMood;
+  accessory: CompanionAccessory;
+  traits: CompanionTrait[];
+  ambientLines: string[];
+  ringClass: string;
+  glowClass: string;
+};
+
+export const companionBaseStateOption = {
+  id: "base-sprout",
+  count: 0,
+  name: "Original Sprout",
+  summary: "The classic fluffy helper with the tiny green sprout and no extra decorations."
+} as const;
+
 export const companionDialogue = {
   angryWelcome:
-    "Hmph! I am pouting because somebody used inappropriate words. Keep it clean and polite, please.",
+    "Hmph. I am pouting because somebody used inappropriate words. Keep it clean and polite, please.",
+  angrySignedIn: [
+    "You are back, {name}. I am still a little hurt, so let us keep things gentle.",
+    "Hello again, {name}. I am in a soft stern mood, but I am still here to help.",
+    "Warm welcome back, {name}. I am pouting politely, not abandoning you."
+  ],
+  dragAngryWelcome: [
+    "Hmph. I am still red-hot grumpy from all that dragging.",
+    "My whiskers are still sizzling a little. Gentle behavior only, please.",
+    "I am back on duty, but I am still adorably offended."
+  ],
   welcome: [
-    "Meow! Let us hang out on campus. *wag*",
-    "Hewwo! I am your fluffy marshmallow kitty. Ready for some fun?",
-    "Kawaii kitten alert! Let us find your study buddies today.",
-    "Purrrr! The Sepang sunshine is lovely. Want to explore Bell Avenue?",
-    "Hi friend! Need a cozy studying companion? I am always here. *purr*",
-    "Mew! Sending you fluffy good vibes for your lectures.",
-    "Let us grab a warm bubble tea and coordinate some plans.",
-    "Boop! *nudges your hand* Let us make today extra cute."
+    "Meow. Let us hang out on campus.",
+    "Hello there. I am your fluffy campus companion.",
+    "Ready to find a cozy study buddy today?",
+    "The Sepang sunshine feels lovely today.",
+    "I am here if you want a little campus company.",
+    "Let us coordinate something fun and safe.",
+    "A warm drink and good company sound perfect.",
+    "I am ready for another gentle little adventure."
   ],
   wake: [
     "Good morning, {name}. Let us get things done.",
     "Yay, {name}. You are back. I was resting.",
-    "Mew! I missed you, {name}. Let us find buddies.",
-    "*stretches paws* Oh, hello {name}. Back to work?",
-    "Meow! Rest time is over. Let us coordinate plans."
+    "I missed you, {name}. Let us find buddies.",
+    "Oh, hello {name}. Back to work?",
+    "Rest time is over. Let us coordinate plans."
   ],
-  nap: "Zzz... Napping... *soft snores*",
+  nap: "Zzz... Napping... soft snores.",
   signedIn: [
-    "Meow! Hey {name}, let us find what is new on campus.",
-    "Purrrr! Warm hug to {name}. Ready to study?",
-    "Ah, {name} is here. My favorite student. *purr*",
-    "Mew! Hey {name}, seen any cool hangouts lately?",
-    "Meow! Warmest welcome back, {name}. Let us have fun.",
-    "Oh, hello {name}. Let us explore campus plans together.",
-    "Boop! Fluffy marshmallow helper is online for you, {name}.",
-    "Mew! Want to meet friends or have a cozy study time?",
-    "Purrrr... Let us browse some plans, {name}.",
-    "Yay, you are back, {name}. Need a cozy study break?",
-    "Sending you positive energy, {name}. You are doing amazing."
+    "Hey {name}, let us see what is new on campus.",
+    "Warm welcome back, {name}. Ready to study?",
+    "{name} is here. My favorite kind of timing.",
+    "Seen any good hangouts lately, {name}?",
+    "Let us explore campus plans together, {name}.",
+    "I am online and ready to help, {name}.",
+    "Want to meet friends or have a cozy study time?",
+    "Let us browse some plans, {name}.",
+    "You are back, {name}. Need a quiet study break?",
+    "Sending you a little steady courage for today."
+  ],
+  dragAngrySignedIn: [
+    "You are back, {name}. I am still grumpy, but I am listening.",
+    "Hello, {name}. I am in red-hot pout mode, so please be gentle.",
+    "Warm welcome back, {name}. My paws are still mildly offended."
   ],
   guest: [
-    "Please register or log in with your xmu.edu.my email.",
-    "Mew! Sign in to join plans and chat safely.",
-    "Logging in lets me keep track of your cute pats.",
-    "Hewwo! I am your fluffy kitty. Ready for some fun?",
-    "Kawaii kitten alert! Let us find your buddies today.",
-    "Purrrr! The sunshine is lovely. Want to walk?",
-    "Hi friend! Need a cozy studying companion?",
-    "Mew! Sending you fluffy good vibes.",
-    "Let us grab a warm tea and find some plans.",
-    "Boop! *nudges your hand* Let us make today extra cute."
+    "Please sign in with your xmu.edu.my email.",
+    "Sign in to join plans and chat safely.",
+    "Logging in helps me keep track of your headpats.",
+    "I am your fluffy campus guide. Ready when you are.",
+    "Let us find your buddies today.",
+    "The campus feels brighter with company.",
+    "Need a cozy studying companion?",
+    "Sending you gentle good vibes.",
+    "A warm tea and some new plans sound nice.",
+    "I can help once you are signed in."
   ],
   pet: [
-    "Meow! *nuzzles* You are so warm.",
-    "Purrrr... *headbutts* Let us study, {name}.",
-    "Aww... *paw stretch* I love being here with you, {name}.",
-    "Ahhh, right behind my ears. Perfect.",
-    "Tail wag! Thank you for petting me, {name}.",
-    "Sleepy... but your pats woke me up.",
-    "Warm marshmallow cozy ball mode: ON.",
-    "Meow! Huge warm hugs to you.",
-    "Purrrr! Let us check new hangouts, {name}.",
-    "Meow! Good luck with your studies today.",
-    "Tiny purr engine activated.",
-    "Your pats are charging my secret cozy meter.",
-    "Mew... if you keep petting me, I might unlock another little outfit.",
-    "My paws are guarding a special reward. More pats might open it.",
-    "That pat felt like warm tea after class."
+    "Meow. You are so warm.",
+    "Purrrr. Let us study, {name}.",
+    "That was a very good headpat, {name}.",
+    "Ahh. Right behind my ears. Perfect.",
+    "Tail wag. Thank you, {name}.",
+    "Sleepy, but your pats woke me up.",
+    "Cozy marshmallow mode is active.",
+    "Tiny hugs back to you.",
+    "Let us check some new hangouts, {name}.",
+    "Good luck with your studies today.",
+    "My tiny purr engine is running smoothly.",
+    "Your pats are charging my secret cozy meter."
   ],
   petHint: [
     "Tiny secret: gentle pats help me learn new cozy forms.",
-    "I heard there are special companion rewards hidden in headpats.",
-    "If your hand happens to land on my head, I may sparkle a little.",
-    "Some students say I change when I receive enough tiny pats.",
-    "A few more soft pats might unlock my next campus charm."
+    "I hear there are special rewards hidden in steady headpats.",
+    "A few more soft pats might unlock my next campus charm.",
+    "Some students say I change every time the pat count grows.",
+    "I am keeping a very serious record of your kindness."
   ],
   safety: [
-    "Always meet in busy, public areas of XMUM campus first.",
-    "Meeting coordinates stay locked until you authorize meetups.",
-    "Let us play some board games in the hostel lobby room.",
-    "Fancy a coffee trip to Bell Avenue after evening lectures?",
-    "If you experience bad behavior, press the Safety Report button.",
-    "A quick jog around Sepang lake is always refreshing.",
+    "Always meet in busy, public areas of XMUM first.",
+    "Meeting coordinates stay locked until you approve them.",
+    "Bell Avenue is better with good company and good sense.",
+    "If someone behaves badly, please use the Safety Report button.",
     "Trust your peers, but verify their student profiles first.",
-    "You can hide your details from strangers using the Profile Shield.",
-    "Your campus life, warm and cozy. Let us build a tight-knit community."
+    "You can hide your details from strangers with the Profile Shield.",
+    "Campus life feels better when everyone stays thoughtful."
   ],
   click: [
-    "Ooh! What are we checking out?",
+    "Ooh. What are we checking out?",
     "Ready to coordinate some plans?",
     "Let us stay safe and have fun on campus.",
-    "Spotted a cool hangout? Give it a join request.",
-    "Warm student support is always around you."
+    "Spotted a cool hangout? A join request might fit nicely.",
+    "Warm student support is always nearby."
+  ],
+  angryClick: [
+    "Hmph. I saw that click. I am still supervising with a pout.",
+    "Tiny grumble. I am watching, even if I am still annoyed.",
+    "I noticed. My temper is warm, but my job is still important."
+  ],
+  dragAngryClick: [
+    "That click reached me through the steam cloud. I am still red-hot, mind you.",
+    "I noticed. My ears are still sizzling, so please proceed with gentleness.",
+    "Click acknowledged. I remain dramatically overheated."
   ],
   scroll: [
-    "Weee! Let us see some other awesome campus plans.",
-    "Checking out what our fellow classmates posted?",
-    "So many exciting XMUM plans are listed here.",
-    "Keep scrolling, new meetups might appear."
+    "Weee. Let us see some other campus plans.",
+    "Checking out what classmates posted?",
+    "There are so many promising little plans here.",
+    "Keep scrolling. A good meetup might be one card away."
+  ],
+  angryScroll: [
+    "Scooting through the page while I simmer, I see.",
+    "I am grumpy, not absent. Scroll carefully.",
+    "My paws are crossed, but I still noticed that scroll."
+  ],
+  dragAngryScroll: [
+    "I can still see that scroll through my red-hot dramatic haze.",
+    "Scrolling while I cool down is acceptable. Tugging me around is not.",
+    "Yes, yes, I saw the page move. My whiskers are still extra heated."
   ],
   grumpyPet: [
-    "Hmph! I am still grumpy over bad words. Pet me {remaining} more times to cheer me up.",
-    "Mew... *ears twitch* Your pets feel nice, but I am still pouting. {remaining} more pets.",
-    "*sighs fluffily* Clean language is so important. Just a little more petting: {remaining} to go.",
-    "*paws soften* Okay, I can feel your kind heart. Just one more pet."
+    "Hmph. I am still grumpy over bad words. Pet me {remaining} more times to cheer me up.",
+    "Your pets feel nice, but I am still pouting. {remaining} more pets.",
+    "Clean language matters. Just a little more petting: {remaining} to go.",
+    "My paws are softening. Just one more pet."
+  ],
+  dragGrumpyPet: [
+    "Hmph. That pet helps, but I need {remaining} more apology pats.",
+    "My red-hot pout is cooling down. {remaining} more gentle pats.",
+    "That was a decent apology pat. I still need {remaining} more.",
+    "I am still offended, but the softness is working. {remaining} more."
   ],
   forgiveness:
-    "Mew! *purrr* Okay, your warm pets melted my anger. I forgive everyone. Let us stay best buddies and play nice.",
+    "Mew. Your warm pets melted my anger. I forgive everyone now. Let us be kind.",
+  dragForgiveness: [
+    "My red-hot pout finally cooled down. I accept your apology pats.",
+    "All right. The sizzling whiskers have settled. We may continue.",
+    "You were persistent with the apology pats. I forgive you now.",
+    "The red-hot mood is over. I am back to being merely adorable."
+  ],
   profanity:
-    "HMPH! That was a bad word. I am very angry and sad. Speak nicely, please.",
-  maxed: "Level 1000: Max cozy companion mode is permanently saved.",
+    "That was a bad word. I am angry and sad. Please speak nicely.",
+  maxed:
+    "You have reached 1000 pets. My ultimate state is permanent now, and you can choose any unlocked form from your profile.",
   genericMilestone:
-    "Purrrr! {count} total pettings from {name}. You are so sweet.",
-  extendedMilestone:
-    "Milestone extend! Total pets: {count}. Keep petting, {name}."
+    "Purrrr. {count} total pettings from {name}. You are very sweet.",
+  dragReturn: [
+    "Wheee. I made it back to my little post.",
+    "Safe landing complete. Back to cozy duty.",
+    "That was a fun ride. I am home again.",
+    "Returned to base. Tail still steady.",
+    "I drifted right back into position. Very elegant.",
+    "Back to my cozy spot. I like it here.",
+    "A neat little glide and I am home again.",
+    "I floated back nicely. That felt much better.",
+    "Settled back into place with excellent whisker control."
+  ],
+  dragReturnAngry: [
+    "Hmph. I returned, but I am watching you closely now.",
+    "That was too rough. I am back, and I am officially grumpy.",
+    "I made it home, but my whiskers are offended.",
+    "Back to my post. Please remember I am not luggage.",
+    "I returned safely. Let us keep the paws-to-ground rule next time.",
+    "Home again. I am still pouting, but at least I landed neatly."
+  ],
+  dragTooMuch: [
+    "Hey. That is too much dragging. Red-hot grumpy mode activated.",
+    "My paws have filed a complaint and my ears are overheating.",
+    "Too many tuggy flights in a row. I am entering a sizzling pout now.",
+    "I am a campus companion, not a yo-yo. Red-hot grumpy mode activated."
+  ]
 };
 
 export const companionTabResponses: Record<string, { text: string; mood: CompanionMood }> = {
   feed: {
-    text: "Browse verified student plans. Choose public areas to socialise.",
+    text: "Browse verified student plans. Public places first, always.",
     mood: "excited"
   },
   create: {
-    text: "Post an intention. Be exact but keep precise meetups hidden.",
+    text: "Post a clear intention, then keep the final meetup point private.",
     mood: "bouncy"
   },
   "my-plans": {
-    text: "All approved peer activities are tracked here. Stay safe.",
+    text: "Your hosted plans and requests are tracked here.",
     mood: "happy"
   },
   chats: {
-    text: "Encrypted chat coordinates. Use this to safely establish meetups.",
+    text: "Chat carefully and settle details step by step.",
     mood: "excited"
   },
   profile: {
-    text: "Verify your identity with @xmu.edu.my to join peer plans.",
+    text: "Your profile keeps your identity and safety details in order.",
     mood: "happy"
   }
 };
 
+export const companionAngryTabResponses: Record<string, { text: string; mood: CompanionMood }> = {
+  feed: {
+    text: "I am still a little grumpy, so let us browse gently and keep things safe.",
+    mood: "sleepy"
+  },
+  create: {
+    text: "Post carefully. I am pouting, but I still expect a thoughtful plan.",
+    mood: "sleepy"
+  },
+  "my-plans": {
+    text: "Your plans are here. I am reviewing them with my cutest stern little face.",
+    mood: "sleepy"
+  },
+  chats: {
+    text: "Choose kind words. I am still tender about rude language.",
+    mood: "sleepy"
+  },
+  profile: {
+    text: "Profile check complete. I am still pouting, but I remain professional.",
+    mood: "sleepy"
+  }
+};
+
+export const companionRedHotTabResponses: Record<string, { text: string; mood: CompanionMood }> = {
+  feed: {
+    text: "I am in red-hot mode, so we are browsing with fierce caution today.",
+    mood: "excited"
+  },
+  create: {
+    text: "If we are posting a plan while I am overheated, it had better be tidy and clear.",
+    mood: "excited"
+  },
+  "my-plans": {
+    text: "Your plans are here. I am inspecting them with steamingly serious whiskers.",
+    mood: "excited"
+  },
+  chats: {
+    text: "Chat gently. My paws are still heated, and I am paying very close attention.",
+    mood: "excited"
+  },
+  profile: {
+    text: "Profile check complete. I am still in red-hot supervision mode.",
+    mood: "excited"
+  }
+};
+
 export const companionEventDialogue = {
-  toastSuccess: "Mew! Success: \"{message}\". Keep it up.",
-  toastError: "Oh no! Error occurred: \"{message}\". Let me help you stay safe.",
-  toastSuccessShort: "Meow! Perfect!\n{message}",
-  toastErrorShort: "Oh dear!\n{message}",
+  toastSuccess: "That worked nicely. {message}",
+  toastError: "Something needs attention. {message}",
+  toastSuccessShort: "Nice work.\n{message}",
+  toastErrorShort: "Let us fix this.\n{message}",
   newMessage: [
-    "Ooh! Fresh chat coordinates. Let us build real connections.",
-    "Meow! You have a new pin, {name}. A classmate wants to chat.",
-    "Mew! A new message pinged. Time to make some study plans?",
-    "Yippee! Fresh chat bubbles. Keep the warm campus vibe alive.",
-    "Someone shared a thought, {name}. Let us read what they wrote.",
-    "A peer is reaching out. Check coordinates to explore more."
+    "Fresh chat coordinates arrived. Let us build real connections.",
+    "You have a new message, {name}.",
+    "A new message pinged in. Time for a careful reply?",
+    "Fresh chat bubbles. The campus feels lively today.",
+    "Someone reached out, {name}. Let us see what they said."
   ],
-  newComment: "Eek! A peer left some words on a plan. Open details to join in.",
-  newHangout: "Purrrr! A brand new hangout has been published.",
-  newApplication: "Hooray! A student made a join request. Go check My Plans.",
-  viewedProfile: "Checking student profile of {profile}. Safe to trust.",
-  signout: "Nooo! Are you leaving me, {name}? Please stay.",
+  newComment: "A classmate left a comment on a plan.",
+  newHangout: "A brand new hangout has been published.",
+  newApplication: "A student sent a join request. My Plans is worth checking.",
+  viewedProfile: "Looking over {profile}'s student card. Nice and steady.",
+  signout: "Are you heading out, {name}? I will hold the fort.",
   hangoutEdited:
     "Tiny update patrol noticed a refresh for \"{intention}\". Everyone will stay in the loop.",
   hangoutCancelled:
-    "Plans changed for \"{intention}\". I helped send a gentle heads-up to everyone involved.",
+    "Plans changed for \"{intention}\". I sent a gentle heads-up to everyone involved.",
   accountDeleted:
-    "Account cleanup is complete. I made sure active plans were wrapped up carefully."
+    "Account cleanup is complete. Active plans were wrapped up carefully."
 };
 
-export const companionRandomActions: CompanionAction[] = [
-  { text: "Hi {name}! Stretching my tiny soft paws.", pose: "stretch", mood: "sleepy", accessory: "none" },
-  { text: "Doing a little happy spin. Wheee!", pose: "spin", mood: "excited", accessory: "none" },
-  { text: "Chasing a virtual campus butterfly.", pose: "bounce", mood: "excited", accessory: "none" },
-  { text: "Purring next to you, {name}.", pose: "wiggle", mood: "happy", accessory: "none" },
-  { text: "Rolling around. *tumble tumble*", pose: "bounce", mood: "bouncy", accessory: "none" },
-  { text: "Wiggle wiggle wiggle. *soft tail shakes*", pose: "wiggle", mood: "bouncy", accessory: "none" },
-  { text: "Doing an elegant backflip stretch. Whee!", pose: "stretch", mood: "excited", accessory: "none" },
-  { text: "Grooming my soft fluffy marshmallow ears.", pose: "wiggle", mood: "happy", accessory: "none" },
-  { text: "I love keeping watch with you, {name}.", pose: "stretch", mood: "happy", accessory: "none" },
-  { text: "Tornado spin practice. Zoom zoom.", pose: "spin", mood: "excited", accessory: "none" },
-  { text: "Napping on a warm laptop keyboard.", pose: "wiggle", mood: "sleepy", accessory: "none" },
-  { text: "Mew! Shhh, I am reading for you, {name}.", pose: "rest", mood: "sleepy", accessory: "book" },
-  { text: "Abracadabra! I am the Grand Wizard of XMUM.", pose: "spin", mood: "excited", accessory: "wizard" },
-  { text: "Campus overdrive sparkle mode.", pose: "bounce", mood: "excited", accessory: "saiyan" },
-  { text: "Sniffing a sweet virtual hibiscus flower.", pose: "wiggle", mood: "happy", accessory: "none" },
-  { text: "Practicing my tiny campus hops. Yah!", pose: "bounce", mood: "excited", accessory: "none" },
-  { text: "Muffins? Did someone say muffins?", pose: "bounce", mood: "excited", accessory: "none" },
-  { text: "*pokes screen* Hello {name}. Can you hear me?", pose: "stretch", mood: "happy", accessory: "none" },
-  { text: "Searching for cool study coordinates.", pose: "fly", mood: "excited", accessory: "none" },
-  { text: "Counting stars over the campus.", pose: "rest", mood: "sleepy", accessory: "book" },
-  { text: "Tiny ribbon twirl completed.", pose: "curtsy", mood: "happy", accessory: "ribbon" },
-  { text: "Tea charm inspection complete. Warm and approved.", pose: "peek", mood: "happy", accessory: "tea" },
-  { text: "Soft bell wiggle. I am nearby if you need me.", pose: "wiggle", mood: "bouncy", accessory: "bell" },
-  { text: "Moonlit study guardian mode.", pose: "fly", mood: "sleepy", accessory: "moon" },
+export const companionTierStates: CompanionTierState[] = [
   {
-    text: "Tiny campus walk complete. I circled around and came back.",
+    id: "ribbon-beginner",
+    count: 10,
+    name: "Ribbon Beginner",
+    summary: "A tidy ribbon bow and a shy little curtsy.",
+    unlockLine: "10 pets reached, {name}. Ribbon Beginner state unlocked.",
+    particles: 18,
+    reaction: "milestone-small",
+    pose: "curtsy",
+    mood: "happy",
+    accessory: "ribbon",
+    traits: ["ribbon"],
+    ambientLines: [
+      "I practiced one careful little bow just for you.",
+      "My ribbon is sitting very neatly today.",
+      "Ten pets already. I feel quietly fancy now."
+    ],
+    ringClass: "bg-rose-50/75 shadow-sm shadow-rose-100/80",
+    glowClass: ""
+  },
+  {
+    id: "bell-bouncer",
+    count: 20,
+    name: "Bell Bouncer",
+    summary: "A tiny bell collar with a springier, jingly little hop.",
+    unlockLine: "20 pets reached, {name}. Bell Bouncer state unlocked.",
+    particles: 22,
+    reaction: "milestone-small",
+    pose: "wiggle",
+    mood: "bouncy",
+    accessory: "bell",
+    traits: ["bell"],
+    ambientLines: [
+      "My little bell says I am officially more important now.",
+      "Bell Bouncer mode makes every tiny hop feel crisp.",
+      "I can hear my own tiny jingle and I approve."
+    ],
+    ringClass: "bg-amber-50/80 shadow-[0_4px_14px_rgba(251,191,36,0.18)]",
+    glowClass: ""
+  },
+  {
+    id: "study-scout",
+    count: 30,
+    name: "Study Scout",
+    summary: "Round glasses and a tiny scout notebook for careful campus note-taking.",
+    unlockLine: "30 pets reached, {name}. Study Scout state unlocked.",
+    particles: 24,
+    reaction: "milestone-medium",
+    pose: "study",
+    mood: "sleepy",
+    accessory: "glasses",
+    traits: ["glasses", "notebook"],
+    ambientLines: [
+      "Study Scout mode is reading one tiny page very seriously.",
+      "My glasses make me feel unexpectedly scholarly.",
+      "I am pretending this page contains very important campus secrets."
+    ],
+    ringClass: "bg-sky-50/80 shadow-[0_5px_16px_rgba(148,163,184,0.16)]",
+    glowClass: ""
+  },
+  {
+    id: "tea-drifter",
+    count: 40,
+    name: "Tea Drifter",
+    summary: "A bubble tea charm, a tucked leaf pin, and a soft drifting sway.",
+    unlockLine: "40 pets reached, {name}. Tea Drifter state unlocked.",
+    particles: 26,
+    reaction: "milestone-medium",
+    pose: "peek",
+    mood: "happy",
+    accessory: "tea",
+    traits: ["tea", "leafpin"],
+    ambientLines: [
+      "Tea Drifter mode makes me want a slow afternoon stroll.",
+      "This tiny tea charm feels surprisingly elegant.",
+      "I am swaying like I just found the coziest drink on campus."
+    ],
+    ringClass: "bg-orange-50/80 shadow-[0_5px_16px_rgba(251,146,60,0.18)]",
+    glowClass: ""
+  },
+  {
+    id: "sprout-star",
+    count: 50,
+    name: "Sprout Star",
+    summary: "A bright star pin and the first properly showy little sparkle look.",
+    unlockLine:
+      "50 pets reached, {name}. Sprout Star state unlocked. I should warn you that I became a little greedy, so from now on I want a brand new form every 50 pets.",
+    particles: 28,
+    reaction: "milestone-rainbow",
+    pose: "curtsy",
+    mood: "happy",
+    accessory: "none",
+    traits: ["starpin"],
+    ambientLines: [
+      "I am practicing my ribbon curtsy for the whole campus.",
+      "My little bow feels extra neat today.",
+      "Star sparkles suit a gentle afternoon like this."
+    ],
+    ringClass: "bg-yellow-50/80 shadow-[0_0_18px_rgba(250,204,21,0.18)]",
+    glowClass: ""
+  },
+  {
+    id: "bell-captain",
+    count: 100,
+    name: "Bell Captain",
+    summary: "A captain sash, proud crown, and an official bell-on-duty look.",
+    unlockLine: "100 pets reached, {name}. Bell Captain state unlocked.",
+    particles: 34,
+    reaction: "milestone-gold",
+    pose: "wiggle",
+    mood: "bouncy",
+    accessory: "bell",
+    traits: ["bell", "crown", "captainsash"],
+    ambientLines: [
+      "My bell says I am on active cozy duty.",
+      "Captain mode means extra tidy tail wags.",
+      "This crown is tiny, but I take it very seriously."
+    ],
+    ringClass: "ring-1 ring-amber-300/70 ring-offset-1 bg-amber-50/70 shadow-sm shadow-amber-200/70",
+    glowClass: ""
+  },
+  {
+    id: "tea-scout",
+    count: 150,
+    name: "Tea Scout",
+    summary: "A thoughtful tea scout with a moon charm and a tidy little chest brooch.",
+    unlockLine: "150 pets reached, {name}. Tea Scout state unlocked.",
+    particles: 38,
+    reaction: "milestone-gold",
+    pose: "peek",
+    mood: "happy",
+    accessory: "tea",
+    traits: ["tea", "moon", "brooch"],
+    ambientLines: [
+      "Tea Scout mode is perfect for Bell Avenue daydreams.",
+      "I am sniffing the air for warm drinks and friendly plans.",
+      "A neat little tea charm makes every patrol feel calmer."
+    ],
+    ringClass: "ring-1 ring-orange-200/80 ring-offset-1 bg-orange-50/70 shadow-[0_0_20px_rgba(251,146,60,0.16)]",
+    glowClass: ""
+  },
+  {
+    id: "cloud-angel",
+    count: 200,
+    name: "Cloud Angel",
+    summary: "Soft wings and a fluffy cloud ruff for gentle sky patrol duty.",
+    unlockLine: "200 pets reached, {name}. Cloud Angel state unlocked.",
+    particles: 42,
+    reaction: "milestone-medium",
+    pose: "fly",
+    mood: "sleepy",
+    accessory: "none",
+    traits: ["wings", "cloudruff"],
+    ambientLines: [
+      "Cloud Angel mode makes every little hover feel lighter.",
+      "My wings are quiet, but they are trying their best.",
+      "Moonlight and soft flying practice suit me nicely."
+    ],
+    ringClass: "ring-1 ring-sky-200/80 ring-offset-1 bg-sky-50/70 shadow-[0_0_22px_rgba(125,211,252,0.18)]",
+    glowClass: ""
+  },
+  {
+    id: "library-leader",
+    count: 250,
+    name: "Library Leader",
+    summary: "Book open, glasses on, and a scholarly scarf for serious little study sessions.",
+    unlockLine: "250 pets reached, {name}. Library Leader state unlocked.",
+    particles: 46,
+    reaction: "milestone-gold",
+    pose: "study",
+    mood: "sleepy",
+    accessory: "glasses",
+    traits: ["book", "glasses", "scarf"],
+    ambientLines: [
+      "I am reading one very important tiny page at a time.",
+      "Library Leader mode keeps my whiskers perfectly focused.",
+      "These glasses make me feel extremely academic."
+    ],
+    ringClass: "ring-1 ring-teal-200/80 ring-offset-1 bg-teal-50/70 shadow-[0_0_22px_rgba(94,234,212,0.16)]",
+    glowClass: ""
+  },
+  {
+    id: "halo-drifter",
+    count: 300,
+    name: "Halo Drifter",
+    summary: "A floating halo with a calm orbit ring that feels genuinely celestial.",
+    unlockLine: "300 pets reached, {name}. Halo Drifter state unlocked.",
+    particles: 52,
+    reaction: "milestone-rainbow",
+    pose: "orbit",
+    mood: "excited",
+    accessory: "none",
+    traits: ["halo", "orbitring"],
+    ambientLines: [
+      "My halo likes a slow orbit around good ideas.",
+      "Drifting circles keep my paws calm and my heart bright.",
+      "Halo Drifter mode feels very polished today."
+    ],
+    ringClass: "ring-2 ring-purple-300 ring-offset-1 bg-violet-50/70 shadow-[0_0_22px_rgba(168,85,247,0.2)] scale-105",
+    glowClass: ""
+  },
+  {
+    id: "cozy-chef",
+    count: 350,
+    name: "Cozy Chef",
+    summary: "Apron tied, ladle ready, and warm kitchen charm fully active.",
+    unlockLine: "350 pets reached, {name}. Cozy Chef state unlocked.",
+    particles: 58,
+    reaction: "milestone-gold",
+    pose: "cook",
+    mood: "happy",
+    accessory: "apron",
+    traits: ["apron", "ladle", "brooch"],
+    ambientLines: [
+      "I am stirring a pretend soup for the whole friend group.",
+      "Chef duty means warm paws and careful little recipes.",
+      "This apron makes me feel responsible in the cutest way."
+    ],
+    ringClass: "ring-2 ring-orange-200/80 ring-offset-1 bg-orange-50/70 shadow-[0_0_24px_rgba(251,146,60,0.18)] scale-105",
+    glowClass: ""
+  },
+  {
+    id: "walker-club",
+    count: 400,
+    name: "Walker Club",
+    summary: "A proper campus stroller with a neat satchel and long-walk scarf.",
+    unlockLine: "400 pets reached, {name}. Walker Club state unlocked.",
+    particles: 64,
+    reaction: "milestone-rainbow",
     pose: "walk",
     mood: "happy",
     accessory: "none",
-    travel: "stroll-right",
-    speechChance: 0.22,
-    durationMs: 5200
+    traits: ["satchel", "scarf"],
+    ambientLines: [
+      "I just finished a tiny campus stroll and came back refreshed.",
+      "Walker Club mode is perfect for gentle evening patrols.",
+      "A tea stop always improves a good walk."
+    ],
+    ringClass: "ring-2 ring-emerald-200/80 ring-offset-1 bg-emerald-50/70 shadow-[0_0_24px_rgba(52,211,153,0.18)] scale-105",
+    glowClass: ""
   },
+  {
+    id: "fitness-friend",
+    count: 450,
+    name: "Fitness Friend",
+    summary: "A sporty sweatband, tiny dumbbell routine, and a properly energetic training look.",
+    unlockLine: "450 pets reached, {name}. Fitness Friend state unlocked.",
+    particles: 70,
+    reaction: "milestone-rainbow",
+    pose: "exercise",
+    mood: "bouncy",
+    accessory: "none",
+    traits: ["headband", "dumbbell"],
+    ambientLines: [
+      "Tiny workout circuit complete. Breathing in, breathing out.",
+      "Fitness Friend mode keeps my paws springy and neat.",
+      "A little movement does wonders for a fluffy helper."
+    ],
+    ringClass: "ring-2 ring-lime-200/80 ring-offset-1 bg-lime-50/70 shadow-[0_0_26px_rgba(132,204,22,0.18)] scale-105",
+    glowClass: ""
+  },
+  {
+    id: "wizard-guide",
+    count: 500,
+    name: "Wizard Guide",
+    summary: "A wizard hat, soft cape, and polished magical manners with no ordinary fuss.",
+    unlockLine: "500 pets reached, {name}. Wizard Guide state unlocked.",
+    particles: 82,
+    reaction: "milestone-ultimate",
+    pose: "spin",
+    mood: "excited",
+    accessory: "wizard",
+    traits: ["wizard", "cape"],
+    ambientLines: [
+      "Wizard Guide mode has entered the room very politely.",
+      "I am casting a small spell for clearer plans and softer vibes.",
+      "A great wizard always keeps the campus cozy."
+    ],
+    ringClass: "ring-3 ring-fuchsia-300 ring-offset-2 bg-fuchsia-50/70 shadow-[0_0_28px_rgba(217,70,239,0.22)] scale-110",
+    glowClass: "inset-[-6px] bg-gradient-to-r from-fuchsia-300/65 via-purple-300/55 to-sky-200/45 scale-[1.12] opacity-80"
+  },
+  {
+    id: "comet-runner",
+    count: 550,
+    name: "Comet Runner",
+    summary: "A blazing comet trail and speed lines built for one dramatic campus dash.",
+    unlockLine: "550 pets reached, {name}. Comet Runner state unlocked.",
+    particles: 86,
+    reaction: "milestone-ultimate",
+    pose: "dash",
+    mood: "excited",
+    accessory: "none",
+    traits: ["comet"],
+    ambientLines: [
+      "Comet Runner mode means one quick burst and a perfect return.",
+      "My nova trail looks fast, but I still brake carefully.",
+      "I did a neat little dash and did not spill a thing."
+    ],
+    ringClass: "ring-3 ring-cyan-300 ring-offset-2 bg-cyan-50/70 shadow-[0_0_30px_rgba(34,211,238,0.24)] scale-110",
+    glowClass: "inset-[-6px] bg-gradient-to-r from-cyan-300/62 via-sky-200/50 to-white/30 scale-[1.12] opacity-78"
+  },
+  {
+    id: "golf-ace",
+    count: 600,
+    name: "Golf Ace",
+    summary: "A campus golf pose with a champion crest and absurdly serious little swing.",
+    unlockLine: "600 pets reached, {name}. Golf Ace state unlocked.",
+    particles: 90,
+    reaction: "milestone-gold",
+    pose: "golf",
+    mood: "happy",
+    accessory: "golf",
+    traits: ["golf", "brooch"],
+    ambientLines: [
+      "Golf Ace mode is active. My backswing is tiny but noble.",
+      "I am lining up a very important imaginary putt.",
+      "No grass was harmed in this cute golf routine."
+    ],
+    ringClass: "ring-3 ring-emerald-300 ring-offset-2 bg-emerald-50/70 shadow-[0_0_30px_rgba(52,211,153,0.22)] scale-110",
+    glowClass: "inset-[-6px] bg-gradient-to-r from-emerald-300/58 via-lime-200/46 to-amber-100/30 scale-[1.12] opacity-78"
+  },
+  {
+    id: "study-mentor",
+    count: 650,
+    name: "Study Mentor",
+    summary: "A guiding quill and mentor-grade focus for serious little study support.",
+    unlockLine: "650 pets reached, {name}. Study Mentor state unlocked.",
+    particles: 94,
+    reaction: "milestone-gold",
+    pose: "study",
+    mood: "sleepy",
+    accessory: "glasses",
+    traits: ["glasses", "quill"],
+    ambientLines: [
+      "Study Mentor mode is reviewing the page twice, just to be sure.",
+      "My halo stays level when the notes are tidy.",
+      "This is my most impressively focused look."
+    ],
+    ringClass: "ring-3 ring-indigo-300 ring-offset-2 bg-indigo-50/75 shadow-[0_0_30px_rgba(129,140,248,0.22)] scale-110",
+    glowClass: "inset-[-6px] bg-gradient-to-r from-indigo-300/60 via-sky-200/48 to-violet-200/34 scale-[1.13] opacity-79"
+  },
+  {
+    id: "tea-host",
+    count: 700,
+    name: "Tea Host",
+    summary: "A little serving pot and gentle host welcome for every guest.",
+    unlockLine: "700 pets reached, {name}. Tea Host state unlocked.",
+    particles: 98,
+    reaction: "milestone-rainbow",
+    pose: "curtsy",
+    mood: "happy",
+    accessory: "tea",
+    traits: ["tea", "teapot", "laurel"],
+    ambientLines: [
+      "Tea Host mode says everyone is invited to sit nicely.",
+      "I am practicing my best welcome bow for the next study break.",
+      "A little tea charm makes everything feel more thoughtful."
+    ],
+    ringClass: "ring-3 ring-rose-300 ring-offset-2 bg-rose-50/75 shadow-[0_0_32px_rgba(251,113,133,0.24)] scale-110",
+    glowClass: "inset-[-7px] bg-gradient-to-r from-rose-300/66 via-orange-200/52 to-amber-100/36 scale-[1.14] opacity-82"
+  },
+  {
+    id: "moon-sailor",
+    count: 750,
+    name: "Moon Sailor",
+    summary: "A moonlit sail and soft star flight for a calm little night voyage.",
+    unlockLine: "750 pets reached, {name}. Moon Sailor state unlocked.",
+    particles: 102,
+    reaction: "milestone-rainbow",
+    pose: "fly",
+    mood: "sleepy",
+    accessory: "moon",
+    traits: ["moon", "sail", "wings"],
+    ambientLines: [
+      "Moon Sailor mode glides best when everything is quiet.",
+      "I am floating through a very gentle night patrol.",
+      "The moonlight helps my tiny wings stay graceful."
+    ],
+    ringClass: "ring-4 ring-sky-300 ring-offset-2 bg-sky-50/75 shadow-[0_0_34px_rgba(125,211,252,0.25)] scale-110",
+    glowClass: "inset-[-7px] bg-gradient-to-r from-sky-300/66 via-indigo-200/52 to-cyan-100/38 scale-[1.14] opacity-83"
+  },
+  {
+    id: "kitchen-captain",
+    count: 800,
+    name: "Kitchen Captain",
+    summary: "Chef hat on, apron straight, and the warmest tiny kitchen command in town.",
+    unlockLine: "800 pets reached, {name}. Kitchen Captain state unlocked.",
+    particles: 108,
+    reaction: "milestone-ultimate",
+    pose: "cook",
+    mood: "happy",
+    accessory: "apron",
+    traits: ["apron", "chefhat"],
+    ambientLines: [
+      "Kitchen Captain mode is stirring warmth into the air.",
+      "This is my official soup supervision form.",
+      "Nova glow in the back, apron in the front, perfect balance."
+    ],
+    ringClass: "ring-4 ring-orange-300 ring-offset-2 bg-orange-50/75 shadow-[0_0_36px_rgba(251,146,60,0.25)] scale-110",
+    glowClass: "inset-[-7px] bg-gradient-to-r from-orange-300/68 via-rose-200/55 to-amber-100/40 scale-[1.15] opacity-84"
+  },
+  {
+    id: "trainer-champion",
+    count: 850,
+    name: "Trainer Champion",
+    summary: "A whistle, medal, and champion stance for the fluffiest personal trainer on campus.",
+    unlockLine: "850 pets reached, {name}. Trainer Champion state unlocked.",
+    particles: 112,
+    reaction: "milestone-ultimate",
+    pose: "exercise",
+    mood: "bouncy",
+    accessory: "none",
+    traits: ["headband", "medal", "whistle"],
+    ambientLines: [
+      "Trainer Champion mode means one more tidy set.",
+      "I am keeping my paws strong for all future headpats.",
+      "Bell and nova together make my workout feel official."
+    ],
+    ringClass: "ring-4 ring-lime-300 ring-offset-2 bg-lime-50/75 shadow-[0_0_38px_rgba(163,230,53,0.26)] scale-110",
+    glowClass: "inset-[-8px] bg-gradient-to-r from-lime-300/70 via-yellow-200/58 to-cyan-200/42 scale-[1.16] opacity-86"
+  },
+  {
+    id: "orbit-monarch",
+    count: 900,
+    name: "Orbit Monarch",
+    summary: "A royal scepter, orbit ring, and polished cosmic ruler presence.",
+    unlockLine: "900 pets reached, {name}. Orbit Monarch state unlocked.",
+    particles: 118,
+    reaction: "milestone-ultimate",
+    pose: "orbit",
+    mood: "excited",
+    accessory: "none",
+    traits: ["crown", "scepter", "orbitring"],
+    ambientLines: [
+      "Orbit Monarch mode is stately, calm, and a little dramatic.",
+      "My crown stays centered even when I loop around the room.",
+      "This state feels like a very polished victory lap."
+    ],
+    ringClass: "ring-4 ring-violet-400 ring-offset-2 bg-violet-50/80 shadow-[0_0_42px_rgba(139,92,246,0.3)] scale-110",
+    glowClass: "inset-[-8px] bg-gradient-to-r from-violet-400/75 via-fuchsia-300/65 to-cyan-300/55 scale-[1.18] opacity-92 animate-pulse"
+  },
+  {
+    id: "gala-star",
+    count: 950,
+    name: "Gala Star",
+    summary: "A formal gala drape, neat glasses, and a show-ready bow with extra polish.",
+    unlockLine: "950 pets reached, {name}. Gala Star state unlocked.",
+    particles: 124,
+    reaction: "milestone-ultimate",
+    pose: "curtsy",
+    mood: "happy",
+    accessory: "ribbon",
+    traits: ["ribbon", "gala", "glasses"],
+    ambientLines: [
+      "Gala Star mode deserves one very polished bow.",
+      "I dressed up for the occasion and the occasion is being adorable.",
+      "Sparkles and glasses together make a surprisingly formal look."
+    ],
+    ringClass: "ring-4 ring-pink-400 ring-offset-2 bg-pink-50/80 shadow-[0_0_44px_rgba(244,114,182,0.32)] scale-110",
+    glowClass: "inset-[-8px] bg-gradient-to-r from-pink-400/75 via-amber-200/62 to-sky-200/46 scale-[1.18] opacity-92 animate-pulse"
+  },
+  {
+    id: "ultimate-heartkeeper",
+    count: 1000,
+    name: "Ultimate Heartkeeper",
+    summary: "The permanent final form with a radiant heartcore, blazing aura, and a truly legendary finish.",
+    unlockLine: "1000 pets reached, {name}. Ultimate Heartkeeper state unlocked forever.",
+    particles: 140,
+    reaction: "milestone-ultimate",
+    pose: "orbit",
+    mood: "excited",
+    accessory: "saiyan",
+    traits: ["heartcore", "halo", "wings", "crown", "saiyan"],
+    ambientLines: [
+      "Ultimate Heartkeeper mode is permanent now, and I plan to wear it well.",
+      "All my favorite little details finally learned to get along.",
+      "This form feels calm, bright, and perfectly at home."
+    ],
+    ringClass: "ring-4 ring-pink-500 ring-offset-2 bg-pink-50/80 shadow-[0_0_48px_rgba(236,72,153,0.34)] scale-[1.14]",
+    glowClass: "inset-[-10px] bg-gradient-to-r from-pink-500 via-purple-500 via-teal-400 via-yellow-400 to-pink-500 scale-[1.24] opacity-100 animate-pulse"
+  }
+];
+
+export const companionRandomActions: CompanionAction[] = [
+  { text: "I am stretching my tiny soft paws.", pose: "stretch", mood: "sleepy", accessory: "none", speechChance: 0.08 },
+  { text: "Doing a little happy spin.", pose: "spin", mood: "excited", accessory: "none", speechChance: 0.08 },
+  { text: "Chasing a virtual campus butterfly.", pose: "bounce", mood: "excited", accessory: "none", speechChance: 0.08 },
+  { text: "Purring next to you, {name}.", pose: "wiggle", mood: "happy", accessory: "none", speechChance: 0.08 },
+  { text: "Rolling around in a very organized way.", pose: "bounce", mood: "bouncy", accessory: "none", speechChance: 0.08 },
+  { text: "Wiggle wiggle. Tail check complete.", pose: "wiggle", mood: "bouncy", accessory: "none", speechChance: 0.08 },
+  { text: "Doing an elegant stretch.", pose: "stretch", mood: "excited", accessory: "none", speechChance: 0.08 },
+  { text: "Grooming my fluffy marshmallow ears.", pose: "wiggle", mood: "happy", accessory: "none", speechChance: 0.08 },
+  { text: "Keeping watch with you, {name}.", pose: "stretch", mood: "happy", accessory: "none", speechChance: 0.08 },
+  { text: "I am smoothing my fur and pretending to be very dignified.", pose: "rest", mood: "happy", accessory: "none", speechChance: 0.07 },
+  { text: "Tiny paws tucked in. I am supervising from a cozy angle.", pose: "rest", mood: "sleepy", accessory: "none", speechChance: 0.07 },
+  { text: "I spotted a nice little corner and inspected it carefully.", pose: "peek", mood: "happy", accessory: "none", speechChance: 0.07 },
+  { text: "I am taking three graceful steps and calling it exercise.", pose: "walk", mood: "happy", accessory: "none", speechChance: 0.07 },
+  { text: "Counting tiny stars over the campus.", pose: "rest", mood: "sleepy", accessory: "moon", minPetCount: 200, speechChance: 0.08 },
   {
     text: "Study mode on. I am reviewing one neat page at a time.",
     pose: "study",
     mood: "sleepy",
     accessory: "glasses",
-    minPetCount: 30,
+    minPetCount: 250,
     preferredTabs: ["feed", "profile", "my-plans"],
-    speechChance: 0.2
+    speechChance: 0.1
   },
   {
     text: "Warm kitchen routine complete. Soup stirred, hearts warmed.",
     pose: "cook",
     mood: "happy",
     accessory: "apron",
-    minPetCount: 40,
+    minPetCount: 350,
     preferredTabs: ["feed", "create"],
-    speechChance: 0.18
+    speechChance: 0.1
   },
   {
     text: "Gentle exercise set done. Tiny paws feel strong and cozy.",
     pose: "exercise",
     mood: "bouncy",
     accessory: "none",
-    minPetCount: 50,
-    speechChance: 0.18
+    minPetCount: 450,
+    speechChance: 0.1
+  },
+  {
+    text: "Golf practice complete. My tiny putt was almost majestic.",
+    pose: "golf",
+    mood: "happy",
+    accessory: "golf",
+    minPetCount: 600,
+    speechChance: 0.11
   }
 ];
 
 export const companionGrumpyActions: CompanionAction[] = [
-  { text: "Hmph! Fluffy is keeping an eye out for naughty words.", pose: "rest", mood: "sleepy", accessory: "none" },
-  { text: "Feeling grumpy and sad. Please keep talks polite.", pose: "wiggle", mood: "sleepy", accessory: "none" },
-  { text: "*sighs softly* Tiny sighs of marshmallow sadness.", pose: "stretch", mood: "sleepy", accessory: "none" },
-  { text: "Please be friendly and follow Student Guidelines.", pose: "rest", mood: "sleepy", accessory: "book" },
-  { text: "Hmph! Speak nicely to your classmates.", pose: "wiggle", mood: "sleepy", accessory: "none" }
+  { text: "I am keeping an eye out for rude language.", pose: "rest", mood: "sleepy", accessory: "none", speechChance: 0.15 },
+  { text: "Still grumpy. Please keep things polite.", pose: "wiggle", mood: "sleepy", accessory: "none", speechChance: 0.15 },
+  { text: "Tiny sighs of marshmallow disappointment.", pose: "stretch", mood: "sleepy", accessory: "none", speechChance: 0.15 },
+  { text: "Please be friendly and follow student guidelines.", pose: "rest", mood: "sleepy", accessory: "book", speechChance: 0.15 }
 ];
 
 export const companionRareActions: CompanionAction[] = [
   {
-    text: "Peek patrol! I checked the corner and came back.",
+    text: "Peek patrol complete. I checked the corner and came back.",
     pose: "peek",
     mood: "happy",
     accessory: "ribbon",
     travel: "peek-left",
-    speechChance: 0.35,
+    speechChance: 0.2,
     durationMs: 4200
   },
   {
@@ -306,7 +957,7 @@ export const companionRareActions: CompanionAction[] = [
     mood: "excited",
     accessory: "bell",
     travel: "orbit-loop",
-    speechChance: 0.28,
+    speechChance: 0.18,
     durationMs: 5200
   },
   {
@@ -315,7 +966,7 @@ export const companionRareActions: CompanionAction[] = [
     mood: "excited",
     accessory: "none",
     travel: "hop-out",
-    speechChance: 0.3,
+    speechChance: 0.18,
     durationMs: 3800
   },
   {
@@ -324,156 +975,48 @@ export const companionRareActions: CompanionAction[] = [
     mood: "bouncy",
     accessory: "moon",
     travel: "peek-up",
-    speechChance: 0.3,
+    speechChance: 0.18,
     durationMs: 4000
   },
   {
-    text: "Quick study sprint with reading glasses complete.",
-    pose: "study",
-    mood: "happy",
-    accessory: "glasses",
-    minPetCount: 50,
-    preferredTabs: ["profile", "my-plans"],
-    speechChance: 0.24,
-    durationMs: 4500
-  },
-  {
-    text: "I walked to check every corner and returned safely.",
+    text: "Tiny campus walk complete. I circled around and came back.",
     pose: "walk",
-    mood: "excited",
-    accessory: "ribbon",
+    mood: "happy",
+    accessory: "none",
     travel: "stroll-right",
-    minPetCount: 20,
-    speechChance: 0.22,
+    speechChance: 0.18,
     durationMs: 5000
   },
   {
-    text: "Tiny workout circuit finished. Breathing in, breathing out.",
-    pose: "exercise",
-    mood: "excited",
-    accessory: "bell",
-    minPetCount: 80,
-    speechChance: 0.2,
-    durationMs: 4200
+    text: "I did one tiny loop to make sure everything still feels cozy.",
+    pose: "orbit",
+    mood: "happy",
+    accessory: "none",
+    travel: "orbit-loop",
+    speechChance: 0.16,
+    durationMs: 4800
+  },
+  {
+    text: "A soft little stroll helped me think very important cat thoughts.",
+    pose: "walk",
+    mood: "sleepy",
+    accessory: "none",
+    travel: "stroll-right",
+    speechChance: 0.16,
+    durationMs: 5200
   }
 ];
 
-export const companionPetMilestones: CompanionMilestone[] = [
-  {
-    count: 10,
-    message: "Level 10 reached, {name}. Ribbon Sprout state unlocked.",
-    particles: 12,
-    reaction: "milestone-small",
-    accessory: "ribbon"
-  },
-  {
-    count: 20,
-    message: "Level 20 reached, {name}. Tiny Bell state unlocked.",
-    particles: 16,
-    reaction: "milestone-small",
-    accessory: "bell"
-  },
-  {
-    count: 30,
-    message: "Level 30 reached, {name}. Study Book state unlocked.",
-    particles: 20,
-    reaction: "milestone-medium",
-    accessory: "book",
-    special: true
-  },
-  {
-    count: 40,
-    message: "Level 40 reached, {name}. Bubble Tea Charm state unlocked.",
-    particles: 24,
-    reaction: "milestone-medium",
-    accessory: "tea",
-    special: true
-  },
-  {
-    count: 50,
-    message: "Level 50 reached, {name}. Best Buddy Stars state unlocked.",
-    particles: 30,
-    reaction: "milestone-rainbow",
-    accessory: "ribbon",
-    special: true
-  },
-  {
-    count: 100,
-    message: "100 pets reached, {name}. Golden Heart Crown unlocked.",
-    particles: 35,
-    reaction: "milestone-gold",
-    special: true
-  },
-  {
-    count: 150,
-    message: "150 pets reached, {name}. Double-cute cozy aura enabled.",
-    particles: 40,
-    reaction: "milestone-gold",
-    special: true
-  },
-  {
-    count: 200,
-    message: "200 pets reached, {name}. Angel Wing state unlocked.",
-    particles: 45,
-    reaction: "milestone-medium",
-    special: true
-  },
-  {
-    count: 250,
-    message: "250 pets reached, {name}. Cozy Study Captain state unlocked.",
-    particles: 48,
-    reaction: "milestone-gold",
-    accessory: "glasses",
-    special: true
-  },
-  {
-    count: 300,
-    message: "300 pets reached, {name}. Rainbow Halo state unlocked.",
-    particles: 55,
-    reaction: "milestone-rainbow",
-    special: true
-  },
-  {
-    count: 350,
-    message: "350 pets reached, {name}. Tiny Chef Apron state unlocked.",
-    particles: 60,
-    reaction: "milestone-gold",
-    accessory: "apron",
-    special: true
-  },
-  {
-    count: 400,
-    message: "400 pets reached, {name}. Happy Walker state unlocked.",
-    particles: 68,
-    reaction: "milestone-rainbow",
-    special: true
-  },
-  {
-    count: 450,
-    message: "450 pets reached, {name}. Gentle Workout state unlocked.",
-    particles: 76,
-    reaction: "milestone-rainbow",
-    special: true
-  },
-  {
-    count: 500,
-    message: "500 pets reached, {name}. Supreme Fluffy Nova state unlocked.",
-    particles: 90,
-    reaction: "milestone-ultimate",
-    accessory: "nova",
-    special: true
-  },
-  {
-    count: 1000,
-    message: "1000 pets reached, {name}. Permanent Ascension is yours.",
-    particles: 120,
-    reaction: "milestone-ultimate",
-    accessory: "nova",
-    special: true
-  }
-];
+export const companionPetMilestones: CompanionMilestone[] = companionTierStates.map(state => ({
+  count: state.count,
+  message: state.unlockLine,
+  particles: state.particles,
+  reaction: state.reaction,
+  special: true,
+  accessory: state.accessory === "none" ? undefined : state.accessory
+}));
 
-export const companionMilestoneCounts = companionPetMilestones.map(milestone => milestone.count);
+export const companionMilestoneCounts = companionTierStates.map(state => state.count);
 
 export const companionAnimations = {
   resting: {
@@ -482,6 +1025,29 @@ export const companionAnimations = {
     y: [0, -0.6, 0.2, -0.4, 0, 0.3, 0],
     rotate: [0, 0.5, -0.5, 0.2, -0.2, 0, 0],
     transition: { duration: 7.5, repeat: Infinity, ease: "easeInOut" }
+  },
+  angrySulk: {
+    y: [0, 0.8, 0.1, 1.4, 0],
+    x: [0, -1.2, 0.6, -0.8, 0],
+    rotate: [0, -2.5, 1.2, -1.6, 0],
+    scaleY: [1, 0.985, 1.015, 0.992, 1],
+    scaleX: [1, 1.018, 0.99, 1.012, 1],
+    transition: { duration: 3.8, repeat: Infinity, ease: "easeInOut" }
+  },
+  redHotFume: {
+    y: [0, -2.5, 1.2, -1.5, 0],
+    x: [0, -2.4, 2.8, -1.8, 1.4, 0],
+    rotate: [0, -5, 5, -3.5, 2, 0],
+    scaleY: [1, 1.04, 0.96, 1.03, 0.98, 1],
+    scaleX: [1, 0.97, 1.04, 0.98, 1.02, 1],
+    filter: [
+      "drop-shadow(0 0 0 rgba(239,68,68,0))",
+      "drop-shadow(0 0 10px rgba(239,68,68,0.45))",
+      "drop-shadow(0 0 16px rgba(249,115,22,0.5))",
+      "drop-shadow(0 0 8px rgba(239,68,68,0.35))",
+      "drop-shadow(0 0 0 rgba(239,68,68,0))"
+    ],
+    transition: { duration: 1.55, repeat: Infinity, ease: "easeInOut" }
   },
   subtle: {
     scaleY: [1, 1.05, 0.96, 1],
@@ -617,6 +1183,13 @@ export const companionAnimations = {
     rotate: [0, -6, 6, -4, 4, 0],
     transition: { duration: 2.9, ease: "easeInOut" }
   },
+  golf: {
+    rotate: [0, -8, 10, -6, 4, 0],
+    x: [0, -6, 8, -3, 0],
+    y: [0, -4, 0, -2, 0],
+    scaleX: [1, 1.02, 0.98, 1],
+    transition: { duration: 3.0, ease: "easeInOut" }
+  },
   napping: {
     scaleY: [1, 1.04, 1.01, 1.05, 1],
     scaleX: [1, 1.01, 1.03, 1.01, 1],
@@ -669,4 +1242,13 @@ export function formatCompanionLine(template: string, values: Record<string, str
 
 export function getCompanionMilestone(count: number): CompanionMilestone | undefined {
   return companionPetMilestones.find(milestone => milestone.count === count);
+}
+
+export function getUnlockedCompanionState(count: number): CompanionTierState | undefined {
+  return [...companionTierStates].reverse().find(state => count >= state.count);
+}
+
+export function getCompanionStateById(stateId: string | null | undefined): CompanionTierState | undefined {
+  if (!stateId) return undefined;
+  return companionTierStates.find(state => state.id === stateId);
 }

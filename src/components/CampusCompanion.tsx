@@ -7,29 +7,89 @@ import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useApp } from "../context/AppContext";
 import { Heart } from "lucide-react";
+import { resolveStoredCompanionState, writeStoredCompanionState, type StoredCompanionState } from "../lib/companionState";
 import {
   companionAnimations,
+  companionAngryTabResponses,
+  companionBaseStateOption,
   companionDialogue,
   companionEventDialogue,
   companionGrumpyActions,
   companionMilestoneCounts,
   companionRandomActions,
   companionRareActions,
+  companionRedHotTabResponses,
   companionTabResponses,
+  companionTierStates,
   companionTravelAnimations,
   formatCompanionLine,
+  getCompanionStateById,
   getCompanionMilestone,
+  getUnlockedCompanionState,
   pickCompanionLine,
   type CompanionAccessory,
+  type CompanionAction,
   type CompanionMood,
   type CompanionPose,
   type CompanionReaction,
+  type CompanionTrait,
   type CompanionTravel
 } from "../config/companionConfig";
 
 interface CampusCompanionProps {
   activeTab: string;
 }
+
+const companionStateUpdateEvent = "xmum-companion-state-updated";
+const companionAngerSourceStorageKey = "xmum_companion_anger_source";
+const normalAngerPetsRequired = 5;
+const redHotAngerPetsRequired = 9;
+
+type CompanionAngerSource = "none" | "profanity" | "drag";
+type DragReturnStyle =
+  | "steady-bounce"
+  | "orbit-swoop"
+  | "feather-float"
+  | "grumpy-wobble"
+  | "grumpy-stomp"
+  | "hot-streak";
+type DragReturnMotion = {
+  x: number | number[];
+  y: number | number[];
+  rotate?: number | number[];
+  scale?: number | number[];
+  scaleX?: number | number[];
+  scaleY?: number | number[];
+  transition?: Record<string, unknown>;
+};
+
+const getCompanionAngerSource = (): CompanionAngerSource => {
+  try {
+    const raw = localStorage.getItem(companionAngerSourceStorageKey);
+    return raw === "drag" || raw === "profanity" ? raw : "none";
+  } catch {
+    return "none";
+  }
+};
+
+const getCompanionAngerUntil = () => {
+  try {
+    const raw = localStorage.getItem("xmum_companion_anger_until");
+    return raw ? Number(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const clearCompanionAngerState = () => {
+  try {
+    localStorage.removeItem("xmum_companion_anger_time");
+    localStorage.removeItem("xmum_companion_anger_until");
+    localStorage.removeItem(companionAngerSourceStorageKey);
+  } catch (error) {
+    console.error(error);
+  }
+};
 
 export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) => {
   const { 
@@ -39,16 +99,20 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     messages,
     comments,
     applications,
-    viewedProfile
+    viewedProfile,
+    syncCompanionProgress
   } = useApp();
 
   const [bubbleText, setBubbleTextInternal] = useState<string>(() => {
     try {
+      const angerSource = getCompanionAngerSource();
       const lastAngerTimeStr = localStorage.getItem("xmum_companion_anger_time");
       if (lastAngerTimeStr) {
         const diff = Date.now() - new Date(lastAngerTimeStr).getTime();
         if (diff > 0 && diff < 24 * 60 * 60 * 1000) {
-          return companionDialogue.angryWelcome;
+          return angerSource === "drag"
+            ? pickCompanionLine(companionDialogue.dragAngryWelcome)
+            : companionDialogue.angryWelcome;
         }
       }
     } catch (e) {
@@ -60,6 +124,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const queueRef = useRef<string[]>([]);
   const processingQueueRef = useRef<boolean>(false);
   const lastSpeechTimeRef = useRef<number>(0);
+  const draggedRef = useRef<boolean>(false);
+  const dragHistoryRef = useRef<number[]>([]);
   const [showBubble, setShowBubble] = useState<boolean>(true);
 
   const processQueue = () => {
@@ -69,8 +135,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     const now = Date.now();
     const timeSinceLast = now - lastSpeechTimeRef.current;
     
-    // Strict delay waiting time between consecutive speeches (9 seconds total cycle)
-    const requiredWait = 9500;
+    const requiredWait = 26000;
 
     if (timeSinceLast < requiredWait) {
       const waitTime = requiredWait - timeSinceLast;
@@ -88,10 +153,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       setShowBubble(true);
       lastSpeechTimeRef.current = Date.now();
       
-      // Auto-hide speaking bubble after 5.5 seconds, leaving a clean 4-second rest gap before next message can show!
       setTimeout(() => {
         setShowBubble(false);
-      }, 5500);
+      }, 7200);
     }
 
     if (queueRef.current.length > 0) {
@@ -119,6 +183,21 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const [companionPose, setCompanionPose] = useState<CompanionPose>("rest");
   const [accessory, setAccessory] = useState<CompanionAccessory>("none");
   const [travelMode, setTravelMode] = useState<CompanionTravel>("home");
+  const [dragReturnStyle, setDragReturnStyle] = useState<DragReturnStyle>("steady-bounce");
+  const [isDragReturning, setIsDragReturning] = useState<boolean>(false);
+  const [dragReturnMotion, setDragReturnMotion] = useState<DragReturnMotion>({
+    x: 0,
+    y: 0,
+    rotate: 0,
+    scale: 1,
+    scaleX: 1,
+    scaleY: 1,
+    transition: { duration: 0.01 }
+  });
+  const [selectedStateId, setSelectedStateId] = useState<string | null>(() => {
+    const stored = resolveStoredCompanionState(currentUser?.email, currentUser || undefined);
+    return typeof stored.selectedStateId === "string" ? stored.selectedStateId : null;
+  });
 
   // Idle and sleeping state tracking
   const [isIdle, setIsIdle] = useState<boolean>(false);
@@ -126,6 +205,11 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
   const [isCompanionAngry, setIsCompanionAngry] = useState<boolean>(() => {
     try {
+      const angerUntil = getCompanionAngerUntil();
+      if (angerUntil) {
+        return angerUntil > Date.now();
+      }
+
       const lastAngerTimeStr = localStorage.getItem("xmum_companion_anger_time");
       if (lastAngerTimeStr) {
         const diff = Date.now() - new Date(lastAngerTimeStr).getTime();
@@ -135,6 +219,26 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       console.error(e);
     }
     return false;
+  });
+  const [angerSource, setAngerSource] = useState<CompanionAngerSource>(() => {
+    try {
+      const angerUntil = getCompanionAngerUntil();
+      const storedSource = getCompanionAngerSource();
+      if (angerUntil && angerUntil > Date.now()) {
+        return storedSource === "drag" ? "drag" : "profanity";
+      }
+
+      const lastAngerTimeStr = localStorage.getItem("xmum_companion_anger_time");
+      if (lastAngerTimeStr) {
+        const diff = Date.now() - new Date(lastAngerTimeStr).getTime();
+        if (diff > 0 && diff < 24 * 60 * 60 * 1000) {
+          return storedSource === "drag" ? "drag" : "profanity";
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return "none";
   });
 
   const getUserFirstName = () => {
@@ -218,23 +322,12 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   
   const [angryPetCount, setAngryPetCount] = useState<number>(0);
 
-  // Initialize petCount from persistent localStorage with 1-day rotation expiry check
+  // Initialize petCount from user-specific persistent storage and profile backup
   const [petCount, setPetCount] = useState<number>(() => {
     try {
-      const saved = localStorage.getItem("xmum_companion_state");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const now = Date.now();
-        const oneDayMs = 24 * 60 * 60 * 1000;
-        
-        if (parsed.isPermanent) {
-          return 1000;
-        } else if (parsed.lastMilestoneReached > 0 && parsed.milestoneTimestamp && (now - parsed.milestoneTimestamp > oneDayMs)) {
-          // One day passed: refresh state back to 0 baseline
-          return 0;
-        } else {
-          return parsed.petCount || 0;
-        }
+      const parsed = resolveStoredCompanionState(currentUser?.email, currentUser || undefined);
+      if (Object.keys(parsed).length > 0) {
+        return Math.max(0, Number(parsed.petCount || 0));
       }
     } catch (e) {
       console.error(e);
@@ -242,17 +335,60 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     return 0;
   });
 
+  const unlockedTierState = getUnlockedCompanionState(petCount);
+  const isOriginalStateSelected = petCount >= 1000 && selectedStateId === companionBaseStateOption.id;
+  const activeTierState =
+    isOriginalStateSelected
+      ? undefined
+      : petCount >= 1000
+      ? getCompanionStateById(selectedStateId) || unlockedTierState
+      : unlockedTierState;
+  const activeTraits = new Set<CompanionTrait>(activeTierState?.traits || []);
+
+  if (accessory !== "none") {
+    activeTraits.add(accessory);
+  }
+
+  const hasTrait = (trait: CompanionTrait) => activeTraits.has(trait);
+  const activeRingClass = activeTierState?.ringClass || "";
+  const activeGlowClass = activeTierState?.glowClass || "";
+  const isRedHotAngry = isCompanionAngry && angerSource === "drag";
+
   // Periodic subtle cute random companion movement triggers and rare screen hops.
   useEffect(() => {
     if (isIdle) return;
 
     const triggerRandomMovement = () => {
-      const rareAction = !isCompanionAngry && Math.random() < (petCount >= 50 ? 0.2 : 0.12);
+      const stateAmbientAction: CompanionAction | null =
+        activeTierState && activeTierState.ambientLines.length > 0
+          ? {
+              text: pickCompanionLine(activeTierState.ambientLines),
+              pose: activeTierState.pose,
+              mood: activeTierState.mood,
+              accessory: activeTierState.accessory,
+              speechChance: 0.08,
+              durationMs: 4600,
+              minPetCount: activeTierState.count
+            }
+          : null;
+      const petHintAction: CompanionAction | null =
+        !isCompanionAngry && petCount < 1000 && Math.random() < 0.08
+          ? {
+              text: pickCompanionLine(companionDialogue.petHint),
+              pose: petCount >= 20 ? "wiggle" : "rest",
+              mood: "happy",
+              accessory: activeTierState?.accessory || "none",
+              speechChance: 0.18,
+              durationMs: 4200,
+              maxPetCount: 999
+            }
+          : null;
+      const rareAction = !isCompanionAngry && Math.random() < (petCount >= 50 ? 0.14 : 0.08);
       const baseActions = isCompanionAngry
         ? companionGrumpyActions
         : rareAction
-        ? [...companionRandomActions, ...companionRareActions]
-        : companionRandomActions;
+        ? [...companionRandomActions, ...(stateAmbientAction ? [stateAmbientAction] : []), ...(petHintAction ? [petHintAction] : []), ...companionRareActions]
+        : [...companionRandomActions, ...(stateAmbientAction ? [stateAmbientAction] : []), ...(petHintAction ? [petHintAction] : [])];
       const eligibleActions = baseActions.filter(action => {
         const reachedMin = action.minPetCount === undefined || petCount >= action.minPetCount;
         const underMax = action.maxPetCount === undefined || petCount <= action.maxPetCount;
@@ -267,7 +403,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       setAccessory(action.accessory);
       if (action.travel) setTravelMode(action.travel);
 
-      const speechChance = action.speechChance ?? (rareAction ? 0.22 : 0.1);
+      const speechChance = action.speechChance ?? (rareAction ? 0.08 : 0.04);
       if (Math.random() < speechChance) {
         setBubbleText(formatCompanionLine(action.text, { name: fName }));
       }
@@ -283,7 +419,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     let timerId: any;
 
     const scheduleNext = () => {
-      const delay = Math.floor(Math.random() * 22000) + 26000;
+      const delay = Math.floor(Math.random() * 38000) + 58000;
       timerId = setTimeout(() => {
         triggerRandomMovement();
         scheduleNext();
@@ -293,10 +429,10 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     timerId = setTimeout(() => {
       triggerRandomMovement();
       scheduleNext();
-    }, 22000);
+    }, 38000);
 
     return () => clearTimeout(timerId);
-  }, [isIdle, isCompanionAngry, fName, petCount, activeTab]);
+  }, [isIdle, isCompanionAngry, fName, petCount, activeTab, activeTierState]);
 
   const [particles, setParticles] = useState<{ id: number; x: number; y: number; rotate: number; size: number; color: string }[]>([]);
   
@@ -321,27 +457,50 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     if (showBubble) {
       const timer = setTimeout(() => {
         setShowBubble(false);
-      }, 7000);
+      }, 7800);
       return () => clearTimeout(timer);
     }
   }, [bubbleText, showBubble]);
 
   // Hook into activeTab changes
   useEffect(() => {
-    const response = companionTabResponses[activeTab];
+    const angryResponses = isRedHotAngry ? companionRedHotTabResponses : companionAngryTabResponses;
+    const response = isCompanionAngry
+      ? angryResponses[activeTab] || companionTabResponses[activeTab]
+      : companionTabResponses[activeTab];
     if (!response) return;
+    const recentSpeech = Date.now() - lastSpeechTimeRef.current < 22000;
+    if (recentSpeech && Math.random() < 0.82) {
+      return;
+    }
 
     setBubbleText(response.text);
     setMood(response.mood);
     setShowBubble(true);
     setActionCount((prev) => prev + 1);
-  }, [activeTab]);
+  }, [activeTab, isCompanionAngry]);
 
   // Connection events
   useEffect(() => {
     if (currentUser) {
-      setBubbleText(formatCompanionLine(pickCompanionLine(companionDialogue.signedIn), { name: fName }));
-      setMood("excited");
+      const signedInLine =
+        angerSource === "drag" && isCompanionAngry
+          ? pickCompanionLine(companionDialogue.dragAngrySignedIn)
+          : angerSource === "profanity" && isCompanionAngry
+          ? formatCompanionLine(pickCompanionLine(companionDialogue.angrySignedIn), { name: fName })
+          : pickCompanionLine(companionDialogue.signedIn);
+      setBubbleText(
+        angerSource === "profanity" && isCompanionAngry
+          ? signedInLine
+          : formatCompanionLine(signedInLine, { name: fName })
+      );
+      setMood(
+        angerSource === "drag" && isCompanionAngry
+          ? "excited"
+          : angerSource === "profanity" && isCompanionAngry
+          ? "sleepy"
+          : "excited"
+      );
     } else {
       setBubbleText(pickCompanionLine(companionDialogue.guest));
       setMood("happy");
@@ -349,24 +508,47 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
     setShowBubble(true);
     setActionCount((prev) => prev + 1);
-  }, [currentUser, fName]);
+  }, [currentUser, fName, angerSource, isCompanionAngry]);
 
-  // Handle global error/success messages
   useEffect(() => {
-    if (toast) {
-      if (toast.type === "error") {
-        setBubbleText(formatCompanionLine(companionEventDialogue.toastError, { message: toast.message }));
-        setMood("sleepy");
-        setShowBubble(true);
-        setActionCount((prev) => prev + 1);
-      } else if (toast.type === "success") {
-        setBubbleText(formatCompanionLine(companionEventDialogue.toastSuccess, { message: toast.message }));
-        setMood("excited");
-        setShowBubble(true);
-        setActionCount((prev) => prev + 1);
+    const handleCompanionStateUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<StoredCompanionState>;
+      const detail = customEvent.detail || {};
+      if (typeof detail.petCount === "number") {
+        setPetCount(Math.min(1000, Math.max(0, detail.petCount)));
       }
+      if (detail.selectedStateId !== undefined) {
+        setSelectedStateId(detail.selectedStateId || null);
+      }
+    };
+
+    window.addEventListener(companionStateUpdateEvent, handleCompanionStateUpdated);
+    return () => window.removeEventListener(companionStateUpdateEvent, handleCompanionStateUpdated);
+  }, []);
+
+  useEffect(() => {
+    const resolvedState = resolveStoredCompanionState(currentUser?.email, currentUser || undefined);
+    const nextPetCount = Math.max(0, Number(resolvedState.petCount || 0));
+    const nextSelectedStateId =
+      typeof resolvedState.selectedStateId === "string" ? resolvedState.selectedStateId : null;
+
+    setPetCount(nextPetCount);
+    setSelectedStateId(nextSelectedStateId);
+
+    if (
+      currentUser &&
+      (
+        nextPetCount !== Math.max(0, Number(currentUser.companion_pet_count || 0)) ||
+        nextSelectedStateId !== (currentUser.companion_selected_state_id ?? null)
+      )
+    ) {
+      syncCompanionProgress({
+        petCount: nextPetCount,
+        selectedStateId: nextSelectedStateId,
+        isPermanent: nextPetCount >= 1000
+      });
     }
-  }, [toast]);
+  }, [currentUser?.email]);
 
   // Handle new chat messages event
   useEffect(() => {
@@ -531,12 +713,28 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   useEffect(() => {
     const checkAnger = () => {
       try {
+        const angerUntil = getCompanionAngerUntil();
+        if (angerUntil) {
+          if (angerUntil > Date.now()) {
+            setIsCompanionAngry(true);
+            setAngerSource(getCompanionAngerSource() === "drag" ? "drag" : "profanity");
+            return;
+          }
+          clearCompanionAngerState();
+          setIsCompanionAngry(false);
+          setAngerSource("none");
+          return;
+        }
+
         const lastAngerTimeStr = localStorage.getItem("xmum_companion_anger_time");
         if (lastAngerTimeStr) {
           const diff = Date.now() - new Date(lastAngerTimeStr).getTime();
-          setIsCompanionAngry(diff > 0 && diff < 24 * 60 * 60 * 1000);
+          const isStillAngry = diff > 0 && diff < 24 * 60 * 60 * 1000;
+          setIsCompanionAngry(isStillAngry);
+          setAngerSource(isStillAngry ? (getCompanionAngerSource() === "drag" ? "drag" : "profanity") : "none");
         } else {
           setIsCompanionAngry(false);
+          setAngerSource("none");
         }
       } catch (e) {
         console.error(e);
@@ -544,7 +742,11 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     };
 
     const handleProfanityWarned = () => {
+      clearCompanionAngerState();
+      localStorage.setItem("xmum_companion_anger_time", new Date().toISOString());
+      localStorage.setItem(companionAngerSourceStorageKey, "profanity");
       setIsCompanionAngry(true);
+      setAngerSource("profanity");
       setAngryPetCount(0);
       setBubbleText(companionDialogue.profanity);
       setShowBubble(true);
@@ -598,12 +800,16 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         setTimeout(() => setReactionType("none"), 250);
 
         // Very tiny chance to wake up with guidance
-        const luckyChance = Math.random() < 0.08;
+        const luckyChance = Math.random() < 0.02;
         if (luckyChance) {
-          const mix = [...companionDialogue.click, ...companionDialogue.safety, ...companionDialogue.petHint];
+          const mix = isCompanionAngry
+            ? isRedHotAngry
+              ? companionDialogue.dragAngryClick
+              : companionDialogue.angryClick
+            : [...companionDialogue.click, ...companionDialogue.safety, ...companionDialogue.petHint];
           const choice = mix[Math.floor(Math.random() * mix.length)];
           setBubbleText(choice);
-          setMood("bouncy");
+          setMood(isCompanionAngry ? (isRedHotAngry ? "excited" : "sleepy") : "bouncy");
           setShowBubble(true);
         }
       }
@@ -620,9 +826,17 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         setReactionType("subtle");
         setTimeout(() => setReactionType("none"), 250);
 
-        if (Math.random() < 0.04 && !showBubble) {
-          setBubbleText(pickCompanionLine(companionDialogue.scroll));
-          setMood("happy");
+        if (Math.random() < 0.012 && !showBubble) {
+          setBubbleText(
+            pickCompanionLine(
+              isCompanionAngry
+                ? isRedHotAngry
+                  ? companionDialogue.dragAngryScroll
+                  : companionDialogue.angryScroll
+                : companionDialogue.scroll
+            )
+          );
+          setMood(isCompanionAngry ? (isRedHotAngry ? "excited" : "sleepy") : "happy");
           setShowBubble(true);
         }
       }
@@ -635,20 +849,158 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       document.removeEventListener("click", handleGlobalClick, { capture: true });
       window.removeEventListener("scroll", handleGlobalScroll);
     };
-  }, [showBubble]);
+  }, [isCompanionAngry, showBubble]);
+
+  const emitCompanionStateUpdate = (detail: StoredCompanionState) => {
+    window.dispatchEvent(new CustomEvent(companionStateUpdateEvent, { detail }));
+  };
+
+  const saveCompanionState = (detail: StoredCompanionState) => {
+    try {
+      const existingState = resolveStoredCompanionState(currentUser?.email, currentUser || undefined);
+      const savedStateObj: StoredCompanionState = {
+        ...existingState,
+        ...detail
+      };
+      const persistedState = writeStoredCompanionState(currentUser?.email, savedStateObj);
+      emitCompanionStateUpdate(persistedState);
+      syncCompanionProgress(persistedState);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const buildDragReturnMotion = (style: DragReturnStyle, offsetX: number, offsetY: number): DragReturnMotion => {
+    const safeX = Number.isFinite(offsetX) ? offsetX : 0;
+    const safeY = Number.isFinite(offsetY) ? offsetY : 0;
+
+    const motions: Record<DragReturnStyle, DragReturnMotion> = {
+      "steady-bounce": {
+        x: 0,
+        y: 0,
+        rotate: [-4, 3, 0],
+        scale: [1, 0.985, 1.01, 1],
+        transition: {
+          x: { type: "spring", stiffness: 240, damping: 24, mass: 0.7 },
+          y: { type: "spring", stiffness: 240, damping: 24, mass: 0.7 },
+          rotate: { duration: 0.8, ease: "easeOut" },
+          scale: { duration: 0.8, ease: "easeOut" }
+        }
+      },
+      "orbit-swoop": {
+        x: 0,
+        y: 0,
+        rotate: [8, -6, 2, 0],
+        scale: [1, 1.02, 0.995, 1.01, 1],
+        transition: {
+          x: { type: "spring", stiffness: 185, damping: 22, mass: 0.9 },
+          y: { type: "spring", stiffness: 185, damping: 22, mass: 0.9 },
+          rotate: { duration: 1.02, ease: "easeInOut" },
+          scale: { duration: 1.02, ease: "easeInOut" }
+        }
+      },
+      "feather-float": {
+        x: 0,
+        y: 0,
+        rotate: [-7, 4, 0],
+        scaleY: [1, 0.98, 1.015, 1],
+        scaleX: [1, 1.02, 0.995, 1],
+        transition: {
+          x: { type: "spring", stiffness: 150, damping: 20, mass: 1 },
+          y: { type: "spring", stiffness: 150, damping: 20, mass: 1 },
+          rotate: { duration: 1.08, ease: "easeInOut" },
+          scaleY: { duration: 1.08, ease: "easeInOut" },
+          scaleX: { duration: 1.08, ease: "easeInOut" }
+        }
+      },
+      "grumpy-wobble": {
+        x: 0,
+        y: 0,
+        rotate: [-10, 7, -3, 0],
+        scale: [1, 0.985, 1.01, 0.995, 1],
+        transition: {
+          x: { type: "spring", stiffness: 205, damping: 19, mass: 0.82 },
+          y: { type: "spring", stiffness: 205, damping: 19, mass: 0.82 },
+          rotate: { duration: 0.92, ease: "easeOut" },
+          scale: { duration: 0.92, ease: "easeOut" }
+        }
+      },
+      "grumpy-stomp": {
+        x: 0,
+        y: 0,
+        rotate: [-6, 4, 0],
+        scaleY: [1, 0.92, 1.06, 0.99, 1],
+        scaleX: [1, 1.04, 0.97, 1.01, 1],
+        transition: {
+          x: { type: "spring", stiffness: 260, damping: 21, mass: 0.78 },
+          y: { type: "spring", stiffness: 260, damping: 21, mass: 0.78 },
+          rotate: { duration: 0.82, ease: "easeOut" },
+          scaleY: { duration: 0.82, ease: "easeOut" },
+          scaleX: { duration: 0.82, ease: "easeOut" }
+        }
+      },
+      "hot-streak": {
+        x: 0,
+        y: 0,
+        rotate: [12, -8, 2, 0],
+        scaleY: [1, 0.9, 1.08, 0.98, 1],
+        scaleX: [1, 1.08, 0.95, 1.02, 1],
+        transition: {
+          x: { type: "spring", stiffness: 310, damping: 20, mass: 0.72 },
+          y: { type: "spring", stiffness: 310, damping: 20, mass: 0.72 },
+          rotate: { duration: 0.78, ease: "easeOut" },
+          scaleY: { duration: 0.78, ease: "easeOut" },
+          scaleX: { duration: 0.78, ease: "easeOut" }
+        }
+      }
+    };
+
+    return motions[style];
+  };
+
+  const triggerDragAnger = () => {
+    const angerTimestamp = new Date().toISOString();
+    const dragAngerDurationMs = (Math.floor(Math.random() * 5) + 1) * 60 * 1000;
+    try {
+      localStorage.setItem("xmum_companion_anger_time", angerTimestamp);
+      localStorage.setItem("xmum_companion_anger_until", String(Date.now() + dragAngerDurationMs));
+      localStorage.setItem(companionAngerSourceStorageKey, "drag");
+    } catch (error) {
+      console.error(error);
+    }
+    setIsCompanionAngry(true);
+    setAngerSource("drag");
+    setAngryPetCount(0);
+    setMood("sleepy");
+    setReactionType("error");
+    setBubbleText(pickCompanionLine(companionDialogue.dragTooMuch));
+    setShowBubble(true);
+    setTimeout(() => setReactionType("none"), 2400);
+  };
 
   const handlePetKitty = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (draggedRef.current) {
+      draggedRef.current = false;
+      return;
+    }
+
     if (isCompanionAngry) {
+      const requiredPets = angerSource === "drag" ? redHotAngerPetsRequired : normalAngerPetsRequired;
       const nextAngryPets = angryPetCount + 1;
-      const remainingPets = Math.max(5 - nextAngryPets, 0);
+      const remainingPets = Math.max(requiredPets - nextAngryPets, 0);
       setAngryPetCount(nextAngryPets);
-      if (nextAngryPets >= 5) {
-        localStorage.removeItem("xmum_companion_anger_time");
+      if (nextAngryPets >= requiredPets) {
+        clearCompanionAngerState();
         setIsCompanionAngry(false);
+        setAngerSource("none");
         setAngryPetCount(0);
         setMood("excited");
-        setBubbleText(companionDialogue.forgiveness);
+        setBubbleText(
+          angerSource === "drag"
+            ? pickCompanionLine(companionDialogue.dragForgiveness)
+            : companionDialogue.forgiveness
+        );
         setReactionType("milestone-rainbow");
         setShowBubble(true);
         setTimeout(() => {
@@ -669,7 +1021,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         return;
       }
 
-      const grumpyQuote = companionDialogue.grumpyPet[nextAngryPets - 1] || companionDialogue.grumpyPet[0];
+      const grumpyPool = angerSource === "drag" ? companionDialogue.dragGrumpyPet : companionDialogue.grumpyPet;
+      const grumpyQuote = grumpyPool[nextAngryPets - 1] || grumpyPool[0];
       setBubbleText(formatCompanionLine(grumpyQuote, { remaining: remainingPets }));
       setReactionType("error");
       setShowBubble(true);
@@ -683,6 +1036,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       setBubbleText(companionDialogue.maxed);
       setReactionType("milestone-ultimate");
       setAccessory("nova");
+      setShowBubble(true);
+      setTimeout(() => setAccessory("none"), 2200);
       return;
     }
 
@@ -707,12 +1062,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       particlesToSpawn = milestone.particles;
       isVerySpecial = Boolean(milestone.special);
       rType = milestone.reaction;
-      if (milestone.accessory) {
-        setAccessory(milestone.accessory);
-        setTimeout(() => setAccessory("none"), rType === "milestone-ultimate" ? 4200 : 2600);
-      }
     } else if (isExtendedMilestone) {
-      milestoneMessage = formatCompanionLine(companionDialogue.extendedMilestone, { name: fName, count: nextCount });
+      milestoneMessage = formatCompanionLine(companionDialogue.genericMilestone, { name: fName, count: nextCount });
       particlesToSpawn = 30;
       rType = "milestone-medium";
       isVerySpecial = true;
@@ -732,14 +1083,18 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
     try {
       const isMilestone = companionMilestoneCounts.includes(nextCount) || isExtendedMilestone;
-      const existingState = JSON.parse(localStorage.getItem("xmum_companion_state") || "{}");
-      const savedStateObj = {
+      const existingState = resolveStoredCompanionState(currentUser?.email, currentUser || undefined);
+      const newSelectedStateId =
+        nextCount >= 1000
+          ? existingState.selectedStateId || companionTierStates[companionTierStates.length - 1]?.id || null
+          : existingState.selectedStateId || null;
+      saveCompanionState({
         petCount: nextCount,
         lastMilestoneReached: isMilestone ? nextCount : (existingState.lastMilestoneReached || 0),
         milestoneTimestamp: isMilestone ? Date.now() : (existingState.milestoneTimestamp || Date.now()),
-        isPermanent: nextCount >= 1000
-      };
-      localStorage.setItem("xmum_companion_state", JSON.stringify(savedStateObj));
+        isPermanent: nextCount >= 1000,
+        selectedStateId: newSelectedStateId
+      });
     } catch (e) {
       console.error(e);
     }
@@ -763,7 +1118,11 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
     setParticles(prev => [...prev.slice(-80), ...newParticles]);
   };
-  let activeAnimation: any = isIdle ? companionAnimations.napping : companionAnimations.resting;
+  let activeAnimation: any = isIdle
+    ? companionAnimations.napping
+    : activeTierState
+    ? companionAnimations[activeTierState.pose]
+    : companionAnimations.resting;
   if (reactionType === "success") {
     activeAnimation = companionAnimations.success;
   } else if (reactionType === "error") {
@@ -780,6 +1139,10 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     activeAnimation = companionAnimations.milestoneRainbow;
   } else if (reactionType === "milestone-ultimate") {
     activeAnimation = companionAnimations.milestoneUltimate;
+  } else if (isRedHotAngry) {
+    activeAnimation = companionAnimations.redHotFume;
+  } else if (isCompanionAngry) {
+    activeAnimation = companionAnimations.angrySulk;
   } else if (companionPose === "bounce") {
     activeAnimation = companionAnimations.bounce;
   } else if (companionPose === "fly") {
@@ -826,6 +1189,23 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     }
 
     if (isCompanionAngry) {
+      if (isRedHotAngry) {
+        return (
+          <g>
+            <ellipse cx="34" cy="48" rx="6.6" ry="5.8" fill="#7f1d1d" />
+            <ellipse cx="66" cy="48" rx="6.6" ry="5.8" fill="#7f1d1d" />
+            <circle cx="33" cy="47" r="1.5" fill="#ffffff" />
+            <circle cx="65" cy="47" r="1.5" fill="#ffffff" />
+            <path d="M 24 36 L 40 41" stroke="#991b1b" strokeWidth="3.8" strokeLinecap="round" />
+            <path d="M 76 36 L 60 41" stroke="#991b1b" strokeWidth="3.8" strokeLinecap="round" />
+            <path d="M 27 41 L 40 44" stroke="#1e293b" strokeWidth="2.6" strokeLinecap="round" />
+            <path d="M 73 41 L 60 44" stroke="#1e293b" strokeWidth="2.6" strokeLinecap="round" />
+            <circle cx="28" cy="56" r="1.8" fill="#fca5a5" />
+            <circle cx="72" cy="56" r="1.8" fill="#fca5a5" />
+          </g>
+        );
+      }
+
       // Angry slanted eyes with downward tears for sadness
       return (
         <g>
@@ -895,7 +1275,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     }
 
     // Love heart eyes for Milestone 500+ (Extremely polished, bouncy micro-scale heartbeat on heart shape)
-    if (petCount >= 500) {
+    if (activeTierState?.count === 1000) {
       return (
         <g>
           {/* Left Heart Eye */}
@@ -959,19 +1339,20 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       <AnimatePresence>
         {showBubble && (
           <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.9 }}
+            initial={{ opacity: 0, y: 10, scale: 0.92 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.9 }}
-            transition={{ type: "spring", stiffness: 350, damping: 25 }}
-            className="mb-1.5 bg-white text-slate-800 text-[10px] md:text-[11px] font-bold p-2.5 md:p-3 rounded-2xl border border-slate-100 shadow-xl max-w-[140px] md:max-w-[190px] text-right pointer-events-auto leading-relaxed relative flex flex-col items-end gap-1 border-rose-50"
+            exit={{ opacity: 0, y: 6, scale: 0.82, filter: "blur(1px)" }}
+            transition={{ duration: 0.28, ease: "easeOut" }}
+            className="mb-2 bg-white/98 text-slate-800 text-[10px] md:text-[11px] font-bold p-2.5 md:p-3 rounded-2xl border border-slate-100 shadow-xl max-w-[150px] md:max-w-[205px] text-right pointer-events-auto leading-relaxed relative flex flex-col items-end gap-1 border-rose-50 z-[80]"
             id="companion-speech-bubble"
           >
             {/* Tiny bubble point arrow */}
             <div className="absolute bottom-[-5px] right-4 md:right-6 w-2.5 h-2.5 bg-white border-r border-b border-rose-50/50 rotate-45" />
             <p className="whitespace-pre-line text-slate-755 leading-normal">{bubbleText}</p>
             {petCount > 0 && (
-              <span className="text-[9px] text-rose-500 font-extrabold flex items-center gap-0.5 mt-0.5">
+              <span className="text-[9px] text-rose-500 font-extrabold flex items-center gap-1 mt-0.5">
                 <Heart className="w-2.5 h-2.5 fill-rose-500 animate-pulse" /> pet x{petCount}
+                {activeTierState && <span className="text-slate-500 font-bold">• {activeTierState.name}</span>}
               </span>
             )}
           </motion.div>
@@ -980,26 +1361,98 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
       {/* Floating Animated Ultra Cute Round Fluffy Kitty Mascot */}
       <motion.div
-        className={`pointer-events-auto cursor-pointer relative group flex items-center justify-center p-1 rounded-full transition-all duration-350 ${
-          petCount >= 500
-            ? "ring-4 ring-pink-500 ring-offset-2 scale-110"
-          : petCount >= 300
-            ? "ring-2 ring-purple-500 ring-offset-1 scale-105"
-          : petCount >= 100
-            ? "ring-2 ring-amber-400 ring-offset-1"
-          : petCount >= 50
-            ? "ring-2 ring-rose-300 ring-offset-1"
-          : petCount >= 30
-            ? "ring-1 ring-teal-300 ring-offset-1"
-          : ""
-        }`}
-        onClick={handlePetKitty}
-        initial={{ scale: 1 }}
-        animate={activeAnimation}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        id="campus-companion-widget"
+        className="pointer-events-auto relative"
+        drag
+        dragSnapToOrigin
+        dragElastic={0.08}
+        dragMomentum={false}
+        dragTransition={{ bounceStiffness: 560, bounceDamping: 28, power: 0.08, timeConstant: 120 }}
+        animate={dragReturnMotion}
+        whileDrag={{ scale: 1.02 }}
+        onPointerDown={() => {
+          draggedRef.current = false;
+        }}
+        onDragStart={() => {
+          draggedRef.current = true;
+          setIsDragReturning(false);
+          setDragReturnMotion({
+            x: 0,
+            y: 0,
+            rotate: 0,
+            scale: 1,
+            scaleX: 1,
+            scaleY: 1,
+            transition: { duration: 0.01 }
+          });
+          setReactionType("subtle");
+          setMood("excited");
+        }}
+        onDragEnd={(_, info) => {
+          draggedRef.current = true;
+          const movedFarEnough = Math.abs(info.offset.x) > 12 || Math.abs(info.offset.y) > 12;
+          const now = Date.now();
+          const recentDrags = [...dragHistoryRef.current.filter(timestamp => now - timestamp < 22000)];
+          if (movedFarEnough) {
+            recentDrags.push(now);
+          }
+          dragHistoryRef.current = recentDrags;
+
+          const triggeredDragAnger = movedFarEnough && recentDrags.length >= 5;
+          const selectedReturnStyle = triggeredDragAnger || isCompanionAngry
+            ? (["grumpy-wobble", "grumpy-stomp", "hot-streak"] as DragReturnStyle[])[
+                Math.floor(Math.random() * 3)
+              ]
+            : (["steady-bounce", "orbit-swoop", "feather-float"] as DragReturnStyle[])[
+                Math.floor(Math.random() * 3)
+              ];
+
+          setDragReturnStyle(selectedReturnStyle);
+          setIsDragReturning(true);
+          setDragReturnMotion(buildDragReturnMotion(selectedReturnStyle, info.offset.x, info.offset.y));
+          setReactionType(triggeredDragAnger || isCompanionAngry ? "error" : "subtle");
+          setMood(triggeredDragAnger || isCompanionAngry ? "sleepy" : (activeTierState?.mood || "happy"));
+
+          if (movedFarEnough && triggeredDragAnger) {
+            triggerDragAnger();
+          } else if (movedFarEnough) {
+            setBubbleText(
+              pickCompanionLine(
+                isCompanionAngry ? companionDialogue.dragReturnAngry : companionDialogue.dragReturn
+              )
+            );
+            setShowBubble(true);
+          }
+          window.setTimeout(() => {
+            draggedRef.current = false;
+            setIsDragReturning(false);
+            setDragReturnMotion({
+              x: 0,
+              y: 0,
+              rotate: 0,
+              scale: 1,
+              scaleX: 1,
+              scaleY: 1,
+              transition: { duration: 0.01 }
+            });
+            setReactionType("none");
+          }, 1100);
+        }}
       >
+        <motion.div
+          className={`cursor-pointer relative group flex items-center justify-center p-1 rounded-full transition-all duration-350 ${
+            isRedHotAngry
+              ? "ring-4 ring-red-500/80 ring-offset-2 ring-offset-orange-100 shadow-[0_0_26px_rgba(239,68,68,0.45)]"
+              : isCompanionAngry
+              ? "ring-4 ring-rose-300/75 ring-offset-2 ring-offset-slate-50 shadow-[0_0_18px_rgba(251,113,133,0.24)]"
+              : activeRingClass
+          }`}
+          onClick={handlePetKitty}
+          initial={{ scale: 1 }}
+          animate={activeAnimation}
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          id="campus-companion-widget"
+        >
         {/* Floating Heart Particles */}
         <AnimatePresence>
           {particles.map(p => (
@@ -1058,27 +1511,15 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         )}
 
         {/* Outer ambient glow */}
-        <div className={`absolute rounded-full blur-md transition-all duration-300 ${
-          isCompanionAngry
-            ? "inset-[-6px] bg-gradient-to-r from-red-600 via-orange-500 to-amber-600 scale-108 opacity-95 animate-pulse"
-            : petCount >= 500
-            ? "inset-[-8px] bg-gradient-to-r from-pink-500 via-purple-500 via-teal-400 via-yellow-400 to-pink-500 scale-120 opacity-95 animate-pulse"
-            : petCount >= 300
-            ? "inset-[-5px] bg-gradient-to-r from-purple-500 via-rose-400 to-blue-500 scale-115 opacity-90 animate-pulse"
-            : petCount >= 100
-            ? "inset-[-3px] bg-gradient-to-r from-amber-400 via-rose-400 to-yellow-500 scale-110 opacity-90 animate-pulse"
-            : petCount >= 50
-            ? "inset-[-1px] bg-gradient-to-r from-rose-300 via-sky-200 to-amber-200 scale-105 opacity-80"
-            : petCount >= 40
-            ? "inset-0 bg-gradient-to-r from-teal-200 via-rose-200 to-amber-200 scale-[1.04] opacity-75"
-            : petCount >= 30
-            ? "inset-0 bg-teal-200/60 scale-[1.03] opacity-70"
-            : petCount >= 20
-            ? "inset-0 bg-amber-200/60 scale-[1.02] opacity-70"
-            : petCount >= 10
-            ? "inset-0 bg-rose-200/70 scale-[1.01] opacity-70"
-            : "inset-1 bg-rose-200/40 group-hover:bg-rose-300/45"
-        }`} />
+        {(isRedHotAngry || isCompanionAngry || activeGlowClass) && (
+          <div className={`absolute rounded-full blur-md transition-all duration-300 ${
+            isRedHotAngry
+              ? "inset-[-8px] bg-gradient-to-r from-red-700 via-orange-500 to-yellow-400 scale-110 opacity-95 animate-pulse"
+              : isCompanionAngry
+              ? "inset-[-5px] bg-gradient-to-r from-slate-300 via-rose-200 to-pink-200 scale-105 opacity-85"
+              : activeGlowClass
+          }`} />
+        )}
 
         <div className="relative w-14 h-14 md:w-17 md:h-17 flex items-center justify-center">
           {/* Extremely Fluffy, Chubby Marshmallow Cat SVG */}
@@ -1087,6 +1528,78 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             fill="none"
             className="w-full h-full drop-shadow-[0_2.5px_4.5px_rgba(244,63,94,0.3)] select-none"
           >
+            {isCompanionAngry && !isRedHotAngry && (
+              <g id="stormy-sulk-aura">
+                <motion.path
+                  d="M 29 16 C 26 10, 34 7, 39 12 C 41 7, 48 7, 51 12 C 55 8, 63 10, 64 16 C 69 16, 72 20, 70 24 C 68 29, 61 29, 58 26 C 55 30, 46 30, 43 26 C 40 30, 31 29, 29 24 C 27 20, 29 17, 29 16 Z"
+                  fill="rgba(226,232,240,0.9)"
+                  stroke="rgba(148,163,184,0.85)"
+                  strokeWidth="1.2"
+                  animate={{ y: [0, -1.5, 0.8, 0], x: [0, -0.7, 0.6, 0], opacity: [0.78, 0.98, 0.82] }}
+                  transition={{ duration: 3.4, repeat: Infinity, ease: "easeInOut" }}
+                />
+                <motion.path
+                  d="M 31 26 C 28 29, 31 33, 34 33"
+                  fill="none"
+                  stroke="#94a3b8"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  animate={{ x: [0, -1, 0], opacity: [0.3, 0.7, 0.3] }}
+                  transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+                />
+                <motion.path
+                  d="M 65 26 C 68 29, 65 33, 62 33"
+                  fill="none"
+                  stroke="#94a3b8"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  animate={{ x: [0, 1, 0], opacity: [0.3, 0.7, 0.3] }}
+                  transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut", delay: 0.22 }}
+                />
+              </g>
+            )}
+
+            {isRedHotAngry && (
+              <g id="red-hot-aura">
+                <motion.path
+                  d="M 50 7 C 22 9, 8 30, 9 56 C 10 82, 28 95, 50 95 C 72 95, 90 82, 91 56 C 92 30, 78 9, 50 7 Z"
+                  fill="rgba(239,68,68,0.2)"
+                  stroke="rgba(248,113,113,0.32)"
+                  strokeWidth="1.4"
+                  animate={{ scale: [0.98, 1.05, 0.99], opacity: [0.5, 0.95, 0.55] }}
+                  transition={{ duration: 1.05, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ originX: 0.5, originY: 0.5 }}
+                />
+                <motion.path
+                  d="M 24 18 C 20 12, 28 10, 25 3"
+                  stroke="#fb7185"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  fill="none"
+                  animate={{ y: [0, -4, 0], opacity: [0.45, 0.95, 0.45] }}
+                  transition={{ duration: 0.85, repeat: Infinity, ease: "easeInOut" }}
+                />
+                <motion.path
+                  d="M 50 14 C 46 8, 54 7, 50 1"
+                  stroke="#f97316"
+                  strokeWidth="2.3"
+                  strokeLinecap="round"
+                  fill="none"
+                  animate={{ y: [0, -5, 0], opacity: [0.4, 1, 0.4] }}
+                  transition={{ duration: 0.72, repeat: Infinity, ease: "easeInOut", delay: 0.12 }}
+                />
+                <motion.path
+                  d="M 76 18 C 80 12, 72 10, 75 3"
+                  stroke="#fb7185"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  fill="none"
+                  animate={{ y: [0, -4, 0], opacity: [0.45, 0.95, 0.45] }}
+                  transition={{ duration: 0.92, repeat: Infinity, ease: "easeInOut", delay: 0.2 }}
+                />
+              </g>
+            )}
+
             {/* Super Saiyan Golden aura and hair backplate */}
             {accessory === "saiyan" && (
               <g id="saiyan-aura">
@@ -1118,7 +1631,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               </g>
             )}
 
-            {(petCount >= 500 || accessory === "nova") && (
+            {hasTrait("nova") && (
               <g id="nova-aura">
                 <motion.circle
                   cx="50"
@@ -1144,7 +1657,31 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               </g>
             )}
 
-            {accessory === "moon" && (
+            {hasTrait("comet") && (
+              <g id="comet-trail">
+                <motion.path
+                  d="M 20 32 C 6 36, 2 56, 15 68 C 31 82, 56 79, 76 62"
+                  fill="none"
+                  stroke="#67e8f9"
+                  strokeWidth="4"
+                  strokeLinecap="round"
+                  strokeDasharray="2 8"
+                  animate={{ pathLength: [0.45, 1, 0.45], opacity: [0.4, 1, 0.4] }}
+                  transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+                />
+                <motion.path
+                  d="M 80 56 L 85 63 L 94 64 L 88 70 L 90 79 L 80 74 L 70 79 L 72 70 L 66 64 L 75 63 Z"
+                  fill="#fef08a"
+                  stroke="#1e293b"
+                  strokeWidth="1.5"
+                  animate={{ x: [0, 2, -1, 0], y: [0, -2, 1, 0], rotate: [0, 9, -9, 0] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ originX: 0.8, originY: 0.65 }}
+                />
+              </g>
+            )}
+
+            {hasTrait("moon") && (
               <motion.path
                 id="moon-charm"
                 d="M 70 12 C 61 16, 62 29, 72 32 C 65 35, 55 30, 54 21 C 53 12, 61 7, 70 12 Z"
@@ -1154,6 +1691,40 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
                 animate={{ y: [0, -2, 0], rotate: [-8, 8, -8] }}
                 transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
               />
+            )}
+
+            {hasTrait("orbitring") && (
+              <motion.ellipse
+                id="orbit-ring"
+                cx="50"
+                cy="57"
+                rx="40"
+                ry="11"
+                fill="none"
+                stroke="#a78bfa"
+                strokeWidth="2"
+                strokeDasharray="10 8"
+                animate={{ rotate: 360, opacity: [0.35, 0.85, 0.35] }}
+                transition={{ rotate: { duration: 9, repeat: Infinity, ease: "linear" }, opacity: { duration: 2.4, repeat: Infinity, ease: "easeInOut" } }}
+                style={{ originX: 0.5, originY: 0.57 }}
+              />
+            )}
+
+            {hasTrait("sail") && (
+              <g id="moon-sail">
+                <motion.path
+                  d="M 70 28 Q 88 34, 86 61 Q 72 58, 64 46 Z"
+                  fill="#dbeafe"
+                  stroke="#1e293b"
+                  strokeWidth="1.7"
+                  strokeLinejoin="round"
+                  animate={{ rotate: [-4, 5, -3, 0], y: [0, -1, 0] }}
+                  transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ originX: 0.72, originY: 0.44 }}
+                />
+                <path d="M 67 30 L 67 59" stroke="#475569" strokeWidth="1.7" strokeLinecap="round" />
+                <path d="M 67 30 Q 74 32, 78 37" stroke="#93c5fd" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+              </g>
             )}
 
             {/* 0. Fluffy Tail (Wags behind the body) */}
@@ -1175,7 +1746,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             />
 
             {/* 0.5 Flapping Angel Wings (sit behind the main body for 200+ pets) */}
-            {petCount >= 200 && (
+            {hasTrait("wings") && (
               <g id="kitty-wings">
                 {/* Left Wing */}
                 <motion.path
@@ -1268,6 +1839,14 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               strokeLinejoin="round" 
             />
 
+            {hasTrait("cloudruff") && (
+              <g id="cloud-ruff">
+                <path d="M 24 58 C 22 50, 30 46, 36 50 C 38 43, 49 43, 52 50 C 57 46, 65 49, 64 57 C 70 56, 74 61, 71 66 C 67 70, 30 70, 25 66 C 22 63, 22 60, 24 58 Z" fill="#eff6ff" stroke="#1e293b" strokeWidth="1.5" strokeLinejoin="round" />
+                <path d="M 31 55 Q 38 52, 45 55" stroke="#cbd5e1" strokeWidth="1" strokeLinecap="round" />
+                <path d="M 54 55 Q 61 52, 67 56" stroke="#cbd5e1" strokeWidth="1" strokeLinecap="round" />
+              </g>
+            )}
+
             {/* 3. Extra Cheek Fluff Tufts filled and integrated on sides */}
             <path d="M 13 48 C 4 52, 5 62, 13 66 Z" fill="#ffffff" />
             <path d="M 13 48 C 4 52, 5 62, 13 66" stroke="#1e293b" strokeWidth="2.2" strokeLinecap="round" />
@@ -1285,8 +1864,61 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               <path d="M 57 16 Q 63 13, 60 19 Q 57 19, 57 16 Z" fill="#22c55e" stroke="#1e293b" strokeWidth="1" />
             </g>
 
+            {hasTrait("chefhat") && (
+              <motion.g
+                id="chef-hat"
+                animate={{ y: [0, -1.5, 0], rotate: [-1.5, 1.5, -1.5] }}
+                transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}
+                style={{ originX: 0.5, originY: 0.18 }}
+              >
+                <path d="M 35 24 C 31 14, 39 8, 46 12 C 49 7, 58 7, 61 13 C 68 10, 74 17, 70 25 Z" fill="#ffffff" stroke="#1e293b" strokeWidth="1.6" strokeLinejoin="round" />
+                <path d="M 38 24 L 68 24 L 66 31 L 40 31 Z" fill="#f8fafc" stroke="#1e293b" strokeWidth="1.4" strokeLinejoin="round" />
+                <path d="M 43 28 L 61 28" stroke="#fb7185" strokeWidth="1.4" strokeLinecap="round" />
+              </motion.g>
+            )}
+
+            {hasTrait("headband") && (
+              <g id="training-headband">
+                <path d="M 29 38 Q 50 31, 71 38" stroke="#ef4444" strokeWidth="4.6" strokeLinecap="round" fill="none" />
+                <motion.path
+                  d="M 70 38 Q 80 34, 85 41 Q 78 44, 74 49"
+                  fill="none"
+                  stroke="#f87171"
+                  strokeWidth="3.2"
+                  strokeLinecap="round"
+                  animate={{ rotate: [-6, 8, -4, 0], y: [0, -1, 0] }}
+                  transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ originX: 0.76, originY: 0.4 }}
+                />
+              </g>
+            )}
+
+            {hasTrait("leafpin") && (
+              <motion.g
+                id="leaf-pin"
+                animate={{ rotate: [-4, 4, -4], y: [0, -0.6, 0] }}
+                transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+                style={{ originX: 0.34, originY: 0.28 }}
+              >
+                <path d="M 31 30 Q 24 24, 26 18 Q 35 18, 38 27 Z" fill="#4ade80" stroke="#1e293b" strokeWidth="1.2" strokeLinejoin="round" />
+                <path d="M 31 30 Q 34 22, 37 18" fill="none" stroke="#166534" strokeWidth="1" strokeLinecap="round" />
+              </motion.g>
+            )}
+
+            {hasTrait("starpin") && (
+              <motion.g
+                id="star-pin"
+                animate={{ scale: [0.95, 1.08, 0.95], rotate: [-6, 6, -6] }}
+                transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
+                style={{ originX: 0.7, originY: 0.26 }}
+              >
+                <path d="M 69 18 L 72 24 L 79 25 L 74 30 L 75.5 37 L 69 33.5 L 62.5 37 L 64 30 L 59 25 L 66 24 Z" fill="#fbbf24" stroke="#1e293b" strokeWidth="1.3" strokeLinejoin="round" />
+                <circle cx="69" cy="27" r="1.4" fill="#fff7ed" />
+              </motion.g>
+            )}
+
             {/* Level 10 ribbon state */}
-            {(petCount >= 10 || accessory === "ribbon") && (
+            {hasTrait("ribbon") && (
               <motion.g
                 id="ribbon-state"
                 animate={{ rotate: [-3, 3, -3], y: [0, -0.8, 0] }}
@@ -1302,7 +1934,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             {/* 5. Draw Dynamic Responsive Eyes */}
             {renderEyes()}
 
-            {accessory === "glasses" && (
+            {hasTrait("glasses") && (
               <g id="reading-glasses">
                 <circle cx="34" cy="46" r="8.5" fill="none" stroke="#0f172a" strokeWidth="1.8" />
                 <circle cx="66" cy="46" r="8.5" fill="none" stroke="#0f172a" strokeWidth="1.8" />
@@ -1312,16 +1944,160 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               </g>
             )}
 
-            {/* 6. Soft Rosy Cheek Blush */}
-            <circle cx="22" cy="62" r="5" fill="#fda4af" opacity="0.95" />
-            <circle cx="78" cy="62" r="5" fill="#fda4af" opacity="0.95" />
+            {hasTrait("laurel") && (
+              <g id="laurel-crown">
+                <path d="M 32 25 C 28 19, 27 15, 29 11" stroke="#84cc16" strokeWidth="1.9" strokeLinecap="round" fill="none" />
+                <path d="M 68 25 C 72 19, 73 15, 71 11" stroke="#84cc16" strokeWidth="1.9" strokeLinecap="round" fill="none" />
+                <path d="M 31 20 C 27 19, 26 15, 29 14 C 31 15, 32 17, 31 20 Z" fill="#a3e635" stroke="#1e293b" strokeWidth="0.8" />
+                <path d="M 36 16 C 33 15, 33 11, 36 10 C 38 11, 39 13, 36 16 Z" fill="#a3e635" stroke="#1e293b" strokeWidth="0.8" />
+                <path d="M 69 20 C 73 19, 74 15, 71 14 C 69 15, 68 17, 69 20 Z" fill="#a3e635" stroke="#1e293b" strokeWidth="0.8" />
+                <path d="M 64 16 C 67 15, 67 11, 64 10 C 62 11, 61 13, 64 16 Z" fill="#a3e635" stroke="#1e293b" strokeWidth="0.8" />
+              </g>
+            )}
 
-            {accessory === "apron" && (
+            {hasTrait("gala") && (
+              <g id="gala-drape">
+                <path d="M 29 57 Q 39 49, 50 54 Q 60 49, 71 57" fill="none" stroke="#be185d" strokeWidth="3.2" strokeLinecap="round" />
+                <path d="M 33 58 Q 28 72, 33 84 Q 42 79, 46 69 L 43 58 Z" fill="#f9a8d4" stroke="#1e293b" strokeWidth="1.3" strokeLinejoin="round" />
+                <path d="M 67 58 Q 72 72, 67 84 Q 58 79, 54 69 L 57 58 Z" fill="#fbcfe8" stroke="#1e293b" strokeWidth="1.3" strokeLinejoin="round" />
+                <circle cx="50" cy="56" r="2.6" fill="#fef3c7" stroke="#1e293b" strokeWidth="1" />
+              </g>
+            )}
+
+            {/* 6. Soft Rosy Cheek Blush */}
+            <circle cx="22" cy="62" r="5" fill={isRedHotAngry ? "#f87171" : "#fda4af"} opacity={isRedHotAngry ? 1 : 0.95} />
+            <circle cx="78" cy="62" r="5" fill={isRedHotAngry ? "#f87171" : "#fda4af"} opacity={isRedHotAngry ? 1 : 0.95} />
+            {isRedHotAngry && <circle cx="50" cy="31" r="6.5" fill="#fecaca" opacity="0.7" />}
+
+            {hasTrait("scarf") && (
+              <g id="cozy-scarf">
+                <path d="M 34 56 Q 50 62, 66 56" stroke="#ef4444" strokeWidth="4.4" strokeLinecap="round" fill="none" />
+                <path d="M 44 58 L 47 82" stroke="#ef4444" strokeWidth="3.7" strokeLinecap="round" />
+                <path d="M 52 58 L 57 76" stroke="#fda4af" strokeWidth="3.2" strokeLinecap="round" />
+                <circle cx="50" cy="58" r="2.4" fill="#fef2f2" stroke="#1e293b" strokeWidth="0.8" />
+              </g>
+            )}
+
+            {hasTrait("captainsash") && (
+              <g id="captain-sash">
+                <path d="M 35 49 L 43 46 L 61 79 L 53 82 Z" fill="#fde68a" stroke="#1e293b" strokeWidth="1.3" strokeLinejoin="round" />
+                <path d="M 39 53 L 46 50" stroke="#d97706" strokeWidth="1.1" strokeLinecap="round" />
+                <path d="M 51 74 L 58 71" stroke="#d97706" strokeWidth="1.1" strokeLinecap="round" />
+              </g>
+            )}
+
+            {hasTrait("brooch") && (
+              <g id="chest-brooch">
+                <path d="M 46 62 L 50 58 L 54 62 L 50 66 Z" fill="#fbbf24" stroke="#1e293b" strokeWidth="1.2" />
+                <circle cx="50" cy="62" r="1.2" fill="#fff7ed" />
+              </g>
+            )}
+
+            {hasTrait("satchel") && (
+              <g id="walk-satchel">
+                <path d="M 62 54 Q 70 51, 76 56 L 74 74 Q 68 78, 60 75 Z" fill="#c2410c" stroke="#1e293b" strokeWidth="1.4" strokeLinejoin="round" />
+                <path d="M 43 39 Q 55 45, 67 58" fill="none" stroke="#7c2d12" strokeWidth="2.1" strokeLinecap="round" />
+                <path d="M 63 60 L 72 60" stroke="#fed7aa" strokeWidth="1.1" strokeLinecap="round" />
+              </g>
+            )}
+
+            {hasTrait("medal") && (
+              <g id="champion-medal">
+                <path d="M 43 57 L 47 67" stroke="#2563eb" strokeWidth="2.4" strokeLinecap="round" />
+                <path d="M 57 57 L 53 67" stroke="#dc2626" strokeWidth="2.4" strokeLinecap="round" />
+                <circle cx="50" cy="72" r="6" fill="#fbbf24" stroke="#1e293b" strokeWidth="1.5" />
+                <path d="M 47 72 L 49.2 74.2 L 54 69.8" fill="none" stroke="#fff7ed" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </g>
+            )}
+
+            {hasTrait("heartcore") && (
+              <g id="heartcore-emblem">
+                <motion.path
+                  d="M 50 64 C 46 57, 37 58, 37 66 C 37 73, 45 78, 50 83 C 55 78, 63 73, 63 66 C 63 58, 54 57, 50 64 Z"
+                  fill="#fb7185"
+                  stroke="#1e293b"
+                  strokeWidth="1.6"
+                  animate={{
+                    scale: [1, 1.12, 1],
+                    filter: [
+                      "drop-shadow(0 0 0 rgba(251,113,133,0))",
+                      "drop-shadow(0 0 8px rgba(251,113,133,0.7))",
+                      "drop-shadow(0 0 0 rgba(251,113,133,0))"
+                    ]
+                  }}
+                  transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ originX: 0.5, originY: 0.72 }}
+                />
+                <motion.ellipse
+                  cx="50"
+                  cy="70"
+                  rx="16"
+                  ry="6"
+                  fill="none"
+                  stroke="#f9a8d4"
+                  strokeWidth="1.4"
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 4.8, repeat: Infinity, ease: "linear" }}
+                  style={{ originX: 0.5, originY: 0.7 }}
+                />
+              </g>
+            )}
+
+            {hasTrait("apron") && (
               <g id="chef-apron">
                 <path d="M 36 59 Q 50 53, 64 59 L 61 83 Q 50 87, 39 83 Z" fill="#f8fafc" stroke="#1e293b" strokeWidth="1.8" strokeLinejoin="round" />
                 <path d="M 41 58 C 43 54, 47 53, 50 54 C 53 53, 57 54, 59 58" fill="none" stroke="#1e293b" strokeWidth="1.4" strokeLinecap="round" />
                 <path d="M 43 69 L 57 69" stroke="#fb7185" strokeWidth="1.8" strokeLinecap="round" />
                 <circle cx="50" cy="76" r="2" fill="#fb7185" />
+              </g>
+            )}
+
+            {hasTrait("ladle") && (
+              <motion.g
+                id="cozy-ladle"
+                animate={{ rotate: [-8, 10, -5, 0], y: [0, -1, 0] }}
+                transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
+                style={{ originX: 0.74, originY: 0.68 }}
+              >
+                <line x1="68" y1="58" x2="79" y2="79" stroke="#64748b" strokeWidth="2.2" strokeLinecap="round" />
+                <ellipse cx="82" cy="82" rx="5.5" ry="4" fill="#cbd5e1" stroke="#1e293b" strokeWidth="1.2" />
+              </motion.g>
+            )}
+
+            {hasTrait("cape") && (
+              <g id="hero-cape">
+                <path
+                  d="M 28 58 Q 20 70, 28 87 Q 38 82, 44 71 L 41 58 Z"
+                  fill="#f43f5e"
+                  opacity="0.9"
+                  stroke="#1e293b"
+                  strokeWidth="1.4"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M 72 58 Q 80 70, 72 87 Q 62 82, 56 71 L 59 58 Z"
+                  fill="#fb7185"
+                  opacity="0.86"
+                  stroke="#1e293b"
+                  strokeWidth="1.4"
+                  strokeLinejoin="round"
+                />
+              </g>
+            )}
+
+            {hasTrait("scepter") && (
+              <g id="orbit-scepter">
+                <motion.path
+                  d="M 79 36 L 69 80"
+                  stroke="#7c3aed"
+                  strokeWidth="2.6"
+                  strokeLinecap="round"
+                  animate={{ rotate: [-6, 7, -3, 0], y: [0, -1.5, 0] }}
+                  transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ originX: 0.74, originY: 0.58 }}
+                />
+                <circle cx="81" cy="33" r="4.4" fill="#c4b5fd" stroke="#1e293b" strokeWidth="1.3" />
+                <path d="M 81 27 L 83 31 L 87 31 L 84 34 L 85 38 L 81 36 L 77 38 L 78 34 L 75 31 L 79 31 Z" fill="#fef08a" stroke="#1e293b" strokeWidth="0.9" />
               </g>
             )}
 
@@ -1347,8 +2123,11 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             {/* 8. Super Smiley "3" muzzle or grumpy frown for anger */}
             <polygon points="48.5,56 51.5,56 50,57.5" fill="#f43f5e" />
             {isCompanionAngry ? (
-              // Grumpy upside-down frown mouth
-              <path d="M 44 65 Q 50 59, 56 65" stroke="#1e293b" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+              isRedHotAngry ? (
+                <path d="M 43 64 Q 46 69, 50 63 Q 54 69, 57 64" stroke="#991b1b" strokeWidth="2.7" strokeLinecap="round" fill="none" />
+              ) : (
+                <path d="M 44 65 Q 50 59, 56 65" stroke="#1e293b" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+              )
             ) : (
               // Smiley "3" muzzle
               <path d="M 45 60 C 47.5 63, 50 62.5, 50 60 C 50 62.5, 52.5 63, 55 60" stroke="#1e293b" strokeWidth="2.2" strokeLinecap="round" />
@@ -1370,7 +2149,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             <circle cx="69" cy="74" r="1.8" fill="#fda4af" />
 
             {/* Level 20 bell state */}
-            {(petCount >= 20 || accessory === "bell") && (
+            {hasTrait("bell") && (
               <motion.g
                 id="bell-state"
                 animate={{ rotate: [-4, 4, -2, 2, 0] }}
@@ -1384,7 +2163,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             )}
 
             {/* Level 30 study book charm */}
-            {petCount >= 30 && accessory !== "book" && (
+            {hasTrait("book") && (
               <motion.g
                 id="study-book-charm"
                 animate={{ y: [0, -1.5, 0], rotate: [-2, 2, -2] }}
@@ -1397,8 +2176,23 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               </motion.g>
             )}
 
+            {hasTrait("notebook") && (
+              <motion.g
+                id="scout-notebook"
+                animate={{ y: [0, -1.2, 0], rotate: [-2, 2, -2] }}
+                transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+                style={{ originX: 0.2, originY: 0.8 }}
+              >
+                <path d="M 15 74 L 31 72 L 33 88 L 17 90 Z" fill="#dbeafe" stroke="#1e293b" strokeWidth="1.3" strokeLinejoin="round" />
+                <path d="M 18 76 L 29 75" stroke="#60a5fa" strokeWidth="1" strokeLinecap="round" />
+                <path d="M 19 80 L 30 79" stroke="#60a5fa" strokeWidth="1" strokeLinecap="round" />
+                <path d="M 20 84 L 29 83" stroke="#60a5fa" strokeWidth="1" strokeLinecap="round" />
+                <path d="M 16.5 75 L 18 89" stroke="#1e293b" strokeWidth="0.9" strokeLinecap="round" />
+              </motion.g>
+            )}
+
             {/* Level 40 bubble tea charm */}
-            {(petCount >= 40 || accessory === "tea") && (
+            {hasTrait("tea") && (
               <motion.g
                 id="tea-charm"
                 animate={{ y: [0, -2, 0], rotate: [2, -2, 2] }}
@@ -1412,8 +2206,23 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               </motion.g>
             )}
 
+            {hasTrait("teapot") && (
+              <motion.g
+                id="teapot-service"
+                animate={{ y: [0, -1.2, 0], rotate: [1.5, -1.5, 1.5] }}
+                transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+                style={{ originX: 0.22, originY: 0.82 }}
+              >
+                <ellipse cx="22" cy="87" rx="12" ry="2.4" fill="#fecdd3" opacity="0.6" />
+                <path d="M 18 73 Q 12 76, 14 84 L 28 84 Q 31 75, 24 72 Z" fill="#fde68a" stroke="#1e293b" strokeWidth="1.4" strokeLinejoin="round" />
+                <path d="M 27 76 Q 34 76, 32 81 Q 31 84, 27 82" fill="none" stroke="#1e293b" strokeWidth="1.3" strokeLinecap="round" />
+                <path d="M 16 76 Q 11 75, 11 79 Q 11 83, 15 82" fill="none" stroke="#1e293b" strokeWidth="1.3" strokeLinecap="round" />
+                <path d="M 18 73 Q 20 69, 24 72" fill="none" stroke="#1e293b" strokeWidth="1.1" strokeLinecap="round" />
+              </motion.g>
+            )}
+
             {/* Sparkle stars side additions for 50+ */}
-            {petCount >= 50 && (
+            {hasTrait("stars") && (
               <g id="sparkle-stars">
                 <motion.path 
                   d="M 12,20 L 14,23 L 17,23 L 15,25 L 16,28 L 12,26 L 8,28 L 9,25 L 7,23 L 10,23 Z" 
@@ -1432,8 +2241,23 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               </g>
             )}
 
+            {hasTrait("quill") && (
+              <motion.g
+                id="mentor-quill"
+                animate={{ y: [0, -1.5, 0], rotate: [-4, 5, -4] }}
+                transition={{ duration: 2.7, repeat: Infinity, ease: "easeInOut" }}
+                style={{ originX: 0.18, originY: 0.28 }}
+              >
+                <path d="M 17 26 C 10 30, 10 41, 18 44 C 25 41, 27 31, 22 25 C 20 24, 18 24, 17 26 Z" fill="#c4b5fd" stroke="#1e293b" strokeWidth="1.2" />
+                <path d="M 18 43 L 28 58" stroke="#7c3aed" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M 23 50 L 33 48 L 31 57 L 21 58 Z" fill="#fff7ed" stroke="#1e293b" strokeWidth="1.1" strokeLinejoin="round" />
+                <line x1="24.5" y1="51.5" x2="30.5" y2="51.5" stroke="#a8a29e" strokeWidth="0.8" strokeLinecap="round" />
+                <line x1="24.5" y1="54" x2="29.5" y2="54" stroke="#a8a29e" strokeWidth="0.8" strokeLinecap="round" />
+              </motion.g>
+            )}
+
             {/* 11. Celestial Rainbow Halo above crown for 300+ */}
-            {petCount >= 300 && (
+            {hasTrait("halo") && (
               <motion.ellipse
                 cx="50"
                 cy="6"
@@ -1456,7 +2280,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             )}
 
             {/* 10. Golden Crown badge (unlocked at 100 pets) */}
-            {petCount >= 100 && (
+            {hasTrait("crown") && (
               <g id="crown-badge">
                 <path 
                   d="M 38 24 L 34 14 L 42 18 L 50 10 L 58 18 L 66 14 L 62 24 Z" 
@@ -1471,47 +2295,17 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
                 <circle cx="66" cy="14" r="2.2" fill="#ef4444" />
                 <circle cx="50" cy="20" r="1.5" fill="#ffffff" />
 
-                {/* Extra sparkling jewel items for 150+ */}
-                {petCount >= 150 && (
+                {activeTierState && activeTierState.count >= 650 && (
                   <g>
                     <motion.circle cx="28" cy="18" r="1.8" fill="#a78bfa" animate={{ scale: [1, 1.3, 1] }} transition={{ repeat: Infinity, duration: 1 }} />
                     <motion.circle cx="72" cy="18" r="1.8" fill="#22d3ee" animate={{ scale: [1, 1.3, 1] }} transition={{ repeat: Infinity, duration: 1, delay: 0.5 }} />
-                  </g>
-                )}
-
-                {/* Supreme Unicorn Horn / Tiara additions for 500+ */}
-                {petCount >= 500 && (
-                  <g id="unicorn-horn">
-                    <motion.polygon 
-                      points="50,4 45,14 55,14" 
-                      fill="#ffd700" 
-                      stroke="#1e293b" 
-                      strokeWidth="1.8" 
-                      strokeLinejoin="round"
-                      animate={{
-                        fill: ["#ffd700", "#ff69b4", "#00ffff", "#ffd700"]
-                      }}
-                      transition={{
-                        duration: 3,
-                        repeat: Infinity,
-                        ease: "easeInOut"
-                      }}
-                    />
-                    <motion.circle 
-                      cx="50" 
-                      cy="2" 
-                      r="2.5" 
-                      fill="#ffffff"
-                      animate={{ scale: [1, 1.8, 1], opacity: [0.6, 1, 0.6] }}
-                      transition={{ repeat: Infinity, duration: 1.2 }}
-                    />
                   </g>
                 )}
               </g>
             )}
 
             {/* 12. Wizard Hat accessory (render on top of head) */}
-            {accessory === "wizard" && (
+            {hasTrait("wizard") && (
               <g id="wizard-hat">
                 <motion.path
                   d="M 15 32 C 15 32, 50 28, 85 32 C 78 28, 68 8, 50 2 L 48 2 C 30 8, 20 28, 15 32 Z"
@@ -1531,8 +2325,48 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               </g>
             )}
 
+            {hasTrait("golf") && (
+              <g id="golf-club">
+                <motion.path
+                  d="M 76 40 L 70 70"
+                  stroke="#475569"
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                  animate={{ rotate: [-8, 10, -6, 0] }}
+                  transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ originX: 0.7, originY: 0.55 }}
+                />
+                <path d="M 68 70 Q 75 72, 79 67" stroke="#1e293b" strokeWidth="2" strokeLinecap="round" />
+                <circle cx="82" cy="72" r="2.6" fill="#ffffff" stroke="#1e293b" strokeWidth="1.1" />
+                <path d="M 27 22 Q 35 18, 42 22" stroke="#065f46" strokeWidth="3" strokeLinecap="round" />
+              </g>
+            )}
+
+            {hasTrait("dumbbell") && (
+              <motion.g
+                id="tiny-dumbbell"
+                animate={{ rotate: [-10, 12, -8, 0], y: [0, -1.2, 0] }}
+                transition={{ duration: 1.9, repeat: Infinity, ease: "easeInOut" }}
+                style={{ originX: 0.76, originY: 0.8 }}
+              >
+                <line x1="66" y1="84" x2="84" y2="84" stroke="#475569" strokeWidth="2.3" strokeLinecap="round" />
+                <rect x="62" y="79.5" width="4" height="9" rx="1.3" fill="#94a3b8" stroke="#1e293b" strokeWidth="1" />
+                <rect x="84" y="79.5" width="4" height="9" rx="1.3" fill="#94a3b8" stroke="#1e293b" strokeWidth="1" />
+                <rect x="58.5" y="77.5" width="3.5" height="13" rx="1.2" fill="#e2e8f0" stroke="#1e293b" strokeWidth="1" />
+                <rect x="88" y="77.5" width="3.5" height="13" rx="1.2" fill="#e2e8f0" stroke="#1e293b" strokeWidth="1" />
+              </motion.g>
+            )}
+
+            {hasTrait("whistle") && (
+              <g id="trainer-whistle">
+                <path d="M 54 63 Q 60 61, 63 66 Q 60 72, 54 70 Q 50 66, 54 63 Z" fill="#fde68a" stroke="#1e293b" strokeWidth="1.3" />
+                <circle cx="58.5" cy="66.5" r="1.4" fill="#fff7ed" stroke="#1e293b" strokeWidth="0.8" />
+                <path d="M 50 58 Q 56 56, 61 60" fill="none" stroke="#64748b" strokeWidth="1.2" strokeLinecap="round" />
+              </g>
+            )}
+
             {/* 13. Open Book accessory (render in front at the bottom) */}
-            {accessory === "book" && (
+            {hasTrait("book") && (
               <g id="reading-book" className="pointer-events-none">
                 <motion.g
                   animate={{ y: [0, 1.2, 0] }}
@@ -1556,6 +2390,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             )}
           </svg>
         </div>
+        </motion.div>
       </motion.div>
     </motion.div>
   );

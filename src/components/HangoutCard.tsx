@@ -94,6 +94,9 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
   const isCreatorMe = currentUser && hangout.creator_id === currentUser.id;
   const isAcceptedApplicant = myApp && myApp.status === "accepted";
   const canSeeRealIdentity = isCreatorMe || isAcceptedApplicant || currentUser?.is_admin;
+  const shouldMaskAnonymousOnCard =
+    Boolean(hangout.is_anonymous) &&
+    (Boolean(isCreatorMe) || (!isAcceptedApplicant && !currentUser?.is_admin));
 
   const getAnonAnimal = (id: string) => {
     let hash = 0;
@@ -105,8 +108,17 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
 
   const anonAnimal = getAnonAnimal(hangout.creator_id);
 
-  const creator = canSeeRealIdentity 
-    ? (realCreator || {
+  const creator = shouldMaskAnonymousOnCard
+    ? {
+        id: hangout.creator_id,
+        name: `Anonymous ${anonAnimal.name}`,
+        avatar_id: anonAnimal.avatar,
+        flag_status: realCreator?.flag_status || ("none" as const),
+        hide_details: true,
+        is_admin: false,
+        about_me: "This student is hosting this hangout anonymously to protect their privacy on the public feed."
+      }
+    : (realCreator || {
         id: "unknown",
         name: "XMUM Student",
         avatar_id: "panda",
@@ -114,16 +126,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
         hide_details: false,
         is_admin: false,
         about_me: ""
-      })
-    : {
-        id: hangout.creator_id,
-        name: hangout.is_anonymous ? `Anonymous ${anonAnimal.name}` : (realCreator?.name || "XMUM Student"),
-        avatar_id: hangout.is_anonymous ? anonAnimal.avatar : (realCreator?.avatar_id || "panda"),
-        flag_status: realCreator?.flag_status || ("none" as const),
-        hide_details: true,
-        is_admin: false,
-        about_me: "This student is hosting this hangout anonymously to protect their privacy on the public feed."
-      };
+      });
 
   const renderGenderIcon = (gender: string) => {
     const g = gender?.toLowerCase() || "";
@@ -232,7 +235,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
         <button
           id={`view-creator-profile-${hangout.id}`}
           onClick={() => {
-            if (hangout.is_anonymous && !canSeeRealIdentity) {
+            if (hangout.is_anonymous && shouldMaskAnonymousOnCard && !isCreatorMe) {
               const anonProfile: Profile = {
                 id: hangout.creator_id,
                 email: "",
@@ -263,21 +266,26 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
           }}
           className="flex items-center gap-3.5 text-left outline-none group cursor-pointer"
         >
-          <AvatarSVG id={creator.avatar_id} size={52} className={hangout.is_anonymous && !canSeeRealIdentity ? "group-hover:opacity-90 transition-opacity shrink-0" : "group-hover:scale-105 transition-transform shrink-0"} />
+          <AvatarSVG id={creator.avatar_id} size={52} className={shouldMaskAnonymousOnCard ? "group-hover:opacity-90 transition-opacity shrink-0" : "group-hover:scale-105 transition-transform shrink-0"} />
           <div className="min-w-0 text-left">
             <div className="flex items-center flex-wrap gap-1">
               <h4 className={`font-bold text-gray-900 text-xs sm:text-sm transition-colors ${
-                hangout.is_anonymous && !canSeeRealIdentity
+                shouldMaskAnonymousOnCard
                   ? ""
                   : "group-hover:text-rose-600"
               }`}>
                 {creator.name}
               </h4>
+              {Boolean(isCreatorMe && hangout.is_anonymous && realCreator?.name) && (
+                <span className="text-[10px] text-slate-400 font-semibold">
+                  ({realCreator?.name})
+                </span>
+              )}
               {renderGenderIcon(realCreator?.gender || "other")}
             </div>
             {realCreator ? (
               <span className="text-[10px] text-slate-400 block mt-0.5 truncate max-w-[200px] sm:max-w-xs font-medium">
-                {(!hangout.is_anonymous || canSeeRealIdentity)
+                {(!hangout.is_anonymous || !shouldMaskAnonymousOnCard)
                   ? `${realCreator.program} • ${realCreator.year_of_study} • ${realCreator.student_type ? realCreator.student_type.charAt(0).toUpperCase() + realCreator.student_type.slice(1) : ""}`
                   : `Verified Peer • ${realCreator.student_type ? realCreator.student_type.charAt(0).toUpperCase() + realCreator.student_type.slice(1) : "Student"}`}
               </span>

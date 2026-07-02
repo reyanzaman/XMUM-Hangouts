@@ -3,11 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useApp } from "../context/AppContext";
 import { ProfileCard } from "./ProfileCard";
 import { AvatarPicker } from "./AvatarPicker";
-import { XMUM_PROGRAMS, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
+import { COUNTRIES, XMUM_PROGRAMS, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
+import { companionBaseStateOption, companionTierStates, getCompanionStateById, getUnlockedCompanionState } from "../config/companionConfig";
+import { resolveStoredCompanionState, writeStoredCompanionState } from "../lib/companionState";
 import { 
   User, 
   Settings, 
@@ -39,6 +41,7 @@ export const StudentProfilePage: React.FC = () => {
     onboardingStep,
     setOnboardingStep,
     setShowOnboarding,
+    syncCompanionProgress,
     signOutSimulated,
     deleteCurrentAccount
   } = useApp();
@@ -78,6 +81,7 @@ export const StudentProfilePage: React.FC = () => {
   const [profileBio, setProfileBio] = useState(currentUser.about_me || "");
   const [profileAvatar, setProfileAvatar] = useState(currentUser.avatar_id || "panda");
   const [profilePassword, setProfilePassword] = useState("");
+  const [profilePasswordConfirm, setProfilePasswordConfirm] = useState("");
   
   // Custom language draft input
   const [customLanguage, setCustomLanguage] = useState("");
@@ -87,9 +91,50 @@ export const StudentProfilePage: React.FC = () => {
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
   const [deleteAccountConfirmationInput, setDeleteAccountConfirmationInput] = useState("");
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [showPasswordResetPanel, setShowPasswordResetPanel] = useState(false);
+  const [companionProgress, setCompanionProgress] = useState(
+    () => resolveStoredCompanionState(currentUser.email, currentUser)
+  );
   const hasExistingPassword = Boolean(currentUser.password_hash || currentUser.password);
+  const isGenderLocked = currentUser.is_profile_complete;
   const deleteAccountConfirmationMatches =
     deleteAccountConfirmationInput.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
+  const companionPetCount = Math.min(1000, Number(companionProgress.petCount || 0));
+  const availableCountries = COUNTRIES.includes(profileCountry) ? COUNTRIES : [profileCountry, ...COUNTRIES];
+  const companionUnlockedState = getUnlockedCompanionState(companionPetCount);
+  const companionSelectedState =
+    companionPetCount >= 1000
+      ? (() => {
+          const selectedStateId =
+            typeof companionProgress.selectedStateId === "string" ? companionProgress.selectedStateId : null;
+          if (selectedStateId === companionBaseStateOption.id) {
+            return companionBaseStateOption;
+          }
+          return getCompanionStateById(selectedStateId) || companionUnlockedState;
+        })()
+      : companionUnlockedState;
+  const canChooseCompanionState = companionPetCount >= 1000;
+
+  useEffect(() => {
+    const syncCompanionProgress = (event?: Event) => {
+      if (event) {
+        const customEvent = event as CustomEvent<any>;
+        if (customEvent.detail) {
+          setCompanionProgress(customEvent.detail);
+          return;
+        }
+      }
+
+      setCompanionProgress(resolveStoredCompanionState(currentUser.email, currentUser));
+    };
+
+    window.addEventListener("xmum-companion-state-updated", syncCompanionProgress);
+    window.addEventListener("focus", syncCompanionProgress);
+    return () => {
+      window.removeEventListener("xmum-companion-state-updated", syncCompanionProgress);
+      window.removeEventListener("focus", syncCompanionProgress);
+    };
+  }, [currentUser.email, currentUser.companion_pet_count, currentUser.companion_selected_state_id]);
 
   // Toggle active PII Shield
   const handleTogglePii = () => {
@@ -149,13 +194,13 @@ export const StudentProfilePage: React.FC = () => {
       setIsSaving(false);
       return;
     }
-    if (!hasExistingPassword && !profilePassword.trim()) {
-      showToast("Security password is required for subsequent logins (min 6 characters).", "error");
+    if (profilePassword.trim() && profilePassword.trim().length < 6) {
+      showToast("Security password must be at least 6 characters.", "error");
       setIsSaving(false);
       return;
     }
-    if (profilePassword.trim() && profilePassword.trim().length < 6) {
-      showToast("Security password must be at least 6 characters.", "error");
+    if (profilePassword.trim() && profilePassword.trim() !== profilePasswordConfirm.trim()) {
+      showToast("Please enter the same password in both password fields.", "error");
       setIsSaving(false);
       return;
     }
@@ -172,14 +217,21 @@ export const StudentProfilePage: React.FC = () => {
       student_type: (profileType as any) || "Not Specified",
       about_me: profileBio.trim(),
       avatar_id: profileAvatar,
-      ...(profilePassword.trim() ? { password: profilePassword.trim() } : {}),
+      ...(showPasswordResetPanel && profilePassword.trim() ? { password: profilePassword.trim() } : {}),
       is_profile_complete: true
     });
 
     setTimeout(() => {
       setIsSaving(false);
       if (success) {
-        showToast("Your student profile has been updated successfully!", "success");
+        if (showPasswordResetPanel && profilePassword.trim()) {
+          setProfilePassword("");
+          setProfilePasswordConfirm("");
+          setShowPasswordResetPanel(false);
+          showToast("Your profile was updated and your password has been reset.", "success");
+        } else {
+          showToast("Your student profile has been updated successfully!", "success");
+        }
       } else {
         showToast(error || "Could not save profile changes.", "error");
       }
@@ -198,6 +250,34 @@ export const StudentProfilePage: React.FC = () => {
 
     setDeleteAccountConfirmationInput("");
     setShowDeleteAccountConfirm(false);
+  };
+
+  const handleSelectCompanionState = (stateId: string | null) => {
+    if (!canChooseCompanionState) {
+      return;
+    }
+
+    try {
+      const nextState = writeStoredCompanionState(currentUser.email, {
+        ...companionProgress,
+        petCount: companionPetCount,
+        isPermanent: true,
+        selectedStateId: stateId
+      });
+      setCompanionProgress(nextState);
+      syncCompanionProgress(nextState);
+      window.dispatchEvent(new CustomEvent("xmum-companion-state-updated", { detail: nextState }));
+
+      const selected = getCompanionStateById(stateId);
+      showToast(
+        selected
+          ? `Companion state changed to ${selected.name}.`
+          : "Companion state updated.",
+        "success"
+      );
+    } catch {
+      showToast("We couldn't update the companion state right now.", "error");
+    }
   };
 
   // Switch demo profiles
@@ -239,9 +319,27 @@ export const StudentProfilePage: React.FC = () => {
               showToast("Launched Onboarding Guide.", "info");
             }}
             className="text-xs font-bold text-gray-650 hover:text-rose-600 bg-white hover:bg-rose-50/50 border border-gray-200 hover:border-rose-200 px-4 py-2 rounded-2xl transition-all shadow-sm flex items-center gap-2 justify-center hover:scale-[1.02] active:scale-95 cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-rose-500" />
+              Onboarding Guide
+            </button>
+
+          <button
+            onClick={() => {
+              setShowPasswordResetPanel(prev => !prev);
+              if (showPasswordResetPanel) {
+                setProfilePassword("");
+                setProfilePasswordConfirm("");
+              }
+            }}
+            className="text-xs font-bold text-gray-650 hover:text-rose-600 bg-white hover:bg-rose-50/50 border border-gray-200 hover:border-rose-200 px-4 py-2 rounded-2xl transition-all shadow-sm flex items-center gap-2 justify-center hover:scale-[1.02] active:scale-95 cursor-pointer"
           >
-            <Sparkles className="w-3.5 h-3.5 text-rose-500" />
-            Onboarding Guide
+            <Fingerprint className="w-3.5 h-3.5 text-rose-500" />
+            {showPasswordResetPanel
+              ? "Close Password Reset"
+              : hasExistingPassword
+              ? "Reset Password"
+              : "Add Password Login"}
           </button>
           
           {showConfirmSignOut ? (
@@ -274,6 +372,45 @@ export const StudentProfilePage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {showPasswordResetPanel && (
+        <div className="rounded-3xl border border-rose-100 bg-white p-5 shadow-sm space-y-4">
+          <div className="space-y-1">
+            <h2 className="text-sm font-black text-gray-900">
+              {hasExistingPassword ? "Reset Your Password" : "Set Up Password Login"}
+            </h2>
+            <p className="text-xs text-gray-500 leading-relaxed max-w-2xl">
+              {hasExistingPassword
+                ? "Choose a new password here for future password logins. Your current password stays active until you save this change."
+                : "You can still use Microsoft sign-in, but adding a password gives you another way to log in later."}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-extrabold text-gray-700 block">New Password</label>
+              <input
+                type="password"
+                value={profilePassword}
+                onChange={e => setProfilePassword(e.target.value)}
+                placeholder="Minimum 6 characters"
+                className="w-full bg-slate-50 border border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-1 focus:ring-rose-455 rounded-xl px-4 py-2 text-xs sm:text-sm text-gray-700 outline-none transition-all"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-extrabold text-gray-700 block">Confirm New Password</label>
+              <input
+                type="password"
+                value={profilePasswordConfirm}
+                onChange={e => setProfilePasswordConfirm(e.target.value)}
+                placeholder="Re-enter the same password"
+                className="w-full bg-slate-50 border border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-1 focus:ring-rose-455 rounded-xl px-4 py-2 text-xs sm:text-sm text-gray-700 outline-none transition-all"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main double column grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -330,6 +467,65 @@ export const StudentProfilePage: React.FC = () => {
                 </>
               )}
             </button>
+          </div>
+
+          <div className="bg-white border border-gray-100 p-5 rounded-3xl shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-50 pb-3">
+              <div className="flex items-center gap-2">
+                <Heart className="w-5 h-5 text-rose-500" />
+                <h3 className="font-bold text-slate-850 text-sm">Companion Progress</h3>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">
+                {companionPetCount}/1000 pets
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              <div className="h-2 rounded-full bg-rose-100 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-rose-400 via-orange-300 to-amber-300 transition-all duration-500"
+                  style={{ width: `${companionPetCount === 0 ? 0 : Math.max(4, (companionPetCount / 1000) * 100)}%` }}
+                />
+              </div>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                {companionSelectedState
+                  ? `${companionSelectedState.name}: ${companionSelectedState.summary}`
+                  : "Headpat the companion to unlock forms at 10, 20, 30, 40, 50, then every 50 pets up to 1000."}
+              </p>
+            </div>
+
+            {canChooseCompanionState ? (
+              <div className="space-y-3">
+                <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3 text-[11px] text-rose-800 leading-relaxed">
+                  Ultimate mode is permanent now. You can choose any unlocked companion form below, including the original sprout look.
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {[companionBaseStateOption, ...companionTierStates].map(state => {
+                    const active = companionSelectedState?.id === state.id;
+                    return (
+                      <button
+                        key={state.id}
+                        type="button"
+                        onClick={() => handleSelectCompanionState(state.id)}
+                        className={`text-left rounded-2xl border p-3 transition-colors cursor-pointer ${
+                          active
+                            ? "border-rose-300 bg-rose-50 text-rose-900"
+                            : "border-slate-200 bg-white hover:border-rose-200 hover:bg-rose-50/50 text-slate-700"
+                        }`}
+                      >
+                        <span className="text-[11px] font-black block">{state.name}</span>
+                        <span className="text-[10px] block mt-1 opacity-75">{state.summary}</span>
+                        <span className="text-[10px] font-bold block mt-2">{state.count} pets</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 text-[11px] text-slate-600 leading-relaxed">
+                Reach 1000 total pets to permanently unlock the companion wardrobe and choose any form from the 10-to-1000 milestone ladder here.
+              </div>
+            )}
           </div>
 
           <div className="bg-white border border-rose-100 p-5 rounded-3xl shadow-sm space-y-4">
@@ -495,12 +691,17 @@ export const StudentProfilePage: React.FC = () => {
               {/* Country */}
               <div className="space-y-1.5">
                 <label className="text-xs font-extrabold text-gray-500 block">Home Country</label>
-                <input
-                  type="text"
+                <select
                   value={profileCountry}
                   disabled
                   className="w-full bg-slate-100 border border-gray-200 text-gray-400 rounded-xl px-4 py-2 text-xs sm:text-sm outline-none cursor-not-allowed"
-                />
+                >
+                  {availableCountries.map(option => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
                 <div className="text-[10px] text-gray-400 italic mt-0.5">
                   * Locked. Country of origin cannot be updated. Note: Required for safety.
                 </div>
@@ -512,24 +713,19 @@ export const StudentProfilePage: React.FC = () => {
                 <select
                   value={profileGender}
                   onChange={e => setProfileGender(e.target.value)}
-                  className="w-full bg-slate-50 border border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-1 focus:ring-rose-455 rounded-xl px-4 py-2 text-xs sm:text-sm text-gray-700 outline-none transition-all"
+                  disabled={isGenderLocked}
+                  className={`w-full border rounded-xl px-4 py-2 text-xs sm:text-sm outline-none transition-all ${
+                    isGenderLocked
+                      ? "bg-slate-100 border-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-slate-50 border border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-1 focus:ring-rose-455 text-gray-700"
+                  }`}
                 >
                   <option value="Male">Male</option>
                   <option value="Female">Female</option>
                 </select>
-              </div>
-
-              {/* Password Security */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-extrabold text-gray-700 block">Account Password <span className="text-rose-500">*</span></label>
-                <input
-                  type="password"
-                  value={profilePassword}
-                  onChange={e => setProfilePassword(e.target.value)}
-                  placeholder={hasExistingPassword ? "Leave blank to keep your current password" : "Min 6 characters"}
-                  required={!hasExistingPassword}
-                  className="w-full bg-slate-50 border border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-1 focus:ring-rose-455 rounded-xl px-4 py-2 text-xs sm:text-sm text-gray-700 outline-none transition-all"
-                />
+                <div className="text-[10px] text-gray-400 italic mt-0.5">
+                  * Locked after profile completion.
+                </div>
               </div>
 
               {/* Academic Program */}

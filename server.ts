@@ -23,10 +23,14 @@ const supabaseAdmin = supabaseServiceRoleKey
   : null;
 
 const PORT = 3000;
-const ADMIN_EMAIL = "mcs2509008@xmu.edu.my";
+const ADMIN_ACCOUNT_EMAIL = normalizeProfileEmail(process.env.ADMIN_ACCOUNT_EMAIL || "");
 const RUNTIME_DATA_DIR = path.join(process.cwd(), ".runtime-data");
 const SYSTEM_DELETED_USER_ID = "deleted_user";
 const SYSTEM_DELETED_USER_EMAIL = "deleted.user@system.local";
+
+function isConfiguredAdminEmail(email: string) {
+  return normalizeProfileEmail(email) === ADMIN_ACCOUNT_EMAIL;
+}
 
 function ensureRuntimeDataDir() {
   if (!fs.existsSync(RUNTIME_DATA_DIR)) {
@@ -193,12 +197,14 @@ function buildDeletedUserProfile() {
     is_blocked_globally: false,
     flag_status: "none",
     appeal_count: 0,
+    companion_pet_count: 0,
+    companion_selected_state_id: null,
     is_demo_profile: false
   };
 }
 
 function sanitizeProfileForDatabase(profile: any) {
-  return {
+  return stripUnsupportedColumnsFromProfileRow({
     id: profile.id,
     email: profile.email,
     student_id: profile.student_id,
@@ -220,8 +226,10 @@ function sanitizeProfileForDatabase(profile: any) {
     is_blocked_globally: Boolean(profile.is_blocked_globally),
     flag_status: profile.flag_status,
     appeal_count: profile.appeal_count ?? 0,
+    companion_pet_count: Math.max(0, Number(profile.companion_pet_count || 0)),
+    companion_selected_state_id: profile.companion_selected_state_id ?? null,
     password_hash: profile.password_hash ?? null
-  };
+  });
 }
 
 function isMissingPasswordHashColumnError(error: unknown) {
@@ -235,11 +243,113 @@ function isMissingPasswordHashColumnError(error: unknown) {
   return message.includes("password_hash") && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
 }
 
+function isMissingProfileColumnError(error: unknown, columnName: string) {
+  const maybeError = error as { message?: unknown; code?: unknown };
+  const message = typeof maybeError?.message === "string"
+    ? maybeError.message
+    : error instanceof Error
+      ? error.message
+      : String(error || "");
+  const code = typeof maybeError?.code === "string" ? maybeError.code : "";
+  return message.includes(columnName) && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
+}
+
+const profileColumnSupport = {
+  password_hash: true,
+  companion_pet_count: true,
+  companion_selected_state_id: true
+};
+
+function markUnsupportedProfileColumns(error: unknown) {
+  if (isMissingPasswordHashColumnError(error)) {
+    profileColumnSupport.password_hash = false;
+  }
+  if (isMissingProfileColumnError(error, "companion_pet_count")) {
+    profileColumnSupport.companion_pet_count = false;
+  }
+  if (isMissingProfileColumnError(error, "companion_selected_state_id")) {
+    profileColumnSupport.companion_selected_state_id = false;
+  }
+}
+
+function getProfileSelectColumns() {
+  const baseColumns = [
+    "id",
+    "email",
+    "student_id",
+    "name",
+    "name_last_changed_at",
+    "country",
+    "country_last_changed_at",
+    "languages",
+    "age",
+    "birthdate",
+    "program",
+    "year_of_study",
+    "gender",
+    "student_type",
+    "about_me",
+    "avatar_id",
+    "is_profile_complete",
+    "hide_details",
+    "is_admin",
+    "is_blocked_globally",
+    "flag_status",
+    "appeal_count"
+  ];
+
+  if (profileColumnSupport.companion_pet_count) {
+    baseColumns.push("companion_pet_count");
+  }
+  if (profileColumnSupport.companion_selected_state_id) {
+    baseColumns.push("companion_selected_state_id");
+  }
+  if (profileColumnSupport.password_hash) {
+    baseColumns.push("password_hash");
+  }
+
+  return baseColumns.join(",");
+}
+
+function stripUnsupportedColumnsFromProfileRow(row: Record<string, any>) {
+  const nextRow = { ...row };
+  if (!profileColumnSupport.password_hash) {
+    delete nextRow.password_hash;
+  }
+  if (!profileColumnSupport.companion_pet_count) {
+    delete nextRow.companion_pet_count;
+  }
+  if (!profileColumnSupport.companion_selected_state_id) {
+    delete nextRow.companion_selected_state_id;
+  }
+  return nextRow;
+}
+
+function stripUnsupportedProfileColumns(rows: Array<Record<string, any>>, error: unknown) {
+  markUnsupportedProfileColumns(error);
+  return rows.map(row => {
+    const nextRow = stripUnsupportedColumnsFromProfileRow(row);
+    if (isMissingPasswordHashColumnError(error)) delete nextRow.password_hash;
+    if (isMissingProfileColumnError(error, "companion_pet_count")) delete nextRow.companion_pet_count;
+    if (isMissingProfileColumnError(error, "companion_selected_state_id")) delete nextRow.companion_selected_state_id;
+    return nextRow;
+  });
+}
+
 async function upsertProfileWithFallback(profile: any) {
-  const { error } = await supabase.from("xmum_profiles").upsert([profile]);
+  const client = supabaseAdmin || supabase;
+  const [preparedProfile] = await prepareProfileRowsForSupabase([profile], client);
+  if (!preparedProfile) return;
+
+  const { error } = await supabase.from("xmum_profiles").upsert([preparedProfile]);
   if (error) {
-    if (isMissingPasswordHashColumnError(error)) {
-      const { password_hash, ...fallbackProfile } = profile;
+    if (
+      isMissingPasswordHashColumnError(error) ||
+      isMissingProfileColumnError(error, "companion_pet_count") ||
+      isMissingProfileColumnError(error, "companion_selected_state_id")
+    ) {
+      markUnsupportedProfileColumns(error);
+      const [fallbackProfile] = stripUnsupportedProfileColumns([preparedProfile], error);
       const fallback = await supabase.from("xmum_profiles").upsert([fallbackProfile]);
       if (fallback.error) {
         throw fallback.error;
@@ -249,6 +359,56 @@ async function upsertProfileWithFallback(profile: any) {
 
     throw error;
   }
+}
+
+async function prepareProfileRowsForSupabase(rows: any[], client = supabaseAdmin || supabase) {
+  const collapsedRows = collapseProfilesByEmail(rows).map(sanitizeProfileForDatabase);
+  const emails = Array.from(new Set(collapsedRows.map(row => normalizeProfileEmail(row.email || "")).filter(Boolean)));
+
+  if (emails.length === 0) {
+    return collapsedRows;
+  }
+
+  let existingProfiles: any[] = [];
+  try {
+    let { data, error } = await client.from("xmum_profiles").select(getProfileSelectColumns()).in("email", emails);
+    if (
+      error &&
+      (
+        isMissingPasswordHashColumnError(error) ||
+        isMissingProfileColumnError(error, "companion_pet_count") ||
+        isMissingProfileColumnError(error, "companion_selected_state_id")
+      )
+    ) {
+      markUnsupportedProfileColumns(error);
+      ({ data, error } = await client.from("xmum_profiles").select(getProfileSelectColumns()).in("email", emails));
+    }
+    if (error) {
+      console.warn("Existing profile lookup during sync failed:", error.message);
+    } else {
+      existingProfiles = data || [];
+    }
+  } catch (error) {
+    console.warn("Existing profile reconciliation failed before sync:", error);
+  }
+
+  return collapsedRows.map(row => {
+    const existing = pickCanonicalProfile(existingProfiles as any[], { email: row.email });
+    if (!existing) {
+      return row;
+    }
+
+    return sanitizeProfileForDatabase({
+      ...existing,
+      ...row,
+      id: existing.id,
+      email: normalizeProfileEmail(existing.email || row.email),
+      is_profile_complete: Boolean(existing.is_profile_complete || row.is_profile_complete),
+      companion_pet_count: Math.max(Number(row.companion_pet_count || 0), Number(existing.companion_pet_count || 0)),
+      companion_selected_state_id: row.companion_selected_state_id ?? existing.companion_selected_state_id ?? null,
+      password_hash: row.password_hash ?? existing.password_hash ?? null
+    });
+  });
 }
 
 async function deleteRowsByIds(table: string, ids: string[]) {
@@ -271,10 +431,19 @@ async function upsertToSupabase(table: string, rows: any[]) {
   }
   if (rows.length === 0) return;
 
-  const { error } = await supabaseAdmin.from(table).upsert(rows);
+  const preparedRows = table === "xmum_profiles" ? await prepareProfileRowsForSupabase(rows, supabaseAdmin) : rows;
+  const { error } = await supabaseAdmin.from(table).upsert(preparedRows);
   if (error) {
-    if (table === "xmum_profiles" && isMissingPasswordHashColumnError(error)) {
-      const fallbackRows = rows.map(({ password_hash, ...rest }) => rest);
+    if (
+      table === "xmum_profiles" &&
+      (
+        isMissingPasswordHashColumnError(error) ||
+        isMissingProfileColumnError(error, "companion_pet_count") ||
+        isMissingProfileColumnError(error, "companion_selected_state_id")
+      )
+    ) {
+      markUnsupportedProfileColumns(error);
+      const fallbackRows = stripUnsupportedProfileColumns(preparedRows, error);
       const fallback = await supabaseAdmin.from(table).upsert(fallbackRows);
       if (fallback.error) {
         throw fallback.error;
@@ -297,7 +466,18 @@ async function resolveBestProfileByEmail(email: string): Promise<any | null> {
   const candidates: any[] = [];
 
   try {
-    const { data, error } = await supabase.from("xmum_profiles").select("*").eq("email", formattedEmail);
+    let { data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", formattedEmail);
+    if (
+      error &&
+      (
+        isMissingPasswordHashColumnError(error) ||
+        isMissingProfileColumnError(error, "companion_pet_count") ||
+        isMissingProfileColumnError(error, "companion_selected_state_id")
+      )
+    ) {
+      markUnsupportedProfileColumns(error);
+      ({ data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", formattedEmail));
+    }
     if (error) {
       console.warn("Supabase profile lookup returned an error:", error.message);
     }
@@ -833,14 +1013,14 @@ async function startServer() {
             avatar_id: "panda",
             is_profile_complete: false,
             hide_details: false,
-            is_admin: formattedEmail === "mcs2509008@xmu.edu.my" || formattedEmail.startsWith("admin"),
+            is_admin: isConfiguredAdminEmail(formattedEmail) || formattedEmail.startsWith("admin"),
             is_blocked_globally: false,
             flag_status: "none",
             appeal_count: 0
           };
           
           try {
-            await supabase.from("xmum_profiles").insert([newProfile]);
+            await upsertProfileWithFallback(newProfile);
           } catch (dbInsErr: any) {
             console.warn("Supabase insert new fallback profile threw exception:", dbInsErr);
           }
@@ -889,14 +1069,14 @@ async function startServer() {
           avatar_id: "panda",
           is_profile_complete: false,
           hide_details: false,
-          is_admin: formattedEmail === ADMIN_EMAIL || formattedEmail.startsWith("admin"),
+          is_admin: isConfiguredAdminEmail(formattedEmail) || formattedEmail.startsWith("admin"),
           is_blocked_globally: false,
           flag_status: "none",
           appeal_count: 0
         };
 
         try {
-          await supabase.from("xmum_profiles").insert([profile]);
+          await upsertProfileWithFallback(profile);
         } catch (dbInsErr: any) {
           console.warn("Supabase insert profile after OTP verification threw exception:", dbInsErr);
         }
@@ -1367,25 +1547,32 @@ async function startServer() {
   app.post("/api/bug-report", async (req, res) => {
     setCors(req, res);
     try {
-      const { reporter, subject, description, sourcePage, submittedAt } = req.body || {};
+      const { reporter, kind, subject, description, sourcePage, submittedAt } = req.body || {};
+      const requestKind = kind === "feature" ? "feature" : "bug";
+      const requestLabel = requestKind === "feature" ? "Feature Request" : "Bug Report";
       const trimmedDescription = typeof description === "string" ? description.trim() : "";
-      const trimmedSubject = typeof subject === "string" ? subject.trim().slice(0, 120) : "General bug report";
+      const trimmedSubject =
+        typeof subject === "string" && subject.trim()
+          ? subject.trim().slice(0, 120)
+          : requestKind === "feature"
+            ? "General feature request"
+            : "General bug report";
       const trimmedPage = typeof sourcePage === "string" ? sourcePage.trim().slice(0, 120) : "XMUM Hangouts";
       const reporterEmail = typeof reporter?.email === "string" ? reporter.email.trim().toLowerCase() : "";
 
       if (!reporterEmail.endsWith("@xmu.edu.my")) {
-        return res.status(400).json({ error: "Only XMUM student accounts can submit bug reports." });
+        return res.status(400).json({ error: "Only XMUM student accounts can submit support requests." });
       }
 
       if (trimmedDescription.length < 10) {
-        return res.status(400).json({ error: "Bug description must be at least 10 characters long." });
+        return res.status(400).json({ error: `${requestLabel} details must be at least 10 characters long.` });
       }
 
       const resendApiKey = process.env.RESEND_API_KEY;
-      if (!resendApiKey) {
+      if (!resendApiKey || !ADMIN_ACCOUNT_EMAIL) {
         return res.status(200).json({
           success: true,
-          warning: "Admin chat was created, but RESEND_API_KEY is not configured for email delivery."
+          warning: "The in-app admin ticket was created, but the support email route is not fully configured yet."
         });
       }
 
@@ -1398,7 +1585,7 @@ async function startServer() {
 
       const emailHtml = `
         <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px; color: #0f172a;">
-          <h2 style="margin: 0 0 16px; color: #e11d48;">XMUM Hangouts Bug Report</h2>
+          <h2 style="margin: 0 0 16px; color: #e11d48;">XMUM Hangouts ${escapeHtml(requestLabel)}</h2>
           <p style="margin: 0 0 12px;"><strong>Reporter:</strong> ${safeReporterName} (${safeReporterEmail})</p>
           <p style="margin: 0 0 12px;"><strong>Page:</strong> ${safePage}</p>
           <p style="margin: 0 0 12px;"><strong>Subject:</strong> ${safeSubject}</p>
@@ -1418,23 +1605,23 @@ async function startServer() {
         },
         body: JSON.stringify({
           from: "XMUM Hangouts <noreply@xmum-hangouts.reyanzaman.com>",
-          to: ADMIN_EMAIL,
+          to: ADMIN_ACCOUNT_EMAIL,
           reply_to: reporterEmail,
-          subject: `[XMUM Hangouts Bug] ${trimmedSubject}`,
+          subject: `[XMUM Hangouts ${requestLabel}] ${trimmedSubject}`,
           html: emailHtml
         })
       });
 
       if (!resendResponse.ok) {
         const errorText = await resendResponse.text();
-        console.error("Bug report email delivery failed:", errorText);
-        return res.status(502).json({ error: "Bug report email could not be delivered." });
+        console.error("Support request email delivery failed:", errorText);
+        return res.status(502).json({ error: `${requestLabel} email could not be delivered.` });
       }
 
       return res.status(200).json({ success: true });
     } catch (err) {
-      console.error("Bug report endpoint failed:", err);
-      return res.status(500).json({ error: "Failed to send bug report email." });
+      console.error("Support request endpoint failed:", err);
+      return res.status(500).json({ error: "Failed to send the support email." });
     }
   });
 
