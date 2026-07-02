@@ -2913,7 +2913,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (target.event_datetime !== nextData.event_datetime) {
       const editedTimeError = validateFutureHangoutDate(nextData.event_datetime, 60);
       if (editedTimeError) {
-        return { success: false, error: "If you change the time, please keep it at least 1 hour in the future." };
+        return { success: false, error: editedTimeError };
       }
     }
 

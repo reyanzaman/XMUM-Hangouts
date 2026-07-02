@@ -1,5 +1,6 @@
 export const MIN_HANGOUT_LEAD_MINUTES = 30;
 export const MIN_HANGOUT_DESCRIPTION_LENGTH = 35;
+export const MAX_HANGOUT_ADVANCE_MONTHS = 2;
 const HANGOUT_EDIT_HISTORY_PREFIX = "[[HANGOUT_EDIT]]";
 
 export interface HangoutEditHistoryChange {
@@ -54,7 +55,8 @@ export function combineDateAndTimeToIso(date: string, time: string): string | nu
 
 export function validateFutureHangoutDate(
   eventIsoString: string,
-  minimumLeadMinutes = MIN_HANGOUT_LEAD_MINUTES
+  minimumLeadMinutes = MIN_HANGOUT_LEAD_MINUTES,
+  maxAdvanceMonths = MAX_HANGOUT_ADVANCE_MONTHS
 ): string | null {
   const eventDate = new Date(eventIsoString);
   if (Number.isNaN(eventDate.getTime())) {
@@ -66,7 +68,19 @@ export function validateFutureHangoutDate(
     return `Please choose a time at least ${minimumLeadMinutes} minutes in the future.`;
   }
 
+  const maximumAllowedDate = getMaximumHangoutDate(new Date(), maxAdvanceMonths);
+  if (eventDate.getTime() > maximumAllowedDate.getTime()) {
+    return `Hangouts can be planned at most ${maxAdvanceMonths} months in advance.`;
+  }
+
   return null;
+}
+
+export function getMaximumHangoutDate(date: Date = new Date(), months = MAX_HANGOUT_ADVANCE_MONTHS): Date {
+  const maximum = new Date(date);
+  maximum.setMonth(maximum.getMonth() + months);
+  maximum.setHours(23, 59, 59, 999);
+  return maximum;
 }
 
 export function formatDateInputValue(date: Date): string {

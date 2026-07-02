@@ -6,12 +6,13 @@
 import React, { useState, useEffect } from "react";
 import { AppProvider, useApp } from "./context/AppContext";
 import { supabase } from "./lib/supabase";
-import { Profile } from "./types";
+import { Hangout, Profile } from "./types";
 import { motion, AnimatePresence } from "motion/react";
 import {
   combineDateAndTimeToIso,
   formatDateInputValue,
   formatTimeInputValue,
+  getMaximumHangoutDate,
   getRoundedMinimumTime,
   MIN_HANGOUT_DESCRIPTION_LENGTH,
   validateFutureHangoutDate
@@ -63,6 +64,64 @@ import {
 } from "lucide-react";
 
 const SYSTEM_DELETED_USER_ID = "deleted_user";
+const RECENT_HANGOUT_WINDOW_MONTHS = 2;
+
+const getHangoutPostedTime = (hangout: Hangout) => {
+  const createdAt = new Date(hangout.created_at).getTime();
+  if (!Number.isNaN(createdAt)) return createdAt;
+
+  const updatedAt = new Date(hangout.updated_at).getTime();
+  return Number.isNaN(updatedAt) ? 0 : updatedAt;
+};
+
+const getHangoutEventTime = (hangout: Hangout) => {
+  const eventTime = new Date(hangout.event_datetime).getTime();
+  return Number.isNaN(eventTime) ? null : eventTime;
+};
+
+const getHangoutRecencyTime = (hangout: Hangout) => {
+  const eventTime = getHangoutEventTime(hangout);
+  const postedTime = getHangoutPostedTime(hangout);
+  return eventTime === null ? postedTime : Math.max(eventTime, postedTime);
+};
+
+const getRecentHangoutCutoffTime = () => {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - RECENT_HANGOUT_WINDOW_MONTHS);
+  cutoff.setHours(0, 0, 0, 0);
+  return cutoff.getTime();
+};
+
+const isOlderThanRecentHangoutWindow = (hangout: Hangout) =>
+  getHangoutRecencyTime(hangout) < getRecentHangoutCutoffTime();
+
+const sortHangoutsForFeed = (items: Hangout[]) =>
+  [...items].sort((a, b) => {
+    const now = Date.now();
+    const aEventTime = getHangoutEventTime(a);
+    const bEventTime = getHangoutEventTime(b);
+    const aIsUpcoming = aEventTime === null || aEventTime >= now;
+    const bIsUpcoming = bEventTime === null || bEventTime >= now;
+
+    if (aIsUpcoming !== bIsUpcoming) {
+      return aIsUpcoming ? -1 : 1;
+    }
+
+    const statusRank = (hangout: Hangout) => (hangout.status === "active" ? 0 : hangout.status === "expired" ? 1 : 2);
+    const rankDifference = statusRank(a) - statusRank(b);
+    if (rankDifference !== 0) return rankDifference;
+
+    if (aIsUpcoming && bIsUpcoming) {
+      const postedDifference = getHangoutPostedTime(b) - getHangoutPostedTime(a);
+      if (postedDifference !== 0) return postedDifference;
+    }
+
+    const recencyDifference = getHangoutRecencyTime(b) - getHangoutRecencyTime(a);
+    if (recencyDifference !== 0) return recencyDifference;
+
+    return getHangoutPostedTime(b) - getHangoutPostedTime(a);
+  });
+
 const ADMIN_TOOL_TEST_PROFILES: Profile[] = [
   {
     id: "sys_admin",
@@ -237,6 +296,7 @@ const AppContent: React.FC = () => {
   const [searchLocation, setSearchLocation] = useState("");
   const [eligibleOnlyFilter, setEligibleOnlyFilter] = useState(false);
   const [showExpired, setShowExpired] = useState(false);
+  const [showAllHangoutHistory, setShowAllHangoutHistory] = useState(false);
   const [datePeriodFilter, setDatePeriodFilter] = useState<"all" | "today" | "week" | "month">("all");
   const [languageFilter, setLanguageFilter] = useState<"all" | "en" | "zh">("all");
   const [genderFilter, setGenderFilter] = useState<"all" | "male" | "female">("all");
@@ -258,7 +318,7 @@ const AppContent: React.FC = () => {
   // Reset pagination to page 1 whenever search, activeTab, or filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchLocation, eligibleOnlyFilter, showExpired, datePeriodFilter, languageFilter, genderFilter, activeTab]);
+  }, [searchLocation, eligibleOnlyFilter, showExpired, showAllHangoutHistory, datePeriodFilter, languageFilter, genderFilter, activeTab]);
 
   // Create hangout input state
   const [createIntention, setCreateIntention] = useState("");
@@ -326,6 +386,7 @@ const AppContent: React.FC = () => {
   const minimumCreateDateTime = getRoundedMinimumTime();
   const minimumCreateDate = formatDateInputValue(minimumCreateDateTime);
   const minimumCreateTime = createDate === minimumCreateDate ? formatTimeInputValue(minimumCreateDateTime) : undefined;
+  const maximumHangoutDate = formatDateInputValue(getMaximumHangoutDate());
   const combinedCreateDateTime = createDate && createTime ? combineDateAndTimeToIso(createDate, createTime) : null;
   const createDateTimeError = combinedCreateDateTime ? validateFutureHangoutDate(combinedCreateDateTime) : null;
   const editingHangout = editingHangoutId ? hangouts.find(h => h.id === editingHangoutId) || null : null;
@@ -816,6 +877,12 @@ const AppContent: React.FC = () => {
           return canViewTestUserCards || !isTestCreatorHangout(h.creator_id);
         });
 
+        const hasOlderFilteredHangouts = feed.some(isOlderThanRecentHangoutWindow);
+        if (!showAllHangoutHistory) {
+          feed = feed.filter(h => !isOlderThanRecentHangoutWindow(h));
+        }
+        feed = sortHangoutsForFeed(feed);
+
         // Slice for pagination: 20 per page
         const itemsPerPage = 20;
         const totalPages = Math.ceil(feed.length / itemsPerPage);
@@ -1063,6 +1130,24 @@ const AppContent: React.FC = () => {
               </div>
             </div>
 
+            {hasOlderFilteredHangouts && (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3">
+                <p className="text-[11px] sm:text-xs font-semibold text-amber-800 leading-relaxed">
+                  {showAllHangoutHistory
+                    ? "Showing all matching hangout cards, including posts older than 2 months."
+                    : "Showing recent matching hangout cards from the last 2 months."}
+                </p>
+                <button
+                  id="toggle-hangout-history-window"
+                  type="button"
+                  onClick={() => setShowAllHangoutHistory(prev => !prev)}
+                  className="self-start sm:self-auto rounded-xl border border-amber-200 bg-white px-3.5 py-2 text-[11px] font-black text-amber-700 shadow-sm transition-all hover:bg-amber-100 hover:text-amber-900 active:scale-95 cursor-pointer"
+                >
+                  {showAllHangoutHistory ? "Show Recent Only" : "View All"}
+                </button>
+              </div>
+            )}
+
             {/* Cards Feed */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {feed.length === 0 ? (
@@ -1195,6 +1280,7 @@ const AppContent: React.FC = () => {
                       type="date"
                       value={createDate}
                       min={minimumCreateDate}
+                      max={maximumHangoutDate}
                       onChange={e => setCreateDate(e.target.value)}
                       required
                       className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans cursor-pointer"
@@ -1216,7 +1302,7 @@ const AppContent: React.FC = () => {
                   </div>
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  Choose a future date and time. Same-day hangouts must be at least 30 minutes ahead.
+                  Choose a future date and time within the next 2 months. Same-day hangouts must be at least 30 minutes ahead.
                 </p>
                 {combinedCreateDateTime && (
                   <p className={`text-[10px] font-medium ${createDateTimeError ? "text-rose-500" : "text-emerald-600"}`}>
@@ -2729,6 +2815,7 @@ const AppContent: React.FC = () => {
                       type="date"
                       value={editDate}
                       min={minimumEditDate}
+                      max={maximumHangoutDate}
                       onChange={e => setEditDate(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-800 outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-200"
                     />
@@ -2745,7 +2832,7 @@ const AppContent: React.FC = () => {
                   </div>
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  If you change the time, it must stay at least 1 hour in the future.
+                  If you change the time, it must stay at least 1 hour in the future and within the next 2 months.
                 </p>
 
                 <div className="space-y-1">
