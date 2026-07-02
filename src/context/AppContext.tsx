@@ -107,6 +107,102 @@ const filterBlocksForRuntime = (items: Block[]) =>
 const filterNotificationsForRuntime = (items: AppNotification[]) =>
   demoDataEnabled ? items : items.filter(notification => !isDemoProfileId(notification.user_id));
 
+const readStoredArray = <T,>(storageKey: string): T[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(storageKey) || "[]");
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+};
+
+const mergeByField = <T extends { id: string }>(arrSupa: T[], arrLocal: T[]): T[] => {
+  const mapObj = new Map<string, T>();
+  if (Array.isArray(arrLocal)) {
+    arrLocal.forEach(item => {
+      if (item && item.id) mapObj.set(item.id, item);
+    });
+  }
+  if (Array.isArray(arrSupa)) {
+    arrSupa.forEach(item => {
+      if (item && item.id) mapObj.set(item.id, item);
+    });
+  }
+  return Array.from(mapObj.values());
+};
+
+const sanitizeHangout = (h: any): Hangout => ({
+  id: h.id,
+  creator_id: h.creator_id,
+  intention: h.intention,
+  location: h.location,
+  event_datetime: h.event_datetime,
+  meeting_point: h.meeting_point,
+  additional_info: h.additional_info,
+  max_participants: h.max_participants,
+  restrictions: h.restrictions,
+  status: h.status,
+  created_at: h.created_at,
+  updated_at: h.updated_at,
+  is_anonymous: !!h.is_anonymous
+});
+
+const getStoredProfilesSnapshot = (): Profile[] =>
+  filterProfilesForRuntime(normalizeProfiles(readStoredArray<Profile>("xmum_profiles")));
+
+const getStoredHangoutsSnapshot = (): Hangout[] =>
+  filterHangoutsForRuntime(
+    readStoredArray<any>("xmum_hangouts")
+      .map(sanitizeHangout)
+      .filter(hangout => hangout.additional_info && hangout.additional_info.trim() !== "")
+  );
+
+const getStoredApplicationsSnapshot = (hangoutIds?: Set<string>): HangoutApplication[] => {
+  const resolvedHangoutIds = hangoutIds || new Set(getStoredHangoutsSnapshot().map(hangout => hangout.id));
+  return filterApplicationsForRuntime(readStoredArray<HangoutApplication>("xmum_applications"), resolvedHangoutIds);
+};
+
+const getStoredChatsSnapshot = (hangoutIds?: Set<string>): Chat[] => {
+  const resolvedHangoutIds = hangoutIds || new Set(getStoredHangoutsSnapshot().map(hangout => hangout.id));
+  return filterChatsForRuntime(readStoredArray<Chat>("xmum_chats"), resolvedHangoutIds);
+};
+
+const getStoredMessagesSnapshot = (chatIds?: Set<string>): Message[] => {
+  const resolvedChatIds = chatIds || new Set(getStoredChatsSnapshot().map(chat => chat.id));
+  const decryptedMessages = readStoredArray<any>("xmum_messages").map((message: any) => {
+    try {
+      return { ...message, content: decryptMessage(message.content) } as Message;
+    } catch {
+      return message as Message;
+    }
+  });
+  return filterMessagesForRuntime(decryptedMessages, resolvedChatIds);
+};
+
+const getStoredLikesSnapshot = (hangoutIds?: Set<string>): HangoutLike[] => {
+  const resolvedHangoutIds = hangoutIds || new Set(getStoredHangoutsSnapshot().map(hangout => hangout.id));
+  return filterLikesForRuntime(readStoredArray<HangoutLike>("xmum_likes"), resolvedHangoutIds);
+};
+
+const getStoredCommentsSnapshot = (hangoutIds?: Set<string>): HangoutComment[] => {
+  const resolvedHangoutIds = hangoutIds || new Set(getStoredHangoutsSnapshot().map(hangout => hangout.id));
+  return filterCommentsForRuntime(readStoredArray<HangoutComment>("xmum_comments"), resolvedHangoutIds);
+};
+
+const getStoredReportsSnapshot = (): Report[] =>
+  filterReportsForRuntime(readStoredArray<Report>("xmum_reports"));
+
+const getStoredAppealsSnapshot = (reportIds?: Set<string>): ReportAppeal[] => {
+  const resolvedReportIds = reportIds || new Set(getStoredReportsSnapshot().map(report => report.id));
+  return filterAppealsForRuntime(readStoredArray<ReportAppeal>("xmum_appeals"), resolvedReportIds);
+};
+
+const getStoredBlocksSnapshot = (): Block[] =>
+  filterBlocksForRuntime(readStoredArray<Block>("xmum_blocks"));
+
+const getStoredNotificationsSnapshot = (): AppNotification[] =>
+  filterNotificationsForRuntime(readStoredArray<AppNotification>("xmum_notifications"));
+
 const hasSeenOnboarding = (email: string): boolean => {
   try {
     return localStorage.getItem(onboardingStorageKey(email)) === "true";
@@ -479,19 +575,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.removeItem("xmum_current_user_id");
     }
   }, [currentUser]);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>(() => getStoredProfilesSnapshot());
   const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
   const companionProfileSyncTimeoutRef = useRef<number | null>(null);
-  const [hangouts, setHangouts] = useState<Hangout[]>([]);
-  const [applications, setApplications] = useState<HangoutApplication[]>([]);
-  const [likes, setLikes] = useState<HangoutLike[]>([]);
-  const [comments, setComments] = useState<HangoutComment[]>([]);
-  const [reports, setReports] = useState<Report[]>([]);
-  const [appeals, setAppeals] = useState<ReportAppeal[]>([]);
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [blocks, setBlocks] = useState<Block[]>([]);
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [hangouts, setHangouts] = useState<Hangout[]>(() => getStoredHangoutsSnapshot());
+  const [applications, setApplications] = useState<HangoutApplication[]>(() => getStoredApplicationsSnapshot());
+  const [likes, setLikes] = useState<HangoutLike[]>(() => getStoredLikesSnapshot());
+  const [comments, setComments] = useState<HangoutComment[]>(() => getStoredCommentsSnapshot());
+  const [reports, setReports] = useState<Report[]>(() => getStoredReportsSnapshot());
+  const [appeals, setAppeals] = useState<ReportAppeal[]>(() => getStoredAppealsSnapshot());
+  const [chats, setChats] = useState<Chat[]>(() => getStoredChatsSnapshot());
+  const [messages, setMessages] = useState<Message[]>(() => getStoredMessagesSnapshot());
+  const [blocks, setBlocks] = useState<Block[]>(() => getStoredBlocksSnapshot());
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => getStoredNotificationsSnapshot());
   const [commentLikes, setCommentLikes] = useState<{ comment_id: string; user_id: string }[]>(() => {
     try {
       const saved = localStorage.getItem("xmum_comment_likes");
@@ -524,23 +620,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
   const clearToast = () => setToast(null);
 
-  const getStoredProfilesSnapshot = (): Profile[] => {
-    try {
-      return normalizeProfiles(JSON.parse(localStorage.getItem("xmum_profiles") || "[]"));
-    } catch {
-      return [];
-    }
-  };
-
-  const getStoredHangoutsSnapshot = (): Hangout[] => {
-    try {
-      const parsed = JSON.parse(localStorage.getItem("xmum_hangouts") || "[]");
-      return Array.isArray(parsed) ? parsed.map(sanitizeHangout) : [];
-    } catch {
-      return [];
-    }
-  };
-
   const syncServerMirror = async (path: string, payload: Record<string, unknown>) => {
     try {
       const res = await fetch(path, {
@@ -555,6 +634,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } catch (error) {
       console.warn(`Server mirror sync request failed for ${path}:`, error);
+    }
+  };
+
+  const fetchLocalCollection = async <T,>(path: string, payloadKey: string): Promise<T[]> => {
+    try {
+      const res = await fetch(path);
+      const json = await res.json();
+      const payload = json?.[payloadKey];
+      return Array.isArray(payload) ? (payload as T[]) : [];
+    } catch (error) {
+      console.warn(`Failed to fetch local collection during startup (${path}):`, error);
+      return [];
+    }
+  };
+
+  const fetchSupabaseCollection = async <T,>(table: string): Promise<T[]> => {
+    try {
+      const { data, error } = await supabase.from(table).select("*");
+      if (error) {
+        console.warn(`Supabase startup read failed for ${table}:`, error);
+        return [];
+      }
+      return ((data || []) as T[]);
+    } catch (error) {
+      console.warn(`Supabase startup request failed for ${table}:`, error);
+      return [];
+    }
+  };
+
+  const fetchHangoutsCollection = async (): Promise<Hangout[]> => {
+    try {
+      let { data: dbHangouts, error: errHangouts } = await supabase.from("view_xmum_hangouts").select("*");
+      if (errHangouts) {
+        console.warn("view_xmum_hangouts read failed, fetching from base table:", errHangouts);
+        const { data: baseHangouts, error: baseHangoutsError } = await supabase.from("xmum_hangouts").select("*");
+        if (baseHangoutsError) {
+          console.warn("xmum_hangouts base read also failed during startup:", baseHangoutsError);
+          return [];
+        }
+        return ((baseHangouts || []) as Hangout[]);
+      }
+      return ((dbHangouts || []) as Hangout[]);
+    } catch (error) {
+      console.warn("Supabase startup request failed for hangouts:", error);
+      return [];
     }
   };
 
@@ -811,37 +935,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCurrentUser(normalizedCanonical);
     }
   }, [profiles, currentUser]);
-
-  const mergeByField = <T extends { id: string }>(arrSupa: T[], arrLocal: T[]): T[] => {
-    const mapObj = new Map<string, T>();
-    if (Array.isArray(arrLocal)) {
-      arrLocal.forEach(item => {
-        if (item && item.id) mapObj.set(item.id, item);
-      });
-    }
-    if (Array.isArray(arrSupa)) {
-      arrSupa.forEach(item => {
-        if (item && item.id) mapObj.set(item.id, item);
-      });
-    }
-    return Array.from(mapObj.values());
-  };
-
-  const sanitizeHangout = (h: any) => ({
-    id: h.id,
-    creator_id: h.creator_id,
-    intention: h.intention,
-    location: h.location,
-    event_datetime: h.event_datetime,
-    meeting_point: h.meeting_point,
-    additional_info: h.additional_info,
-    max_participants: h.max_participants,
-    restrictions: h.restrictions,
-    status: h.status,
-    created_at: h.created_at,
-    updated_at: h.updated_at,
-    is_anonymous: !!h.is_anonymous
-  });
 
   const sanitizeProfileForDatabase = (profile: Profile) => stripUnsupportedColumnsFromProfileRow({
     id: profile.id,
@@ -1188,31 +1281,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ? { user: { email: pendingAuthEmail, id: pendingAuthUserId } } as any
             : await waitForSessionSnapshot();
 
+        const settledSessionEmail = settledSession?.user?.email
+          ? normalizeProfileEmail(settledSession.user.email)
+          : null;
+
         if (settledSession?.user?.email) {
           await applyAuthenticatedProfile(settledSession.user.email, settledSession.user.id, settledSession.user);
         }
 
-        // --- 2. Hangouts ---
-        let localHangouts: Hangout[] = [];
-        try {
-          const res = await fetch("/api/hangouts");
-          const json = await res.json();
-          localHangouts = json.hangouts || [];
-        } catch (e) {
-          console.warn("Failed to fetch local hangouts backup during startup:", e);
-        }
-        const browserLocalHangouts = getStoredHangoutsSnapshot();
+        const [
+          localHangouts,
+          dbHangoutsRaw,
+          localApps,
+          dbAppsRaw,
+          localChats,
+          dbChatsRaw,
+          localMessages,
+          dbMessagesRaw,
+          localLikes,
+          dbLikesRaw,
+          localComments,
+          dbCommentsRaw,
+          localReports,
+          dbReportsRaw,
+          localAppeals,
+          dbAppealsRaw,
+          localBlocks,
+          dbBlocksRaw,
+          localNotifs,
+          dbNotifsRaw
+        ] = await Promise.all([
+          fetchLocalCollection<Hangout>("/api/hangouts", "hangouts"),
+          fetchHangoutsCollection(),
+          fetchLocalCollection<HangoutApplication>("/api/applications", "applications"),
+          fetchSupabaseCollection<HangoutApplication>("xmum_applications"),
+          fetchLocalCollection<Chat>("/api/chats", "chats"),
+          fetchSupabaseCollection<Chat>("xmum_chats"),
+          fetchLocalCollection<Message>("/api/messages", "messages"),
+          fetchSupabaseCollection<Message>("xmum_messages"),
+          fetchLocalCollection<HangoutLike>("/api/likes", "likes"),
+          fetchSupabaseCollection<HangoutLike>("xmum_likes"),
+          fetchLocalCollection<HangoutComment>("/api/comments", "comments"),
+          fetchSupabaseCollection<HangoutComment>("xmum_comments"),
+          fetchLocalCollection<Report>("/api/reports", "reports"),
+          fetchSupabaseCollection<Report>("xmum_reports"),
+          fetchLocalCollection<ReportAppeal>("/api/appeals", "appeals"),
+          fetchSupabaseCollection<ReportAppeal>("xmum_appeals"),
+          fetchLocalCollection<Block>("/api/blocks", "blocks"),
+          fetchSupabaseCollection<Block>("xmum_blocks"),
+          fetchLocalCollection<AppNotification>("/api/notifications", "notifications"),
+          fetchSupabaseCollection<AppNotification>("xmum_notifications")
+        ]);
 
-        let { data: dbHangouts, error: errHangouts } = await supabase.from("view_xmum_hangouts").select("*");
-        if (errHangouts) {
-          console.warn("view_xmum_hangouts read failed, fetching from base table:", errHangouts);
-          const { data: baseHG, error: errBaseHG } = await supabase.from("xmum_hangouts").select("*");
-          if (!errBaseHG && baseHG) {
-            dbHangouts = baseHG;
-          }
-        }
+        const browserLocalHangouts = getStoredHangoutsSnapshot();
         let finalHangouts = mergeByField(
-          mergeByField((dbHangouts || []) as Hangout[], localHangouts),
+          mergeByField(dbHangoutsRaw, localHangouts),
           browserLocalHangouts
         );
 
@@ -1335,16 +1458,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         void syncHangoutsToRemote(cleanHangouts);
 
         // --- 3. Applications ---
-        let localApps: HangoutApplication[] = [];
-        try {
-          const res = await fetch("/api/applications");
-          const json = await res.json();
-          localApps = json.applications || [];
-        } catch (e) {
-          console.warn("Failed to fetch local applications backup during startup:", e);
-        }
-        let { data: dbApps } = await supabase.from("xmum_applications").select("*");
-        let finalApps = mergeByField((dbApps || []) as HangoutApplication[], localApps);
+        let finalApps = mergeByField(dbAppsRaw, localApps);
 
         if (finalApps.length === 0 && demoDataEnabled) {
           const seedApps: HangoutApplication[] = [
@@ -1387,16 +1501,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         localStorage.setItem("xmum_applications", JSON.stringify(finalApps));
 
         // --- 4. Chats ---
-        let localChats: Chat[] = [];
-        try {
-          const res = await fetch("/api/chats");
-          const json = await res.json();
-          localChats = json.chats || [];
-        } catch (e) {
-          console.warn("Failed to fetch local chats backup during startup:", e);
-        }
-        let { data: dbChats } = await supabase.from("xmum_chats").select("*");
-        let finalChats = mergeByField((dbChats || []) as Chat[], localChats);
+        let finalChats = mergeByField(dbChatsRaw, localChats);
 
         if (finalChats.length === 0 && demoDataEnabled) {
           const seedChats = [
@@ -1417,16 +1522,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         localStorage.setItem("xmum_chats", JSON.stringify(finalChats));
 
         // --- 5. Messages ---
-        let localMessages: Message[] = [];
-        try {
-          const res = await fetch("/api/messages");
-          const json = await res.json();
-          localMessages = json.messages || [];
-        } catch (e) {
-          console.warn("Failed to fetch local messages backup during startup:", e);
-        }
-        let { data: dbMessages } = await supabase.from("xmum_messages").select("*");
-        let finalMessages = mergeByField((dbMessages || []) as Message[], localMessages);
+        let finalMessages = mergeByField(dbMessagesRaw, localMessages);
 
         if (finalMessages.length === 0 && demoDataEnabled) {
           const fiveMinsAgo = new Date();
@@ -1477,86 +1573,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         localStorage.setItem("xmum_messages", JSON.stringify(encryptedLocal));
 
         // --- 6. Other tables ---
-        let localLikes: HangoutLike[] = [];
-        try {
-          const res = await fetch("/api/likes");
-          const json = await res.json();
-          localLikes = json.likes || [];
-        } catch (e) {}
-        const { data: dbLikes } = await supabase.from("xmum_likes").select("*");
         const finalLikes = filterLikesForRuntime(
-          mergeByField((dbLikes || []) as HangoutLike[], localLikes),
+          mergeByField(dbLikesRaw, localLikes),
           activeHangoutIds
         );
         setLikes(finalLikes);
         localStorage.setItem("xmum_likes", JSON.stringify(finalLikes));
 
-        let localComments: HangoutComment[] = [];
-        try {
-          const res = await fetch("/api/comments");
-          const json = await res.json();
-          localComments = json.comments || [];
-        } catch (e) {}
-        const { data: dbComments } = await supabase.from("xmum_comments").select("*");
         const finalComments = filterCommentsForRuntime(
-          mergeByField((dbComments || []) as HangoutComment[], localComments),
+          mergeByField(dbCommentsRaw, localComments),
           activeHangoutIds
         );
         setComments(finalComments);
         localStorage.setItem("xmum_comments", JSON.stringify(finalComments));
         void syncServerMirror("/api/comments/sync", { comments: finalComments });
 
-        let localReports: Report[] = [];
-        try {
-          const res = await fetch("/api/reports");
-          const json = await res.json();
-          localReports = json.reports || [];
-        } catch (e) {}
-        const { data: dbReports } = await supabase.from("xmum_reports").select("*");
-        const finalReports = filterReportsForRuntime(mergeByField((dbReports || []) as Report[], localReports));
+        const finalReports = filterReportsForRuntime(mergeByField(dbReportsRaw, localReports));
         const activeReportIds = new Set(finalReports.map(report => report.id));
         setReports(finalReports);
         localStorage.setItem("xmum_reports", JSON.stringify(finalReports));
 
-        let localAppeals: ReportAppeal[] = [];
-        try {
-          const res = await fetch("/api/appeals");
-          const json = await res.json();
-          localAppeals = json.appeals || [];
-        } catch (e) {}
-        const { data: dbAppeals } = await supabase.from("xmum_appeals").select("*");
         const finalAppeals = filterAppealsForRuntime(
-          mergeByField((dbAppeals || []) as ReportAppeal[], localAppeals),
+          mergeByField(dbAppealsRaw, localAppeals),
           activeReportIds
         );
         setAppeals(finalAppeals);
         localStorage.setItem("xmum_appeals", JSON.stringify(finalAppeals));
 
-        let localBlocks: Block[] = [];
-        try {
-          const res = await fetch("/api/blocks");
-          const json = await res.json();
-          localBlocks = json.blocks || [];
-        } catch (e) {}
-        const { data: dbBlocks } = await supabase.from("xmum_blocks").select("*");
-        const finalBlocks = filterBlocksForRuntime(mergeByField((dbBlocks || []) as Block[], localBlocks));
+        const finalBlocks = filterBlocksForRuntime(mergeByField(dbBlocksRaw, localBlocks));
         setBlocks(finalBlocks);
         localStorage.setItem("xmum_blocks", JSON.stringify(finalBlocks));
 
-        let localNotifs: any[] = [];
-        try {
-          const res = await fetch("/api/notifications");
-          const json = await res.json();
-          localNotifs = json.notifications || [];
-        } catch (e) {}
-        const { data: dbNotifs } = await supabase.from("xmum_notifications").select("*");
-        const finalNotifs = filterNotificationsForRuntime(mergeByField((dbNotifs || []) as AppNotification[], localNotifs));
+        const finalNotifs = filterNotificationsForRuntime(mergeByField(dbNotifsRaw, localNotifs));
         setNotifications(finalNotifs);
         localStorage.setItem("xmum_notifications", JSON.stringify(finalNotifs));
 
         const { data: sessionSnapshot } = await supabase.auth.getSession();
         const hasLiveSession = Boolean(sessionSnapshot.session?.user?.email);
-        if (hasLiveSession && sessionSnapshot.session?.user?.email) {
+        const sessionSnapshotEmail = sessionSnapshot.session?.user?.email
+          ? normalizeProfileEmail(sessionSnapshot.session.user.email)
+          : null;
+        if (
+          hasLiveSession &&
+          sessionSnapshot.session?.user?.email &&
+          sessionSnapshotEmail !== settledSessionEmail
+        ) {
           await applyAuthenticatedProfile(
             sessionSnapshot.session.user.email,
             sessionSnapshot.session.user.id,
@@ -1599,10 +1660,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
 
             if (!restoredProfile) {
-              const fallbackLocal = profiles.find(p => p.id === storedActiveUser);
+              const fallbackLocal = normalizedProfiles.find(p => p.id === storedActiveUser);
               if (fallbackLocal) {
                 restoredProfile =
-                  pickCanonicalProfile(normalizeProfiles([fallbackLocal, ...profiles]), {
+                  pickCanonicalProfile(normalizeProfiles([fallbackLocal, ...normalizedProfiles]), {
                     email: fallbackLocal.email,
                     authUserId: storedActiveUser
                   }) || normalizeProfileRecord(fallbackLocal);
@@ -1614,7 +1675,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
           } catch (actErr) {
             console.warn("Active user profile fetch errored, resolving from local profiles cache:", actErr);
-            const fallbackLocal = profiles.find(p => p.id === storedActiveUser);
+            const fallbackLocal = normalizedProfiles.find(p => p.id === storedActiveUser);
             if (fallbackLocal) {
               setCurrentUser(normalizeProfileRecord(fallbackLocal));
             }
@@ -1623,74 +1684,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       } catch (err) {
         console.error("Failed to fetch primary tables from Supabase, resolving from LocalStorage fallback:", err);
-        // LocalStorage Fallback loaders
-        const storedProfiles = localStorage.getItem("xmum_profiles");
-        const fallbackProfiles = storedProfiles ? filterProfilesForRuntime(normalizeProfiles(JSON.parse(storedProfiles))) : [];
+        const fallbackProfiles = getStoredProfilesSnapshot();
         setProfiles(fallbackProfiles);
         localStorage.setItem("xmum_profiles", JSON.stringify(fallbackProfiles));
-        const rawLocalHangouts = localStorage.getItem("xmum_hangouts") ? JSON.parse(localStorage.getItem("xmum_hangouts")!) : [];
-        const fallbackHangouts = filterHangoutsForRuntime(
-          rawLocalHangouts.filter((h: any) => h.additional_info && h.additional_info.trim() !== "")
-        );
+        const fallbackHangouts = getStoredHangoutsSnapshot();
         const fallbackHangoutIds = new Set(fallbackHangouts.map((hangout: Hangout) => hangout.id));
         setHangouts(fallbackHangouts);
-        const fallbackApplications = filterApplicationsForRuntime(
-          localStorage.getItem("xmum_applications") ? JSON.parse(localStorage.getItem("xmum_applications")!) : [],
-          fallbackHangoutIds
-        );
+        const fallbackApplications = getStoredApplicationsSnapshot(fallbackHangoutIds);
         setApplications(fallbackApplications);
         localStorage.setItem("xmum_applications", JSON.stringify(fallbackApplications));
-        const fallbackChats = filterChatsForRuntime(
-          localStorage.getItem("xmum_chats") ? JSON.parse(localStorage.getItem("xmum_chats")!) : [],
-          fallbackHangoutIds
-        );
+        const fallbackChats = getStoredChatsSnapshot(fallbackHangoutIds);
         const fallbackChatIds = new Set(fallbackChats.map((chat: Chat) => chat.id));
         setChats(fallbackChats);
         localStorage.setItem("xmum_chats", JSON.stringify(fallbackChats));
-        const cachedMsgsRaw = localStorage.getItem("xmum_messages");
-        const decryptedLocalMsgs = cachedMsgsRaw
-          ? filterMessagesForRuntime(
-              JSON.parse(cachedMsgsRaw).map((m: any) => ({ ...m, content: decryptMessage(m.content) })),
-              fallbackChatIds
-            )
-          : [];
+        const decryptedLocalMsgs = getStoredMessagesSnapshot(fallbackChatIds);
         setMessages(decryptedLocalMsgs);
         localStorage.setItem(
           "xmum_messages",
           JSON.stringify(decryptedLocalMsgs.map(msg => ({ ...msg, content: encryptMessage(msg.content) })))
         );
-        const fallbackLikes = filterLikesForRuntime(
-          localStorage.getItem("xmum_likes") ? JSON.parse(localStorage.getItem("xmum_likes")!) : [],
-          fallbackHangoutIds
-        );
+        const fallbackLikes = getStoredLikesSnapshot(fallbackHangoutIds);
         setLikes(fallbackLikes);
         localStorage.setItem("xmum_likes", JSON.stringify(fallbackLikes));
-        const fallbackComments = filterCommentsForRuntime(
-          localStorage.getItem("xmum_comments") ? JSON.parse(localStorage.getItem("xmum_comments")!) : [],
-          fallbackHangoutIds
-        );
+        const fallbackComments = getStoredCommentsSnapshot(fallbackHangoutIds);
         setComments(fallbackComments);
         localStorage.setItem("xmum_comments", JSON.stringify(fallbackComments));
-        const fallbackReports = filterReportsForRuntime(
-          localStorage.getItem("xmum_reports") ? JSON.parse(localStorage.getItem("xmum_reports")!) : []
-        );
+        const fallbackReports = getStoredReportsSnapshot();
         const fallbackReportIds = new Set(fallbackReports.map((report: Report) => report.id));
         setReports(fallbackReports);
         localStorage.setItem("xmum_reports", JSON.stringify(fallbackReports));
-        const fallbackAppeals = filterAppealsForRuntime(
-          localStorage.getItem("xmum_appeals") ? JSON.parse(localStorage.getItem("xmum_appeals")!) : [],
-          fallbackReportIds
-        );
+        const fallbackAppeals = getStoredAppealsSnapshot(fallbackReportIds);
         setAppeals(fallbackAppeals);
         localStorage.setItem("xmum_appeals", JSON.stringify(fallbackAppeals));
-        const fallbackBlocks = filterBlocksForRuntime(
-          localStorage.getItem("xmum_blocks") ? JSON.parse(localStorage.getItem("xmum_blocks")!) : []
-        );
+        const fallbackBlocks = getStoredBlocksSnapshot();
         setBlocks(fallbackBlocks);
         localStorage.setItem("xmum_blocks", JSON.stringify(fallbackBlocks));
-        const fallbackNotifications = filterNotificationsForRuntime(
-          localStorage.getItem("xmum_notifications") ? JSON.parse(localStorage.getItem("xmum_notifications")!) : []
-        );
+        const fallbackNotifications = getStoredNotificationsSnapshot();
         setNotifications(fallbackNotifications);
         localStorage.setItem("xmum_notifications", JSON.stringify(fallbackNotifications));
 

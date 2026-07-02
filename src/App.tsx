@@ -282,7 +282,18 @@ const AppContent: React.FC = () => {
     window.location.hash.includes("access_token=") ||
     window.location.hash.includes("refresh_token=")
   );
-  const showAppSkeletons = isAuthInitializing && !isReturningFromOAuth && !hasPendingAuthRedirect;
+  const hasBootstrapData =
+    Boolean(currentUser) ||
+    profiles.length > 0 ||
+    hangouts.length > 0 ||
+    applications.length > 0 ||
+    chats.length > 0 ||
+    messages.length > 0;
+  const showAppSkeletons =
+    isAuthInitializing &&
+    !isReturningFromOAuth &&
+    !hasPendingAuthRedirect &&
+    !hasBootstrapData;
 
   // Navigation states
   const [activeTab, setActiveTab] = useState<"feed" | "create" | "profile" | "my-plans" | "chats" | "admin" | "terms" | "privacy" | "safety" | "about" | "donation" | "bug-report">("feed");
