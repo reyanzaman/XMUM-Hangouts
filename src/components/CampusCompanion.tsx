@@ -515,7 +515,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       const customEvent = event as CustomEvent<StoredCompanionState>;
       const detail = customEvent.detail || {};
       if (typeof detail.petCount === "number") {
-        setPetCount(Math.min(1000, Math.max(0, detail.petCount)));
+        setPetCount(Math.max(0, detail.petCount));
       }
       if (detail.selectedStateId !== undefined) {
         setSelectedStateId(detail.selectedStateId || null);
@@ -1032,15 +1032,6 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       return;
     }
 
-    if (petCount >= 1000) {
-      setBubbleText(companionDialogue.maxed);
-      setReactionType("milestone-ultimate");
-      setAccessory("nova");
-      setShowBubble(true);
-      setTimeout(() => setAccessory("none"), 2200);
-      return;
-    }
-
     const nextCount = petCount + 1;
     setPetCount(nextCount);
     setMood("excited");
@@ -1048,7 +1039,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     setActionCount((prev) => prev + 1);
 
     const milestone = getCompanionMilestone(nextCount);
-    const isExtendedMilestone = nextCount > 500 && nextCount < 1000 && nextCount % 50 === 0;
+    const isExtendedMilestone = nextCount > 500 && nextCount !== 1000 && nextCount % 50 === 0;
     const isTenStep = nextCount % 10 === 0;
     const shouldHint = !milestone && !isTenStep && Math.random() < 0.12;
 

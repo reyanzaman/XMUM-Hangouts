@@ -99,7 +99,8 @@ export const StudentProfilePage: React.FC = () => {
   const isGenderLocked = currentUser.is_profile_complete;
   const deleteAccountConfirmationMatches =
     deleteAccountConfirmationInput.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
-  const companionPetCount = Math.min(1000, Number(companionProgress.petCount || 0));
+  const companionPetCount = Math.max(0, Number(companionProgress.petCount || 0));
+  const companionUnlockProgress = Math.min(100, companionPetCount === 0 ? 0 : Math.max(4, (companionPetCount / 1000) * 100));
   const availableCountries = COUNTRIES.includes(profileCountry) ? COUNTRIES : [profileCountry, ...COUNTRIES];
   const companionUnlockedState = getUnlockedCompanionState(companionPetCount);
   const companionSelectedState =
@@ -476,7 +477,7 @@ export const StudentProfilePage: React.FC = () => {
                 <h3 className="font-bold text-slate-850 text-sm">Companion Progress</h3>
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">
-                {companionPetCount}/1000 pets
+                {companionPetCount} pets
               </span>
             </div>
 
@@ -484,7 +485,7 @@ export const StudentProfilePage: React.FC = () => {
               <div className="h-2 rounded-full bg-rose-100 overflow-hidden">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-rose-400 via-orange-300 to-amber-300 transition-all duration-500"
-                  style={{ width: `${companionPetCount === 0 ? 0 : Math.max(4, (companionPetCount / 1000) * 100)}%` }}
+                  style={{ width: `${companionUnlockProgress}%` }}
                 />
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">

@@ -194,12 +194,16 @@ const isMissingProfileColumnError = (error: unknown, columnName: string) => {
 };
 
 const profileColumnSupport = {
+  birthdate: true,
   password_hash: true,
   companion_pet_count: true,
   companion_selected_state_id: true
 };
 
 const markUnsupportedProfileColumns = (error: unknown) => {
+  if (isMissingProfileColumnError(error, "birthdate")) {
+    profileColumnSupport.birthdate = false;
+  }
   if (isMissingPasswordHashColumnError(error)) {
     profileColumnSupport.password_hash = false;
   }
@@ -222,7 +226,6 @@ const getProfileSelectColumns = () => {
     "country_last_changed_at",
     "languages",
     "age",
-    "birthdate",
     "program",
     "year_of_study",
     "gender",
@@ -237,6 +240,9 @@ const getProfileSelectColumns = () => {
     "appeal_count"
   ];
 
+  if (profileColumnSupport.birthdate) {
+    baseColumns.push("birthdate");
+  }
   if (profileColumnSupport.companion_pet_count) {
     baseColumns.push("companion_pet_count");
   }
@@ -252,6 +258,9 @@ const getProfileSelectColumns = () => {
 
 const stripUnsupportedColumnsFromProfileRow = (row: Record<string, any>) => {
   const nextRow = { ...row };
+  if (!profileColumnSupport.birthdate) {
+    delete nextRow.birthdate;
+  }
   if (!profileColumnSupport.password_hash) {
     delete nextRow.password_hash;
   }
@@ -268,6 +277,7 @@ const stripUnsupportedProfileColumns = (rows: Array<Record<string, any>>, error:
   markUnsupportedProfileColumns(error);
   return rows.map(row => {
     const nextRow = stripUnsupportedColumnsFromProfileRow(row);
+    if (isMissingProfileColumnError(error, "birthdate")) delete nextRow.birthdate;
     if (isMissingPasswordHashColumnError(error)) delete nextRow.password_hash;
     if (isMissingProfileColumnError(error, "companion_pet_count")) delete nextRow.companion_pet_count;
     if (isMissingProfileColumnError(error, "companion_selected_state_id")) delete nextRow.companion_selected_state_id;
@@ -522,6 +532,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const getStoredHangoutsSnapshot = (): Hangout[] => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem("xmum_hangouts") || "[]");
+      return Array.isArray(parsed) ? parsed.map(sanitizeHangout) : [];
+    } catch {
+      return [];
+    }
+  };
+
   const syncServerMirror = async (path: string, payload: Record<string, unknown>) => {
     try {
       const res = await fetch(path, {
@@ -550,7 +569,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (
           isMissingPasswordHashColumnError(error) ||
           isMissingProfileColumnError(error, "companion_pet_count") ||
-          isMissingProfileColumnError(error, "companion_selected_state_id")
+          isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
         )
       ) {
         markUnsupportedProfileColumns(error);
@@ -560,7 +579,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.warn("Supabase profile lookup by email returned an error:", error.message);
       }
 
-      candidates.push(...normalizeProfiles((data || []) as Profile[]));
+      candidates.push(...normalizeProfiles(((data || []) as unknown) as Profile[]));
 
       if ((!data || data.length === 0) && normalizedEmail) {
         let fallbackData: any[] | null = null;
@@ -581,7 +600,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           (
             isMissingPasswordHashColumnError(fallbackError) ||
             isMissingProfileColumnError(fallbackError, "companion_pet_count") ||
-            isMissingProfileColumnError(fallbackError, "companion_selected_state_id")
+            isMissingProfileColumnError(fallbackError, "companion_selected_state_id") || isMissingProfileColumnError(fallbackError, "birthdate")
           )
         ) {
           markUnsupportedProfileColumns(fallbackError);
@@ -773,6 +792,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     country_last_changed_at: profile.country_last_changed_at ?? null,
     languages: Array.isArray(profile.languages) ? profile.languages : [],
     age: profile.age,
+    birthdate: profile.birthdate ?? null,
     program: profile.program,
     year_of_study: profile.year_of_study,
     gender: profile.gender,
@@ -815,7 +835,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (
           isMissingPasswordHashColumnError(error) ||
           isMissingProfileColumnError(error, "companion_pet_count") ||
-          isMissingProfileColumnError(error, "companion_selected_state_id")
+          isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
         )
       ) {
         markUnsupportedProfileColumns(error);
@@ -824,7 +844,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (error) {
         console.warn("Existing profile lookup during client sync failed:", error.message);
       } else {
-        existingProfiles = (data as Profile[]) || [];
+        existingProfiles = ((data || []) as unknown) as Profile[];
       }
     } catch (error) {
       console.warn("Existing profile reconciliation failed before client sync:", error);
@@ -860,7 +880,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (
         isMissingPasswordHashColumnError(error) ||
         isMissingProfileColumnError(error, "companion_pet_count") ||
-        isMissingProfileColumnError(error, "companion_selected_state_id")
+        isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
       ) {
         const fallbackRows = stripUnsupportedProfileColumns(rows, error);
         const fallback = await supabase.from("xmum_profiles").upsert(fallbackRows);
@@ -958,7 +978,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           (
             isMissingPasswordHashColumnError(errProfiles) ||
             isMissingProfileColumnError(errProfiles, "companion_pet_count") ||
-            isMissingProfileColumnError(errProfiles, "companion_selected_state_id")
+            isMissingProfileColumnError(errProfiles, "companion_selected_state_id") || isMissingProfileColumnError(errProfiles, "birthdate")
           )
         ) {
           markUnsupportedProfileColumns(errProfiles);
@@ -1062,19 +1082,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
           ];
           await supabase.from("xmum_profiles").insert(seedProfiles);
-          dbProfiles = seedProfiles;
+          dbProfiles = (seedProfiles as unknown) as typeof dbProfiles;
         }
 
         const storedProfilesSnapshot = getStoredProfilesSnapshot();
         const normalizedProfiles = filterProfilesForRuntime(normalizeProfiles([
           ...storedProfilesSnapshot,
-          ...(dbProfiles as Profile[])
+          ...(((dbProfiles || []) as unknown) as Profile[])
         ]));
         setProfiles(normalizedProfiles);
         localStorage.setItem("xmum_profiles", JSON.stringify(normalizedProfiles));
         void syncServerMirror("/api/profiles/sync", { profiles: collapseProfilesByEmail(normalizedProfiles) });
 
-        const dbProfilesById = new Map((dbProfiles as Profile[]).map(profile => [profile.id, JSON.stringify(profile)]));
+        const dbProfilesById = new Map((((dbProfiles || []) as unknown) as Profile[]).map(profile => [profile.id, JSON.stringify(profile)]));
         const profilesWereNormalized = normalizedProfiles.some(profile => {
           return dbProfilesById.get(profile.id) !== JSON.stringify(profile);
         });
@@ -1115,6 +1135,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } catch (e) {
           console.warn("Failed to fetch local hangouts backup during startup:", e);
         }
+        const browserLocalHangouts = getStoredHangoutsSnapshot();
 
         let { data: dbHangouts, error: errHangouts } = await supabase.from("view_xmum_hangouts").select("*");
         if (errHangouts) {
@@ -1124,7 +1145,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             dbHangouts = baseHG;
           }
         }
-        let finalHangouts = mergeByField((dbHangouts || []) as Hangout[], localHangouts);
+        let finalHangouts = mergeByField(
+          mergeByField((dbHangouts || []) as Hangout[], localHangouts),
+          browserLocalHangouts
+        );
 
         if ((!finalHangouts || finalHangouts.length === 0) && demoDataEnabled) {
           const tomorrow = new Date();
@@ -1242,7 +1266,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const activeHangoutIds = new Set(cleanHangouts.map(hangout => hangout.id));
         setHangouts(cleanHangouts);
         localStorage.setItem("xmum_hangouts", JSON.stringify(cleanHangouts));
-        void syncServerMirror("/api/hangouts/sync", { hangouts: cleanHangouts });
+        void syncHangoutsToRemote(cleanHangouts);
 
         // --- 3. Applications ---
         let localApps: HangoutApplication[] = [];
@@ -1495,7 +1519,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 (
                   isMissingPasswordHashColumnError(userProfileError) ||
                   isMissingProfileColumnError(userProfileError, "companion_pet_count") ||
-                  isMissingProfileColumnError(userProfileError, "companion_selected_state_id")
+                  isMissingProfileColumnError(userProfileError, "companion_selected_state_id") || isMissingProfileColumnError(userProfileError, "birthdate")
                 )
               ) {
                 markUnsupportedProfileColumns(userProfileError);
@@ -1503,7 +1527,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               }
               if (userProfile) {
                 restoredProfile =
-                  await resolveProfileByEmail(userProfile.email, storedActiveUser) || normalizeProfileRecord(userProfile);
+                  await resolveProfileByEmail((userProfile as unknown as Profile).email, storedActiveUser) || normalizeProfileRecord(userProfile as unknown as Profile);
               }
             }
 
@@ -1651,7 +1675,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (
             isMissingPasswordHashColumnError(error) ||
             isMissingProfileColumnError(error, "companion_pet_count") ||
-            isMissingProfileColumnError(error, "companion_selected_state_id")
+            isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
           ) {
             const fallbackRows = stripUnsupportedProfileColumns(rows, error);
             const fallback = await supabase.from("xmum_profiles").upsert(fallbackRows);
@@ -1673,7 +1697,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const nextPetCount = Math.max(
       0,
-      Math.min(1000, Number(progress.petCount ?? currentUser.companion_pet_count ?? 0))
+      Number(progress.petCount ?? currentUser.companion_pet_count ?? 0)
     );
     const nextSelectedStateId =
       progress.selectedStateId !== undefined
@@ -1714,10 +1738,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const saveHangouts = async (data: Hangout[]) => {
-    const prev = hangouts;
     setHangouts(data);
     localStorage.setItem("xmum_hangouts", JSON.stringify(data));
 
+    const persistHangouts = async (items: Hangout[]) => {
+      try {
+        await fetch("/api/hangouts/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hangouts: items })
+        });
+      } catch (syncErr) {
+        console.warn("Local backend hangouts mirror sync failed:", syncErr);
+      }
+
+      try {
+        if (items.length > 0) {
+          await supabase.from("xmum_hangouts").upsert(items.map(item => sanitizeHangout(item)));
+        }
+      } catch (e) {
+        console.error("Hangouts sync exception:", e);
+      }
+    };
+
+    await persistHangouts(data);
+  };
+
+  const syncHangoutsToRemote = async (data: Hangout[]) => {
+    if (data.length === 0) return;
     try {
       await fetch("/api/hangouts/sync", {
         method: "POST",
@@ -1729,14 +1777,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     try {
-      const changed = data.filter(item => {
-        const matchingPrev = prev.find(h => h.id === item.id);
-        return !matchingPrev || JSON.stringify(matchingPrev) !== JSON.stringify(item);
-      });
-      if (changed.length > 0) {
-        const sanitized = changed.map(item => sanitizeHangout(item));
-        await supabase.from("xmum_hangouts").upsert(sanitized);
-      }
+      await supabase.from("xmum_hangouts").upsert(data.map(item => sanitizeHangout(item)));
     } catch (e) {
       console.error("Hangouts sync exception:", e);
     }
@@ -2459,14 +2500,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (
           isMissingPasswordHashColumnError(foundError) ||
           isMissingProfileColumnError(foundError, "companion_pet_count") ||
-          isMissingProfileColumnError(foundError, "companion_selected_state_id")
+          isMissingProfileColumnError(foundError, "companion_selected_state_id") || isMissingProfileColumnError(foundError, "birthdate")
         )
       ) {
         markUnsupportedProfileColumns(foundError);
         ({ data: found, error: foundError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", profileId).maybeSingle());
       }
       if (found) {
-        const normalizedFound = normalizeProfileRecord(found);
+        const normalizedFound = normalizeProfileRecord(found as unknown as Profile);
         setCurrentUser(normalizedFound);
         localStorage.setItem("xmum_current_user_id", normalizedFound.id);
         showToast(`Switched active session to ${normalizedFound.name}`, "info");

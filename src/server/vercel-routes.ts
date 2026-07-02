@@ -70,12 +70,16 @@ const isMissingProfileColumnError = (error: unknown, columnName: string) => {
 };
 
 const profileColumnSupport = {
+  birthdate: true,
   password_hash: true,
   companion_pet_count: true,
   companion_selected_state_id: true
 };
 
 const markUnsupportedProfileColumns = (error: unknown) => {
+  if (isMissingProfileColumnError(error, "birthdate")) {
+    profileColumnSupport.birthdate = false;
+  }
   if (isMissingPasswordHashColumnError(error)) {
     profileColumnSupport.password_hash = false;
   }
@@ -98,7 +102,6 @@ const getProfileSelectColumns = () => {
     "country_last_changed_at",
     "languages",
     "age",
-    "birthdate",
     "program",
     "year_of_study",
     "gender",
@@ -113,6 +116,9 @@ const getProfileSelectColumns = () => {
     "appeal_count"
   ];
 
+  if (profileColumnSupport.birthdate) {
+    baseColumns.push("birthdate");
+  }
   if (profileColumnSupport.companion_pet_count) {
     baseColumns.push("companion_pet_count");
   }
@@ -128,6 +134,9 @@ const getProfileSelectColumns = () => {
 
 const stripUnsupportedColumnsFromProfileRow = (row: Record<string, any>) => {
   const nextRow = { ...row };
+  if (!profileColumnSupport.birthdate) {
+    delete nextRow.birthdate;
+  }
   if (!profileColumnSupport.password_hash) {
     delete nextRow.password_hash;
   }
@@ -144,6 +153,7 @@ const stripUnsupportedProfileColumns = (rows: Array<Record<string, any>>, error:
   rows.map(row => {
     markUnsupportedProfileColumns(error);
     const nextRow = stripUnsupportedColumnsFromProfileRow(row);
+    if (isMissingProfileColumnError(error, "birthdate")) delete nextRow.birthdate;
     if (isMissingPasswordHashColumnError(error)) delete nextRow.password_hash;
     if (isMissingProfileColumnError(error, "companion_pet_count")) delete nextRow.companion_pet_count;
     if (isMissingProfileColumnError(error, "companion_selected_state_id")) delete nextRow.companion_selected_state_id;
@@ -160,6 +170,7 @@ const sanitizeProfileForDatabase = (profile: any) => stripUnsupportedColumnsFrom
   country_last_changed_at: profile.country_last_changed_at ?? null,
   languages: Array.isArray(profile.languages) ? profile.languages : [],
   age: profile.age,
+  birthdate: profile.birthdate ?? null,
   program: profile.program,
   year_of_study: profile.year_of_study,
   gender: profile.gender,
@@ -323,7 +334,7 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
     (
       isMissingPasswordHashColumnError(profileError) ||
       isMissingProfileColumnError(profileError, "companion_pet_count") ||
-      isMissingProfileColumnError(profileError, "companion_selected_state_id")
+      isMissingProfileColumnError(profileError, "companion_selected_state_id") || isMissingProfileColumnError(profileError, "birthdate")
     )
   ) {
     markUnsupportedProfileColumns(profileError);
@@ -337,7 +348,7 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
     console.warn("Backend Supabase profile load failed:", profileError);
   }
 
-  let candidateProfiles = (profilesByEmail || []) as Profile[];
+  let candidateProfiles = ((profilesByEmail || []) as unknown) as Profile[];
 
   if (candidateProfiles.length === 0) {
     let { data: insensitiveProfiles, error: insensitiveError } = await backendProfileClient
@@ -350,7 +361,7 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
       (
         isMissingPasswordHashColumnError(insensitiveError) ||
         isMissingProfileColumnError(insensitiveError, "companion_pet_count") ||
-        isMissingProfileColumnError(insensitiveError, "companion_selected_state_id")
+        isMissingProfileColumnError(insensitiveError, "companion_selected_state_id") || isMissingProfileColumnError(insensitiveError, "birthdate")
       )
     ) {
       markUnsupportedProfileColumns(insensitiveError);
@@ -363,7 +374,7 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
     if (insensitiveError) {
       console.warn("Backend case-insensitive profile load failed:", insensitiveError);
     } else if (insensitiveProfiles?.length) {
-      candidateProfiles = (insensitiveProfiles as Profile[]).filter(
+      candidateProfiles = ((insensitiveProfiles || []) as unknown as Profile[]).filter(
         profile => normalizeProfileEmail(profile.email) === formattedEmail
       );
     }
@@ -381,7 +392,7 @@ async function upsertProfileWithFallback(profile: Profile) {
     if (
       isMissingPasswordHashColumnError(error) ||
       isMissingProfileColumnError(error, "companion_pet_count") ||
-      isMissingProfileColumnError(error, "companion_selected_state_id")
+      isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
     ) {
       markUnsupportedProfileColumns(error);
       const [fallbackProfile] = stripUnsupportedProfileColumns([preparedProfile as Record<string, any>], error);
@@ -412,7 +423,7 @@ async function prepareProfileRowsForSupabase(rows: Profile[], client = supabaseA
       (
         isMissingPasswordHashColumnError(error) ||
         isMissingProfileColumnError(error, "companion_pet_count") ||
-        isMissingProfileColumnError(error, "companion_selected_state_id")
+        isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
       )
     ) {
       markUnsupportedProfileColumns(error);
@@ -421,7 +432,7 @@ async function prepareProfileRowsForSupabase(rows: Profile[], client = supabaseA
     if (error) {
       console.warn("Existing profile lookup during Vercel sync failed:", error.message);
     } else {
-      existingProfiles = (data as Profile[]) || [];
+      existingProfiles = ((data || []) as unknown) as Profile[];
     }
   } catch (error) {
     console.warn("Existing profile reconciliation failed before Vercel sync:", error);
@@ -520,7 +531,7 @@ async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config
           (
             isMissingPasswordHashColumnError(error) ||
             isMissingProfileColumnError(error, "companion_pet_count") ||
-            isMissingProfileColumnError(error, "companion_selected_state_id")
+            isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
           )
         ) {
           markUnsupportedProfileColumns(error);
@@ -1188,7 +1199,7 @@ async function handleDeleteAccount(req: VercelRequest, res: VercelResponse) {
     ...participantNotifications
   ];
 
-  await supabaseAdmin.from("xmum_profiles").upsert([deletedUserProfile]);
+  await supabaseAdmin.from("xmum_profiles").upsert([sanitizeProfileForDatabase(deletedUserProfile)]);
   await supabaseAdmin.from("xmum_hangouts").upsert(nextHangouts);
   await supabaseAdmin.from("xmum_comments").upsert(nextComments);
   await supabaseAdmin.from("xmum_notifications").upsert(nextNotifications);
