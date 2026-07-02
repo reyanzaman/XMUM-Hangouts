@@ -99,10 +99,32 @@ const filterReportsForRuntime = (items: Report[]) =>
 const filterAppealsForRuntime = (items: ReportAppeal[], reportIds: Set<string>) =>
   demoDataEnabled ? items : items.filter(appeal => reportIds.has(appeal.report_id));
 
+const sanitizeBlocks = (items: Block[]) => {
+  const latestByPair = new Map<string, Block>();
+
+  items.forEach(block => {
+    if (!block?.id || !block.blocker_id || !block.blocked_id) return;
+    if (block.blocker_id === block.blocked_id) return;
+
+    latestByPair.set(`${block.blocker_id}::${block.blocked_id}`, block);
+  });
+
+  return Array.from(latestByPair.values());
+};
+
+const getRemovedBlockIds = (previousBlocks: Block[], nextBlocks: Block[]) => {
+  const nextIds = new Set(nextBlocks.map(block => block.id));
+  return previousBlocks
+    .map(block => block?.id)
+    .filter((id): id is string => Boolean(id) && !nextIds.has(id));
+};
+
 const filterBlocksForRuntime = (items: Block[]) =>
   demoDataEnabled
-    ? items
-    : items.filter(block => !isDemoProfileId(block.blocker_id) && !isDemoProfileId(block.blocked_id));
+    ? sanitizeBlocks(items)
+    : sanitizeBlocks(items).filter(
+        block => !isDemoProfileId(block.blocker_id) && !isDemoProfileId(block.blocked_id)
+      );
 
 const filterNotificationsForRuntime = (items: AppNotification[]) =>
   demoDataEnabled ? items : items.filter(notification => !isDemoProfileId(notification.user_id));
@@ -1600,9 +1622,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setAppeals(finalAppeals);
         localStorage.setItem("xmum_appeals", JSON.stringify(finalAppeals));
 
-        const finalBlocks = filterBlocksForRuntime(mergeByField(dbBlocksRaw, localBlocks));
+        const mergedBlocks = mergeByField(dbBlocksRaw, localBlocks);
+        const finalBlocks = filterBlocksForRuntime(mergedBlocks);
+        const removedBlockIds = getRemovedBlockIds(mergedBlocks, finalBlocks);
         setBlocks(finalBlocks);
         localStorage.setItem("xmum_blocks", JSON.stringify(finalBlocks));
+        if (removedBlockIds.length > 0) {
+          void persistBlocks(finalBlocks, mergedBlocks);
+        }
 
         const finalNotifs = filterNotificationsForRuntime(mergeByField(dbNotifsRaw, localNotifs));
         setNotifications(finalNotifs);
@@ -2076,24 +2103,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error("Messages sync exception:", e);
     }
   };
-  const saveBlocks = async (data: Block[]) => {
-    const prev = blocks;
-    setBlocks(data);
-    localStorage.setItem("xmum_blocks", JSON.stringify(data));
+  const persistBlocks = async (data: Block[], previousBlocks = blocks) => {
+    const sanitizedData = filterBlocksForRuntime(data);
+    const removedBlockIds = getRemovedBlockIds(previousBlocks, sanitizedData);
+    setBlocks(sanitizedData);
+    localStorage.setItem("xmum_blocks", JSON.stringify(sanitizedData));
 
     try {
       await fetch("/api/blocks/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blocks: data })
+        body: JSON.stringify({
+          blocks: sanitizedData,
+          removed_block_ids: removedBlockIds
+        })
       });
     } catch (syncErr) {
       console.warn("Local backend blocks mirror sync failed:", syncErr);
     }
 
     try {
-      const changed = data.filter(item => {
-        const matchingPrev = prev.find(b => b.id === item.id);
+      if (removedBlockIds.length > 0) {
+        await supabase.from("xmum_blocks").delete().in("id", removedBlockIds);
+      }
+
+      const changed = sanitizedData.filter(item => {
+        const matchingPrev = previousBlocks.find(b => b.id === item.id);
         return !matchingPrev || JSON.stringify(matchingPrev) !== JSON.stringify(item);
       });
       if (changed.length > 0) {
@@ -2102,6 +2137,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {
       console.error("Blocks sync exception:", e);
     }
+  };
+  const saveBlocks = async (data: Block[]) => {
+    await persistBlocks(data);
   };
   const saveNotifications = async (data: AppNotification[]) => {
     const uniqueData = Array.from(
@@ -2178,8 +2216,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAppeals(payload.appeals);
     localStorage.setItem("xmum_appeals", JSON.stringify(payload.appeals));
 
-    setBlocks(payload.blocks);
-    localStorage.setItem("xmum_blocks", JSON.stringify(payload.blocks));
+    const nextBlocks = filterBlocksForRuntime(payload.blocks);
+    setBlocks(nextBlocks);
+    localStorage.setItem("xmum_blocks", JSON.stringify(nextBlocks));
 
     setNotifications(payload.notifications);
     localStorage.setItem("xmum_notifications", JSON.stringify(payload.notifications));
@@ -3529,10 +3568,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Block/Unblock
   const toggleBlockUser = (otherUserId: string) => {
     if (!currentUser) return;
-    const existingBlock = blocks.find(b => b.blocker_id === currentUser.id && b.blocked_id === otherUserId);
-    if (existingBlock) {
+    if (!otherUserId) return;
+
+    if (otherUserId === currentUser.id) {
+      const cleanedBlocks = blocks.filter(block => block.blocker_id !== currentUser.id || block.blocked_id !== currentUser.id);
+      if (cleanedBlocks.length !== blocks.length) {
+        saveBlocks(cleanedBlocks);
+      }
+      showToast("You cannot block your own profile.", "error");
+      return;
+    }
+
+    const existingBlocks = blocks.filter(
+      b => b.blocker_id === currentUser.id && b.blocked_id === otherUserId
+    );
+    if (existingBlocks.length > 0) {
       // Unblock
-      saveBlocks(blocks.filter(b => b.id !== existingBlock.id));
+      saveBlocks(blocks.filter(b => !(b.blocker_id === currentUser.id && b.blocked_id === otherUserId)));
       showToast("User unblocked.", "info");
     } else {
       // Block

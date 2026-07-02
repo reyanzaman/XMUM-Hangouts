@@ -45,6 +45,7 @@ type SyncConfig = {
   payloadKey: string;
   table: string;
   transformRows?: (rows: any[]) => any[];
+  removedIdsKey?: string;
 };
 
 const isMissingPasswordHashColumnError = (error: unknown) => {
@@ -188,6 +189,19 @@ const sanitizeProfileForDatabase = (profile: any) => stripUnsupportedColumnsFrom
   password_hash: profile.password_hash ?? null
 });
 
+const sanitizeBlocks = (rows: any[]) => {
+  const latestByPair = new Map<string, any>();
+
+  rows.forEach(block => {
+    if (!block?.id || !block?.blocker_id || !block?.blocked_id) return;
+    if (block.blocker_id === block.blocked_id) return;
+
+    latestByPair.set(`${block.blocker_id}::${block.blocked_id}`, block);
+  });
+
+  return Array.from(latestByPair.values());
+};
+
 const syncConfigs: Record<string, SyncConfig> = {
   profiles: {
     payloadKey: "profiles",
@@ -202,7 +216,12 @@ const syncConfigs: Record<string, SyncConfig> = {
   messages: { payloadKey: "messages", table: "xmum_messages" },
   reports: { payloadKey: "reports", table: "xmum_reports" },
   appeals: { payloadKey: "appeals", table: "xmum_appeals" },
-  blocks: { payloadKey: "blocks", table: "xmum_blocks" },
+  blocks: {
+    payloadKey: "blocks",
+    table: "xmum_blocks",
+    transformRows: rows => sanitizeBlocks(rows),
+    removedIdsKey: "removed_block_ids"
+  },
   notifications: { payloadKey: "notifications", table: "xmum_notifications" }
 };
 
@@ -603,7 +622,7 @@ async function deleteRowsByIds(table: string, ids: string[]) {
 }
 
 async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config: SyncConfig) {
-  const { payloadKey, table, transformRows } = config;
+  const { payloadKey, table, transformRows, removedIdsKey } = config;
 
   if (req.method === "GET") {
     return res.status(200).json({ [payloadKey]: [] });
@@ -626,6 +645,9 @@ async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config
     }
 
     const rawRows = transformRows ? transformRows(data) : data;
+    const removedIds = Array.isArray(req.body?.[removedIdsKey || ""])
+      ? req.body[removedIdsKey || ""].filter((id: unknown) => typeof id === "string" && id.trim().length > 0)
+      : [];
     const rows = table === "xmum_profiles" ? await prepareProfileRowsForSupabase(rawRows as Profile[], supabaseAdmin) : rawRows;
     if (rows.length > 0) {
       const { error } = await supabaseAdmin.from(table).upsert(rows);
@@ -650,6 +672,10 @@ async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config
           return res.status(500).json({ error: `Failed to sync ${payloadKey} to Supabase.` });
         }
       }
+    }
+
+    if (removedIds.length > 0) {
+      await deleteRowsByIds(table, removedIds);
     }
 
     return res.status(200).json({ success: true, count: data.length });

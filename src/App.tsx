@@ -2501,6 +2501,9 @@ const AppContent: React.FC = () => {
                   <p className="text-xs sm:text-sm text-gray-500 leading-relaxed">
                     Connect and hangout with other XMUM students.
                   </p>
+                  <p className="text-[11px] sm:text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-2xl px-3 py-2 max-w-sm leading-relaxed">
+                    Use your official university email only: <strong>@xmu.edu.my</strong>.
+                  </p>
                 </div>
               )}
 
@@ -2510,6 +2513,9 @@ const AppContent: React.FC = () => {
                     <h2 className="text-xl font-black text-gray-905">Check your student email!</h2>
                     <p className="text-xs sm:text-sm text-gray-500 leading-relaxed">
                       We sent a 6-digit code to <strong className="text-gray-705">{loginEmail}</strong>
+                    </p>
+                    <p className="text-[11px] text-amber-700">
+                      Only official <strong>@xmu.edu.my</strong> email accounts can log in.
                     </p>
                   </div>
 
@@ -2598,6 +2604,9 @@ const AppContent: React.FC = () => {
                         disabled={isLoginLoading}
                         className="w-full bg-slate-50 border border-gray-200 focus:border-rose-400 focus:bg-white focus:ring-2 focus:ring-rose-100 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-slate-800 outline-none transition-all disabled:opacity-60"
                       />
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Please sign in with your university email only. Personal email addresses are not supported.
+                      </p>
                     </div>
 
                     {loginMode === "password" && (

@@ -178,6 +178,19 @@ function mergeById<T extends { id: string }>(primary: T[], secondary: T[]): T[] 
   return Array.from(map.values());
 }
 
+function sanitizeBlocks(rows: any[]) {
+  const latestByPair = new Map<string, any>();
+
+  for (const block of rows || []) {
+    if (!block?.id || !block?.blocker_id || !block?.blocked_id) continue;
+    if (block.blocker_id === block.blocked_id) continue;
+
+    latestByPair.set(`${block.blocker_id}::${block.blocked_id}`, block);
+  }
+
+  return Array.from(latestByPair.values());
+}
+
 function buildDeletedUserProfile() {
   return {
     id: SYSTEM_DELETED_USER_ID,
@@ -1445,8 +1458,9 @@ async function startServer() {
     table: string;
     localProfileMode?: boolean;
     transformRows?: (rows: any[]) => any[];
+    removedIdsKey?: string;
   }) => {
-    const { getPath, postPath, payloadKey, fileName, table, localProfileMode, transformRows } = options;
+    const { getPath, postPath, payloadKey, fileName, table, localProfileMode, transformRows, removedIdsKey } = options;
 
     app.get(getPath, (req, res) => {
       setCors(req, res);
@@ -1462,13 +1476,21 @@ async function startServer() {
           return res.status(400).json({ error: "Invalid payload: must be array." });
         }
 
+        const transformedData = transformRows ? transformRows(data) : data;
+        const removedIds = Array.isArray(req.body?.[removedIdsKey || ""])
+          ? req.body[removedIdsKey || ""].filter((id: unknown) => typeof id === "string" && id.trim().length > 0)
+          : [];
+
         if (localProfileMode) {
           upsertLocalProfiles(data);
         } else {
-          saveLocalData(fileName, data);
+          saveLocalData(fileName, transformedData);
         }
 
-        await upsertToSupabase(table, transformRows ? transformRows(data) : data);
+        await upsertToSupabase(table, transformedData);
+        if (removedIds.length > 0) {
+          await deleteRowsByIds(table, removedIds);
+        }
 
         return res.status(200).json({ success: true, count: data.length });
       } catch (err) {
@@ -1548,7 +1570,9 @@ async function startServer() {
     postPath: "/api/blocks/sync",
     payloadKey: "blocks",
     fileName: LOCAL_BLOCKS_FILE,
-    table: "xmum_blocks"
+    table: "xmum_blocks",
+    transformRows: rows => sanitizeBlocks(rows),
+    removedIdsKey: "removed_block_ids"
   });
   registerSyncRoute({
     getPath: "/api/notifications",

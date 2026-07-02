@@ -150,7 +150,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
       {/* Actions (Report / Block) */}
       {(onReportClick || onBlockClick) && (
         <div className="flex items-center gap-2 pt-2 border-t border-gray-50">
-          {onBlockClick && (
+          {onBlockClick && !isMe && (
             <button
               id={`profile-block-btn-${profile.id}`}
               onClick={onBlockClick}

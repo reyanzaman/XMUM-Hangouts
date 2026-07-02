@@ -145,6 +145,18 @@ export const ProfileSetupForm: React.FC = () => {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-xs sm:text-sm text-amber-900">
+          <div className="flex items-start gap-2">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div className="space-y-1">
+              <p className="font-black">Double-check the locked details before you finish.</p>
+              <p>
+                Your student ID is permanent. Your country of origin and gender will be locked after profile completion.
+              </p>
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           
           {/* Locked student ID */}
