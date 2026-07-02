@@ -6,6 +6,7 @@
 import React, { useState } from "react";
 import { HangoutApplication, Profile } from "../types";
 import { useApp } from "../context/AppContext";
+import { buildAnonymousAliasProfile } from "../lib/profiles";
 import { ProfileCard } from "./ProfileCard";
 import { AvatarSVG } from "./AvatarSVG";
 import { Check, X, ShieldAlert, UserCheck, HelpCircle, Eye, EyeOff } from "lucide-react";
@@ -93,12 +94,12 @@ export const ApplicantList: React.FC<ApplicantListProps> = ({ hangoutId }) => {
             // Anonymize profile if anonymous and viewer lacks privilege
             const profileToRender: Profile = (app.is_anonymous && !hasPrivilege)
               ? {
-                  ...realProfile,
+                  ...buildAnonymousAliasProfile(realProfile, {
+                    seed: app.applicant_id,
+                    aboutMe: "This student requested to participate in this plan anonymously."
+                  }),
                   name: getAnonymousAnimalName(app.applicant_id),
-                  avatar_id: "panda",
-                  flag_status: "none",
-                  hide_details: true,
-                  about_me: "This student requested to participate in this plan anonymously."
+                  flag_status: "none"
                 }
               : realProfile;
 

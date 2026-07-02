@@ -88,6 +88,7 @@ export interface HangoutComment {
   id: string;
   hangout_id: string;
   user_id: string;
+  is_anonymous?: boolean;
   parent_comment_id: string | null; // for replies
   content: string;
   created_at: string;

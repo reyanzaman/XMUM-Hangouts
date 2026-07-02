@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from "react";
 import { AppProvider, useApp } from "./context/AppContext";
 import { supabase } from "./lib/supabase";
-import { Hangout, Profile } from "./types";
+import { AppNotification, Hangout, Profile } from "./types";
 import { motion, AnimatePresence } from "motion/react";
 import {
   combineDateAndTimeToIso,
@@ -18,7 +18,7 @@ import {
   validateFutureHangoutDate
 } from "./lib/hangouts";
 import { matchesPrimaryAdminEmail } from "./lib/admin";
-import { isDemoProfile, normalizeProfileEmail, pickCanonicalProfile } from "./lib/profiles";
+import { buildAnonymousAliasProfile, isDemoProfile, normalizeProfileEmail, pickCanonicalProfile } from "./lib/profiles";
 import { NotificationBell } from "./components/NotificationBell";
 import { HangoutCard } from "./components/HangoutCard";
 import { ChatWindow } from "./components/ChatWindow";
@@ -66,6 +66,13 @@ import {
 
 const SYSTEM_DELETED_USER_ID = "deleted_user";
 const RECENT_HANGOUT_WINDOW_MONTHS = 2;
+const LOCKED_MEETING_POINT_MARKERS = [
+  "apply and get accepted to unlock",
+  "visible after the host approves your request"
+];
+
+const isLockedMeetingPointPlaceholder = (value: string | null | undefined) =>
+  LOCKED_MEETING_POINT_MARKERS.some(marker => (value || "").trim().toLowerCase().includes(marker));
 
 const getHangoutPostedTime = (hangout: Hangout) => {
   const createdAt = new Date(hangout.created_at).getTime();
@@ -96,23 +103,29 @@ const getRecentHangoutCutoffTime = () => {
 const isOlderThanRecentHangoutWindow = (hangout: Hangout) =>
   getHangoutRecencyTime(hangout) < getRecentHangoutCutoffTime();
 
-const sortHangoutsForFeed = (items: Hangout[]) =>
+const sortHangoutsForFeed = (items: Hangout[], sortMode: "posted" | "event") =>
   [...items].sort((a, b) => {
-    const now = Date.now();
-    const aEventTime = getHangoutEventTime(a);
-    const bEventTime = getHangoutEventTime(b);
-    const aIsUpcoming = aEventTime === null || aEventTime >= now;
-    const bIsUpcoming = bEventTime === null || bEventTime >= now;
-
-    if (aIsUpcoming !== bIsUpcoming) {
-      return aIsUpcoming ? -1 : 1;
-    }
-
     const statusRank = (hangout: Hangout) => (hangout.status === "active" ? 0 : hangout.status === "expired" ? 1 : 2);
     const rankDifference = statusRank(a) - statusRank(b);
     if (rankDifference !== 0) return rankDifference;
 
-    if (aIsUpcoming && bIsUpcoming) {
+    if (sortMode === "event") {
+      const aEventTime = getHangoutEventTime(a);
+      const bEventTime = getHangoutEventTime(b);
+
+      if (a.status === "active" && b.status === "active") {
+        if (aEventTime !== null && bEventTime !== null && aEventTime !== bEventTime) {
+          return aEventTime - bEventTime;
+        }
+      } else {
+        if (aEventTime !== null && bEventTime !== null && aEventTime !== bEventTime) {
+          return bEventTime - aEventTime;
+        }
+      }
+
+      const postedFallback = getHangoutPostedTime(b) - getHangoutPostedTime(a);
+      if (postedFallback !== 0) return postedFallback;
+    } else {
       const postedDifference = getHangoutPostedTime(b) - getHangoutPostedTime(a);
       if (postedDifference !== 0) return postedDifference;
     }
@@ -313,8 +326,10 @@ const AppContent: React.FC = () => {
   const [datePeriodFilter, setDatePeriodFilter] = useState<"all" | "today" | "week" | "month">("all");
   const [languageFilter, setLanguageFilter] = useState<"all" | "en" | "zh">("all");
   const [genderFilter, setGenderFilter] = useState<"all" | "male" | "female">("all");
+  const [feedSortMode, setFeedSortMode] = useState<"posted" | "event">("posted");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [notificationTarget, setNotificationTarget] = useState<{ hangoutId?: string; commentId?: string } | null>(null);
   const canViewTestUserCards = Boolean(currentUser?.is_admin);
   const isTestCreatorHangout = (creatorId: string) => {
     if (creatorId === SYSTEM_DELETED_USER_ID) return false;
@@ -331,7 +346,18 @@ const AppContent: React.FC = () => {
   // Reset pagination to page 1 whenever search, activeTab, or filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchLocation, eligibleOnlyFilter, showExpired, showAllHangoutHistory, datePeriodFilter, languageFilter, genderFilter, activeTab]);
+  }, [searchLocation, eligibleOnlyFilter, showExpired, showAllHangoutHistory, datePeriodFilter, languageFilter, genderFilter, feedSortMode, activeTab]);
+
+  const feedCommentResetKey = [
+    searchLocation.trim().toLowerCase(),
+    eligibleOnlyFilter ? "1" : "0",
+    showExpired ? "1" : "0",
+    showAllHangoutHistory ? "1" : "0",
+    datePeriodFilter,
+    languageFilter,
+    genderFilter,
+    feedSortMode
+  ].join("|");
 
   // Create hangout input state
   const [createIntention, setCreateIntention] = useState("");
@@ -675,7 +701,7 @@ const AppContent: React.FC = () => {
     setEditLocation(target.location);
     setEditDate(formatDateInputValue(eventDate));
     setEditTime(formatTimeInputValue(eventDate));
-    setEditMeetingPoint(target.meeting_point);
+    setEditMeetingPoint(isLockedMeetingPointPlaceholder(target.meeting_point) ? "" : target.meeting_point);
     setEditDescription(target.additional_info);
     setEditMaxParticipants(target.max_participants ?? "");
     setEditIsAnonymous(Boolean(target.is_anonymous));
@@ -779,7 +805,11 @@ const AppContent: React.FC = () => {
 
   // Resolve calculations
   const myApplications = currentUser 
-    ? applications.filter(a => a.applicant_id === currentUser.id && a.status !== "retracted") 
+    ? applications.filter(a => {
+        if (a.applicant_id !== currentUser.id || a.status === "retracted") return false;
+        const relatedHangout = hangouts.find(h => h.id === a.hangout_id);
+        return relatedHangout?.creator_id !== currentUser.id;
+      }) 
     : [];
 
   const myCreatedHangouts = currentUser 
@@ -797,6 +827,120 @@ const AppContent: React.FC = () => {
     return isChatMember && m.sender_id !== currentUser.id && !m.is_read;
   }).length : 0;
   const hasUnreadInbox = myUnreadMsgsCount > 0;
+
+  const scrollToElement = (elementId: string) => {
+    window.setTimeout(() => {
+      const target = document.getElementById(elementId);
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+      } else {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }, 160);
+  };
+
+  const navigateToFeedTarget = (target: { hangoutId?: string; commentId?: string }) => {
+    setSearchLocation("");
+    setEligibleOnlyFilter(false);
+    setDatePeriodFilter("all");
+    setLanguageFilter("all");
+    setGenderFilter("all");
+    setFeedSortMode("posted");
+    setShowExpired(true);
+    setShowAllHangoutHistory(true);
+    setNotificationTarget(target);
+    setActiveTab("feed");
+
+    const elementId = target.commentId
+      ? `comment-${target.commentId}`
+      : target.hangoutId
+      ? `hangout-card-${target.hangoutId}`
+      : "";
+
+    if (elementId) {
+      scrollToElement(elementId);
+      window.setTimeout(() => setNotificationTarget(null), 1200);
+    } else {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      setNotificationTarget(null);
+    }
+  };
+
+  const resolveMyPlansSubTab = (hangoutId?: string | null) => {
+    if (!hangoutId || !currentUser) return "hosted" as const;
+    const targetHangout = hangouts.find(h => h.id === hangoutId);
+    return targetHangout?.creator_id === currentUser.id ? "hosted" : "requested";
+  };
+
+  const navigateToMyPlansTarget = (hangoutId?: string) => {
+    const nextSubTab = resolveMyPlansSubTab(hangoutId);
+    setPortalSubTab(nextSubTab);
+    setNotificationTarget(null);
+    setActiveTab("my-plans");
+
+    if (!hangoutId) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    const elementId =
+      nextSubTab === "hosted"
+        ? `hosted-hangout-card-${hangoutId}`
+        : `requested-hangout-card-${hangoutId}`;
+    scrollToElement(elementId);
+  };
+
+  const handleNotificationOpen = (notification: AppNotification) => {
+    const { hangout_id: hangoutId, comment_id: commentId, chat_id: chatId } = notification.payload;
+
+    if (chatId) {
+      setNotificationTarget(null);
+      setActiveTab("chats");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    switch (notification.type) {
+      case "comment_reply":
+        navigateToFeedTarget({ hangoutId, commentId });
+        return;
+      case "new_application":
+      case "application_accepted":
+      case "application_rejected":
+      case "hangout_like":
+      case "upcoming_hangout_reminder":
+        navigateToMyPlansTarget(hangoutId);
+        return;
+      case "new_report_admin":
+        setNotificationTarget(null);
+        setActiveTab("admin");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      case "report_approved":
+      case "report_appeal_result":
+        setNotificationTarget(null);
+        setActiveTab(currentUser?.is_admin ? "admin" : "profile");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      case "admin_message":
+        if (hangoutId) {
+          navigateToMyPlansTarget(hangoutId);
+          return;
+        }
+        setNotificationTarget(null);
+        setActiveTab("profile");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      default:
+        if (hangoutId || commentId) {
+          navigateToFeedTarget({ hangoutId, commentId });
+          return;
+        }
+        setNotificationTarget(null);
+        setActiveTab("feed");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
 
   // Render main user content views
   const renderTabContent = () => {
@@ -898,7 +1042,7 @@ const AppContent: React.FC = () => {
         if (!showAllHangoutHistory) {
           feed = feed.filter(h => !isOlderThanRecentHangoutWindow(h));
         }
-        feed = sortHangoutsForFeed(feed);
+        feed = sortHangoutsForFeed(feed, feedSortMode);
 
         // Slice for pagination: 20 per page
         const itemsPerPage = 20;
@@ -1127,9 +1271,40 @@ const AppContent: React.FC = () => {
                       })}
                     </div>
                   </div>
+
+                  {/* Divider line style for desktop only */}
+                  <div className="hidden md:block w-px h-3 bg-gray-150 shrink-0" />
+
+                  {/* Sort */}
+                  <div className="flex flex-row items-center gap-1.5 text-xs text-gray-500 shrink-0">
+                    <span className="font-extrabold text-[9px] text-gray-400 uppercase tracking-widest font-sans">Sort:</span>
+                    <div className="flex gap-1 font-sans">
+                      {([
+                        { id: "posted", label: "Posted" },
+                        { id: "event", label: "Event" }
+                      ] as const).map(option => {
+                        const isSelected = feedSortMode === option.id;
+                        return (
+                          <button
+                            key={option.id}
+                            id={`sort-filter-btn-${option.id}`}
+                            type="button"
+                            onClick={() => setFeedSortMode(option.id)}
+                            className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border ${
+                              isSelected
+                                ? "bg-rose-500 text-white border-rose-500 shadow-sm"
+                                : "bg-slate-50 text-gray-500 border-transparent hover:bg-slate-100 hover:text-gray-700"
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
 
-                {(datePeriodFilter !== "all" || searchLocation || eligibleOnlyFilter || languageFilter !== "all" || genderFilter !== "all") && (
+                {(datePeriodFilter !== "all" || searchLocation || eligibleOnlyFilter || languageFilter !== "all" || genderFilter !== "all" || feedSortMode !== "posted") && (
                   <button
                     id="clear-filters-btn"
                     onClick={() => {
@@ -1138,6 +1313,7 @@ const AppContent: React.FC = () => {
                       setDatePeriodFilter("all");
                       setLanguageFilter("all");
                       setGenderFilter("all");
+                      setFeedSortMode("posted");
                     }}
                     className="text-[10px] font-bold text-rose-500 hover:text-rose-600 border-b border-rose-500 hover:border-rose-600 shrink-0 cursor-pointer whitespace-nowrap self-center"
                   >
@@ -1181,6 +1357,8 @@ const AppContent: React.FC = () => {
                     key={h.id}
                     hangout={h}
                     onReportCreator={() => setReportingHangoutId(h.id)}
+                    commentResetKey={feedCommentResetKey}
+                    notificationTarget={notificationTarget}
                   />
                 ))
               )}
@@ -1528,15 +1706,16 @@ const AppContent: React.FC = () => {
                   </div>
 
                   {visibleHostedHangouts.length === 0 ? (
-                    <div className="bg-white border border-gray-100 rounded-3xl p-8 text-center shadow-sm flex flex-col items-center justify-center space-y-3">
-                      <div className="p-3 bg-rose-50 text-rose-500 rounded-full w-12 h-12 flex items-center justify-center font-bold text-lg">
+                    <div className="flex flex-col items-center justify-center space-y-4 rounded-[1.9rem] border border-gray-100 bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.08),_transparent_48%),linear-gradient(180deg,_rgba(255,255,255,1),_rgba(255,250,251,0.92))] p-8 text-center shadow-sm">
+                      <div className="relative flex h-14 w-14 items-center justify-center rounded-[1.25rem] border border-rose-100 bg-white text-transparent shadow-sm">
+                        <PlusCircle className="absolute h-6 w-6 text-rose-500" />
                         📢
                       </div>
                       <div>
-                        <h3 className="font-bold text-sm text-slate-700">
+                        <h3 className="text-sm font-extrabold text-slate-700">
                           {myCreatedHangouts.length === 0 ? "No posted hangouts" : "No active hangouts in this view"}
                         </h3>
-                        <p className="text-gray-400 text-xs mt-1 max-w-sm mx-auto">
+                        <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-gray-400">
                           {myCreatedHangouts.length === 0
                             ? "You haven't posted any hangout plans yet. Click 'Create Hangout' in the top navbar to announce a meetup."
                             : "Turn on past plans if you want to review expired or cancelled hangouts."}
@@ -1544,89 +1723,154 @@ const AppContent: React.FC = () => {
                       </div>
                       <button
                         onClick={() => setActiveTab("create")}
-                        className="bg-rose-500 hover:bg-rose-600 text-white text-xs font-black px-4 py-2 rounded-xl transition-all cursor-pointer"
+                        className="inline-flex items-center gap-2 rounded-2xl bg-rose-500 px-4 py-2 text-xs font-black text-white shadow-sm transition-all hover:bg-rose-600 hover:shadow-md cursor-pointer"
                       >
+                        <PlusCircle className="h-3.5 w-3.5" />
                         Create My First Hangout
                       </button>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-5">
-                      {visibleHostedHangouts.map(h => (
-                        <div key={h.id} className="bg-white border border-slate-100 rounded-3xl p-5 sm:p-6 space-y-4 shadow-sm hover:shadow-md/5 transition-all">
-                          <div className="flex items-center justify-between">
-                            <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
-                              h.status === "active" ? "bg-teal-50 text-teal-700 border border-teal-100" : "bg-gray-100 text-gray-500"
-                            }`}>
-                              {h.status}
-                            </span>
-                            <span className="text-[10px] text-gray-400 font-mono">Posted on {new Date(h.created_at).toLocaleDateString()}</span>
-                          </div>
-                          
-                          <div>
-                            <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">My Current Plan</p>
-                            <h3 className="font-extrabold text-sm sm:text-base text-gray-900 font-sans mt-0.5">
-                              I want to <span className="text-rose-500 underline decoration-rose-200 decoration-2 underline-offset-2">{h.intention}</span>
-                            </h3>
-                          </div>
+                      {visibleHostedHangouts.map(h => {
+                        const isMeetingPointCorrupted = isLockedMeetingPointPlaceholder(h.meeting_point);
 
-                          <div className="bg-slate-50/60 rounded-2xl p-3 grid grid-cols-2 gap-3 text-xs">
-                            <div>
-                              <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
-                                <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" /> Location
-                              </span>
-                              <span className="font-bold text-slate-700 mt-0.5 block truncate">{h.location}</span>
+                        return (
+                        <div
+                          id={`hosted-hangout-card-${h.id}`}
+                          key={h.id}
+                          className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm transition-all hover:shadow-md sm:p-6"
+                        >
+                          <div className="space-y-5">
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`text-[10px] font-black uppercase tracking-[0.22em] px-2.5 py-1 rounded-full border ${
+                                    h.status === "active"
+                                      ? "bg-teal-50 text-teal-700 border-teal-100"
+                                      : "bg-slate-100 text-slate-500 border-slate-200"
+                                  }`}>
+                                    {h.status}
+                                  </span>
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Posted Plan</p>
+                                  <h3 className="mt-1 max-w-2xl text-sm font-extrabold leading-snug text-slate-900 sm:text-[1rem]">
+                                    I want to <span className="text-rose-500">{h.intention}</span>
+                                  </h3>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap gap-x-5 gap-y-2 sm:min-w-[220px] sm:justify-end">
+                                <div className="text-left sm:text-right">
+                                  <span className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Posted</span>
+                                  <span className="mt-1 block text-[11px] font-bold text-slate-700">
+                                    {new Date(h.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
+                                  </span>
+                                </div>
+                                <div className="text-left sm:text-right">
+                                  <span className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Event</span>
+                                  <span className="mt-1 block text-[11px] font-bold text-slate-700">
+                                    {new Date(h.event_datetime).toLocaleDateString([], { month: "short", day: "numeric" })}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <span className="text-[10px] text-slate-400 font-semibold block">Meeting Point</span>
-                              <span className="font-bold text-slate-700 mt-0.5 block truncate">{h.meeting_point}</span>
-                            </div>
-                          </div>
 
-                          <div className="bg-slate-50/60 rounded-2xl p-3 text-xs text-slate-600 space-y-2">
-                            <p>
-                              <span className="font-semibold text-slate-500">When:</span>{" "}
-                              {new Date(h.event_datetime).toLocaleString([], {
-                                weekday: "short",
-                                month: "short",
-                                day: "numeric",
-                                hour: "numeric",
-                                minute: "2-digit"
-                              })}
-                            </p>
-                            <p>
-                              <span className="font-semibold text-slate-500">Description:</span> {h.additional_info}
-                            </p>
-                          </div>
-
-                          <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
-                            {h.status === "active" && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => openEditHangout(h.id)}
-                                  className="inline-flex items-center gap-1.5 bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
-                                >
-                                  <PencilLine className="w-3.5 h-3.5" />
-                                  Edit Hangout
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteHangout(h.id)}
-                                  className="inline-flex items-center gap-1.5 bg-rose-50 text-rose-700 border border-rose-100 hover:bg-rose-100 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  Cancel Hangout
-                                </button>
-                              </>
+                            {isMeetingPointCorrupted && (
+                              <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                  <div>
+                                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">Meeting point needs recovery</p>
+                                    <p className="mt-1 text-[12px] leading-relaxed text-amber-900">
+                                      This plan already had a meeting point, but an older sync bug replaced the saved value. Add it again once to restore it.
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditHangout(h.id)}
+                                    className="inline-flex items-center gap-1.5 self-start rounded-2xl border border-amber-200 bg-white px-3.5 py-2 text-xs font-bold text-amber-800 shadow-sm transition-all hover:bg-amber-100"
+                                  >
+                                    <PencilLine className="w-3.5 h-3.5" />
+                                    Restore Meeting Point
+                                  </button>
+                                </div>
+                              </div>
                             )}
-                          </div>
 
-                          {/* Interactive ApplicantList */}
-                          <div className="border-t border-slate-100 pt-4">
-                            <ApplicantList hangoutId={h.id} />
+                            <div className="grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2">
+                              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
+                                <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                                  <MapPin className="h-3.5 w-3.5 text-rose-500" /> Location
+                                </span>
+                                <span className="mt-2 block text-sm font-bold text-slate-800">{h.location}</span>
+                              </div>
+                              <div className={`rounded-2xl border p-3.5 ${isMeetingPointCorrupted ? "border-amber-100 bg-amber-50/70" : "border-slate-100 bg-slate-50/70"}`}>
+                                <span className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] ${isMeetingPointCorrupted ? "text-amber-700" : "text-slate-500"}`}>
+                                  <Lock className="h-3.5 w-3.5 text-teal-500" /> Private Meeting Point
+                                </span>
+                                {isMeetingPointCorrupted ? (
+                                  <span className="mt-2 block text-[12px] font-semibold leading-relaxed text-amber-900">
+                                    The original meeting point was not preserved. Use <span className="font-black">Edit Hangout</span> to enter it again.
+                                  </span>
+                                ) : (
+                                  <span className="mt-2 block truncate text-sm font-bold text-slate-800">{h.meeting_point}</span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="border-t border-slate-100 pt-4">
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,220px)_1fr]">
+                                <div>
+                                  <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                                    <Calendar className="h-3.5 w-3.5 text-rose-500" /> When
+                                  </span>
+                                  <p className="mt-2 text-[12px] font-bold leading-relaxed text-slate-800">
+                                    {new Date(h.event_datetime).toLocaleString([], {
+                                      weekday: "short",
+                                      month: "short",
+                                      day: "numeric",
+                                      hour: "numeric",
+                                      minute: "2-digit"
+                                    })}
+                                  </p>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Description</span>
+                                  <p className="mt-2 text-[12px] leading-relaxed text-slate-700">{h.additional_info}</p>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2 border-t border-slate-100/80 pt-4">
+                              {h.status === "active" && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditHangout(h.id)}
+                                    className="inline-flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:text-slate-900"
+                                  >
+                                    <PencilLine className="w-3.5 h-3.5" />
+                                    Edit Hangout
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteHangout(h.id)}
+                                    className="inline-flex items-center gap-1.5 rounded-2xl border border-rose-100 bg-rose-50 px-3.5 py-2 text-xs font-bold text-rose-700 shadow-sm transition-all hover:bg-rose-100"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    Cancel Hangout
+                                  </button>
+                                </>
+                              )}
+                            </div>
+
+                            {/* Interactive ApplicantList */}
+                            <div className="border-t border-slate-100 pt-4">
+                              <ApplicantList hangoutId={h.id} />
+                            </div>
                           </div>
                         </div>
-                      ))}
+                      )})}
                     </div>
                   )}
                 </motion.div>
@@ -1646,20 +1890,22 @@ const AppContent: React.FC = () => {
                   </div>
 
                   {myApplications.length === 0 ? (
-                    <div className="bg-white border border-gray-100 rounded-3xl p-8 text-center shadow-sm flex flex-col items-center justify-center space-y-3">
-                      <div className="p-3 bg-rose-50 text-rose-500 rounded-full w-12 h-12 flex items-center justify-center font-bold text-lg">
+                    <div className="flex flex-col items-center justify-center space-y-4 rounded-[1.9rem] border border-gray-100 bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.08),_transparent_48%),linear-gradient(180deg,_rgba(255,255,255,1),_rgba(255,250,251,0.92))] p-8 text-center shadow-sm">
+                      <div className="relative flex h-14 w-14 items-center justify-center rounded-[1.25rem] border border-rose-100 bg-white text-transparent shadow-sm">
+                        <Search className="absolute h-6 w-6 text-rose-500" />
                         🌟
                       </div>
                       <div>
-                        <h3 className="font-bold text-sm text-slate-700">No active match requests</h3>
-                        <p className="text-gray-400 text-xs mt-1 max-w-sm mx-auto">
+                        <h3 className="text-sm font-extrabold text-slate-700">No active match requests</h3>
+                        <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-gray-400">
                           You haven't submitted any hangout requests yet. Browse the home feed to discover other active student plans!
                         </p>
                       </div>
                       <button
                         onClick={() => setActiveTab("feed")}
-                        className="bg-rose-500 hover:bg-rose-600 text-white text-xs font-black px-4 py-2 rounded-xl transition-all cursor-pointer"
+                        className="inline-flex items-center gap-2 rounded-2xl bg-rose-500 px-4 py-2 text-xs font-black text-white shadow-sm transition-all hover:bg-rose-600 hover:shadow-md cursor-pointer"
                       >
+                        <Compass className="h-3.5 w-3.5" />
                         Explore Feed
                       </button>
                     </div>
@@ -1670,80 +1916,78 @@ const AppContent: React.FC = () => {
                         if (!hangoutItem) return null;
 
                         const planner = profiles.find(p => p.id === hangoutItem.creator_id);
+                        const isMeetingPointCorrupted = isLockedMeetingPointPlaceholder(hangoutItem.meeting_point);
 
                         return (
-                          <div key={app.id} className="bg-white border border-slate-100 rounded-3xl p-5 flex flex-col gap-4 shadow-sm hover:shadow-md/5 transition-all text-xs">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                              <div className="flex items-center gap-2">
-                                <span className={`text-[9px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
-                                  app.status === "pending" ? "bg-amber-50 text-amber-600 border-amber-100" :
-                                  app.status === "accepted" ? "bg-teal-50 text-teal-700 border-teal-100" : "bg-rose-50 text-rose-700 border-rose-100"
-                                }`}>
-                                  {app.status}
-                                </span>
-                                
-                                {app.is_anonymous && (
-                                  <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-                                    Anonymous Application
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[10px] text-gray-400 font-mono sm:text-right font-bold">Sent {new Date(app.created_at).toLocaleDateString()}</span>
-                            </div>
+                          <div
+                            id={`requested-hangout-card-${hangoutItem.id}`}
+                            key={app.id}
+                            className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm transition-all hover:shadow-md sm:p-6"
+                          >
+                            <div className="flex flex-col gap-5 text-xs">
+                              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="space-y-2">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className={`text-[9px] font-black uppercase tracking-[0.22em] px-2.5 py-1 rounded-full border ${
+                                      app.status === "pending"
+                                        ? "bg-amber-50 text-amber-600 border-amber-100"
+                                        : app.status === "accepted"
+                                        ? "bg-teal-50 text-teal-700 border-teal-100"
+                                        : "bg-rose-50 text-rose-700 border-rose-100"
+                                    }`}>
+                                      {app.status}
+                                    </span>
 
-                            <div className="space-y-2">
-                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Target Hangout Intention</span>
-                              <h3 className="font-extrabold text-slate-800 text-sm sm:text-base">
-                                Interested in: "I want to <span className="text-rose-500 font-black">{hangoutItem.intention}</span>"
-                              </h3>
-                              
-                               {/* Simple host row */}
-                               <div className="flex items-center gap-2 pt-1">
-                                 <span className="text-[10px] text-slate-400 font-bold">Planned by:</span>
-                                 <button
+                                    {app.is_anonymous && (
+                                      <span className="rounded-full border border-slate-150 bg-slate-100 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                                        Anonymous
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div>
+                                    <span className="block text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Requested Plan</span>
+                                    <h3 className="mt-1 max-w-2xl text-sm font-extrabold leading-snug text-slate-900 sm:text-[1rem]">
+                                      Requested to join <span className="text-rose-500">I want to {hangoutItem.intention}</span>
+                                    </h3>
+                                  </div>
+                                </div>
+
+                                <div className="text-left sm:text-right">
+                                  <span className="block text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Requested</span>
+                                  <span className="mt-1 block text-[11px] font-bold text-slate-700">
+                                    {new Date(app.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="border-t border-slate-100 pt-4">
+                                <div className="flex flex-wrap items-center gap-2 pb-3">
+                                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Hosted by</span>
+                                  {planner?.home_country && !(hangoutItem.is_anonymous && app.status !== "accepted" && !currentUser?.is_admin) && (
+                                    <span className="rounded-full border border-slate-100 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                                      {planner.home_country}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <button
                                    type="button"
                                    onClick={() => {
                                      const isAdmin = currentUser?.is_admin;
                                      const isAccepted = app.status === "accepted";
                                      if (hangoutItem.is_anonymous && !isAccepted && !isAdmin) {
-                                       const hashValue = hangoutItem.creator_id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-                                       const animals = [
-                                         "Panda", "Koala", "Otter", "Dolphin", "Cheetah", "Penguin", "Falcon", "Sloth", "Fox", "Squirrel",
-                                         "Rabbit", "Deer", "Hedgehog", "Capybara", "Alpaca", "Wombat", "Platypus", "Lemur", "Meerkat", "Quokka",
-                                         "Octopus", "Seahorse", "Turtle", "Flamingo", "Peacock", "Beaver", "Badger", "Owl"
-                                       ];
-                                       const idx = Math.abs(hashValue) % animals.length;
-                                       const anonName = `Anonymous ${animals[idx]}`;
-                                       const anonAvatar = `anon_${animals[idx].toLowerCase()}`;
-                                       setViewedProfile({
-                                         id: hangoutItem.creator_id,
-                                         email: "",
-                                         student_id: "",
-                                         name: anonName,
-                                         avatar_id: anonAvatar,
-                                         country: planner?.country || "Malaysia",
-                                         languages: planner?.languages || [],
-                                         age: planner?.age || 20,
-                                         program: planner?.program || "Undergraduate",
-                                         year_of_study: planner?.year_of_study || "Year 1",
-                                         gender: planner?.gender || "other",
-                                         student_type: planner?.student_type || "degree",
-                                         about_me: "This student is hosting this hangout anonymously to protect their privacy on the public feed.",
-                                         is_profile_complete: true,
-                                         hide_details: true,
-                                         is_admin: false,
-                                         is_blocked_globally: false,
-                                         flag_status: planner?.flag_status || "none",
-                                         appeal_count: planner?.appeal_count || 0,
-                                         country_last_changed_at: null,
-                                         name_last_changed_at: null
-                                       });
+                                       setViewedProfile(buildAnonymousAliasProfile(planner, {
+                                         seed: hangoutItem.creator_id,
+                                         aboutMe: "This student is hosting this hangout anonymously to protect their privacy on the public feed."
+                                       }));
                                      } else if (planner) {
                                        setViewedProfile(planner);
                                      }
                                    }}
-                                   className="font-black text-rose-500 hover:text-rose-600 hover:underline cursor-pointer outline-none transition-all"
+                                   className="inline-flex items-center gap-2 rounded-2xl border border-rose-100 bg-rose-50/80 px-3 py-2 text-left font-black text-rose-600 shadow-sm transition-all hover:bg-rose-100 hover:text-rose-700"
                                  >
+                                   <User className="h-3.5 w-3.5" />
                                    {hangoutItem.is_anonymous && app.status !== "accepted" && !currentUser?.is_admin
                                      ? (() => {
                                          const hashValue = hangoutItem.creator_id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
@@ -1758,55 +2002,83 @@ const AppContent: React.FC = () => {
                                      : (planner?.name || "Fellow Student")
                                    }
                                  </button>
-                                 {planner?.home_country && !(hangoutItem.is_anonymous && app.status !== "accepted" && !currentUser?.is_admin) && (
-                                   <span className="text-[10px] text-slate-500 bg-slate-50 px-1.5 py-0.2 rounded border border-slate-100 font-medium">
-                                     {planner.home_country}
-                                   </span>
-                                 )}
-                               </div>
-                            </div>
+                              </div>
 
-                            <div className="bg-slate-50/60 rounded-2xl p-3.5 space-y-2">
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                                <div>
-                                  <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
+                              <div className="grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2">
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.18em] flex items-center gap-1.5">
                                     <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" /> Location
                                   </span>
-                                  <span className="font-bold text-slate-700 mt-0.5 block truncate">{hangoutItem.location}</span>
+                                  <span className="mt-2 block truncate text-sm font-bold text-slate-800">{hangoutItem.location}</span>
                                 </div>
-                                <div>
+                                <div className={`rounded-2xl border p-4 ${
+                                  app.status === "accepted"
+                                    ? isMeetingPointCorrupted
+                                      ? "border-amber-100 bg-amber-50/70"
+                                      : "border-teal-100 bg-teal-50/70"
+                                    : "border-slate-100 bg-slate-50/70"
+                                }`}>
                                   {app.status === "accepted" ? (
                                     <div>
-                                      <span className="text-[10px] text-teal-600 font-extrabold block">🔓 Secure Meeting Point</span>
-                                      <span className="font-black text-teal-700 mt-0.5 block truncate bg-teal-100/40 border border-teal-200/30 px-2.5 py-1 rounded-xl text-[11px]">
-                                        "{hangoutItem.meeting_point}"
-                                      </span>
+                                      <span className={`block text-[10px] font-extrabold uppercase tracking-[0.18em] ${isMeetingPointCorrupted ? "text-amber-700" : "text-teal-700"}`}>Secure Meeting Point</span>
+                                      {isMeetingPointCorrupted ? (
+                                        <span className="mt-2 block text-[11px] leading-relaxed text-amber-900">
+                                          The meeting point was not preserved in saved data, so the host needs to enter it again.
+                                        </span>
+                                      ) : (
+                                        <span className="mt-2 block truncate rounded-xl border border-teal-100 bg-white px-2.5 py-2 text-[11px] font-black text-teal-800">
+                                          {hangoutItem.meeting_point}
+                                        </span>
+                                      )}
                                     </div>
                                   ) : (
                                     <div>
-                                      <span className="text-[10px] text-slate-400 font-semibold block">🔓 Secure Meeting Point</span>
-                                      <span className="text-slate-400 mt-0.5 block italic text-[11px]">
-                                        Locked until request is approved
+                                      <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 block">Secure Meeting Point</span>
+                                      <span className="mt-2 block text-[11px] italic text-slate-600">
+                                        Visible after the host approves your request
                                       </span>
                                     </div>
                                   )}
                                 </div>
                               </div>
+
+                            <div className="border-t border-slate-100 pt-4">
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,220px)_1fr]">
+                                <div>
+                                  <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                                    <Calendar className="h-3.5 w-3.5 text-rose-500" /> Event Time
+                                  </span>
+                                  <p className="mt-2 text-[12px] font-bold leading-relaxed text-slate-800">
+                                    {new Date(hangoutItem.event_datetime).toLocaleString([], {
+                                      weekday: "short",
+                                      month: "short",
+                                      day: "numeric",
+                                      hour: "numeric",
+                                      minute: "2-digit"
+                                    })}
+                                  </p>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Details</span>
+                                  <p className="mt-2 text-[12px] leading-relaxed text-slate-700">{hangoutItem.additional_info}</p>
+                                </div>
+                              </div>
                             </div>
 
                             {app.status === "pending" && (
-                              <div className="pt-1 flex justify-end">
+                              <div className="flex justify-end border-t border-slate-100/80 pt-4">
                                 <button
                                   id={`retract-app-btn-${app.id}`}
                                   onClick={() => {
                                     retractApplication(app.id);
                                   }}
-                                  className="text-[10px] sm:text-xs bg-rose-50 text-rose-600 border border-rose-100 hover:bg-rose-100 hover:text-rose-700 font-black px-4 py-2 rounded-xl shrink-0 cursor-pointer transition-all self-stretch sm:self-auto text-center font-display"
+                                  className="self-stretch rounded-2xl border border-rose-100 bg-rose-50 px-4 py-2 text-[10px] font-black text-rose-700 shadow-sm transition-all hover:bg-rose-100 hover:text-rose-800 sm:self-auto sm:text-xs"
                                 >
                                   Retract This Request
                                 </button>
                               </div>
                             )}
+                          </div>
                           </div>
                         );
                       })}
@@ -1851,21 +2123,33 @@ const AppContent: React.FC = () => {
         );
         const countableProfiles = Array.from(allRealProfilesByEmail.values());
         const statsProfiles = countableProfiles.filter(profile => !profile.is_admin);
-        const analyticsProfiles = statsProfiles.length > 0 ? statsProfiles : countableProfiles;
-        const statsProfileIds = new Set(analyticsProfiles.map(profile => profile.id));
+        const activityProfileIds = new Set(countableProfiles.map(profile => profile.id));
         const testUsersCount = testProfilesByEmail.size;
-        const totalActive = hangouts.filter(h => h.status === "active" && statsProfileIds.has(h.creator_id)).length;
-        const totalExpired = hangouts.filter(h => h.status === "expired" && statsProfileIds.has(h.creator_id)).length;
+        const nowTimestamp = Date.now();
+        const expirationThresholdMs = 24 * 60 * 60 * 1000;
+        const isEffectivelyExpired = (hangout: Hangout) => {
+          if (hangout.status === "cancelled") return false;
+          if (hangout.status === "expired") return true;
+          const eventTime = getHangoutEventTime(hangout);
+          return eventTime !== null && eventTime < (nowTimestamp - expirationThresholdMs);
+        };
+        const totalActive = hangouts.filter(
+          h => activityProfileIds.has(h.creator_id) && h.status !== "cancelled" && !isEffectivelyExpired(h)
+        ).length;
+        const totalExpired = hangouts.filter(
+          h => activityProfileIds.has(h.creator_id) && isEffectivelyExpired(h)
+        ).length;
         const totalUsersCount = countableProfiles.length;
-        const statsUsersCount = statsProfiles.length;
-        const analyticsUsersCount = analyticsProfiles.length;
-        const totalCompanionPets = analyticsProfiles.reduce(
+        const demographicsProfiles = countableProfiles;
+        const demographicsUsersCount = demographicsProfiles.length;
+        const totalCompanionPets = countableProfiles.reduce(
           (sum, profile) => sum + Math.max(0, Number(profile.companion_pet_count || 0)),
           0
         );
-        const topCompanionProfile = [...analyticsProfiles].sort(
+        const topCompanionProfile = [...countableProfiles].sort(
           (a, b) => Number(b.companion_pet_count || 0) - Number(a.companion_pet_count || 0)
         )[0] || null;
+        const highestCompanionPets = Math.max(0, Number(topCompanionProfile?.companion_pet_count || 0));
         const showingAdminFallbackStats = statsProfiles.length === 0 && countableProfiles.length > 0;
         const pendingReportsList = reports.filter(r => r.status === "pending");
         const pendingAppealsList = appeals.filter(a => a.status === "pending");
@@ -1893,7 +2177,7 @@ const AppContent: React.FC = () => {
                   <strong className="text-xl text-gray-800 block mt-1">{totalActive}</strong>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
-                  <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Expired Expiries</span>
+                  <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Expired Posts</span>
                   <strong className="text-xl text-gray-800 block mt-1">{totalExpired}</strong>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
@@ -1905,8 +2189,8 @@ const AppContent: React.FC = () => {
                   <strong className="text-xl text-gray-800 block mt-1">{testUsersCount}</strong>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
-                  <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Total Pets</span>
-                  <strong className="text-xl text-gray-800 block mt-1">{totalCompanionPets}</strong>
+                  <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Highest Pets</span>
+                  <strong className="text-xl text-gray-800 block mt-1">{highestCompanionPets}</strong>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center bg-rose-50/20">
                   <span className="text-xs text-rose-600 block uppercase tracking-wider font-semibold">Pending Reports</span>
@@ -1928,8 +2212,13 @@ const AppContent: React.FC = () => {
                 
                 {/* Demographics Card */}
                 {(() => {
-                  const maleCount = analyticsProfiles.filter(p => (p.gender || "").toLowerCase() === "male").length;
-                  const femaleCount = analyticsProfiles.filter(p => (p.gender || "").toLowerCase() === "female").length;
+                  const maleCount = demographicsProfiles.filter(p => {
+                    const normalizedGender = (p.gender || "").toLowerCase();
+                    return normalizedGender.includes("male") && !normalizedGender.includes("female");
+                  }).length;
+                  const femaleCount = demographicsProfiles.filter(
+                    p => (p.gender || "").toLowerCase().includes("female")
+                  ).length;
                   return (
                     <div className="bg-slate-50 p-4.5 rounded-2xl border border-gray-100/60 flex flex-col justify-between">
                       <div>
@@ -1938,19 +2227,19 @@ const AppContent: React.FC = () => {
                           <div>
                             <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
                               <span>Male Students</span>
-                              <span>{maleCount} ({analyticsUsersCount > 0 ? Math.round((maleCount/analyticsUsersCount)*100) : 0}%)</span>
+                              <span>{maleCount} ({demographicsUsersCount > 0 ? Math.round((maleCount/demographicsUsersCount)*100) : 0}%)</span>
                             </div>
                             <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                              <div className="bg-blue-500 h-full" style={{ width: `${analyticsUsersCount > 0 ? (maleCount/analyticsUsersCount)*100 : 0}%` }} />
+                              <div className="bg-blue-500 h-full" style={{ width: `${demographicsUsersCount > 0 ? (maleCount/demographicsUsersCount)*100 : 0}%` }} />
                             </div>
                           </div>
                           <div>
                             <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
                               <span>Female Students</span>
-                              <span>{femaleCount} ({analyticsUsersCount > 0 ? Math.round((femaleCount/analyticsUsersCount)*100) : 0}%)</span>
+                              <span>{femaleCount} ({demographicsUsersCount > 0 ? Math.round((femaleCount/demographicsUsersCount)*100) : 0}%)</span>
                             </div>
                             <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                              <div className="bg-pink-500 h-full" style={{ width: `${analyticsUsersCount > 0 ? (femaleCount/analyticsUsersCount)*100 : 0}%` }} />
+                              <div className="bg-pink-500 h-full" style={{ width: `${demographicsUsersCount > 0 ? (femaleCount/demographicsUsersCount)*100 : 0}%` }} />
                             </div>
                           </div>
                         </div>
@@ -1973,7 +2262,7 @@ const AppContent: React.FC = () => {
                       <div className="flex items-center justify-between gap-3">
                         <span>Average per real profile</span>
                         <strong className="text-gray-900">
-                          {analyticsUsersCount > 0 ? Math.round(totalCompanionPets / analyticsUsersCount) : 0}
+                          {countableProfiles.length > 0 ? Math.round(totalCompanionPets / countableProfiles.length) : 0}
                         </strong>
                       </div>
                       <div className="flex items-center justify-between gap-3">
@@ -1992,7 +2281,7 @@ const AppContent: React.FC = () => {
                 {/* Plan categories shares */}
                 {(() => {
                   const categoriesCount = hangouts
-                    .filter(h => statsProfileIds.has(h.creator_id))
+                    .filter(h => activityProfileIds.has(h.creator_id))
                     .reduce((acc, h) => {
                     const cat = h.category || "Study";
                     acc[cat] = (acc[cat] || 0) + 1;
@@ -2027,8 +2316,8 @@ const AppContent: React.FC = () => {
 
                 {/* Coordination Success rate card */}
                 {(() => {
-                  const totalApps = applications.filter(a => statsProfileIds.has(a.applicant_id)).length;
-                  const acceptedApps = applications.filter(a => statsProfileIds.has(a.applicant_id) && a.status === "accepted").length;
+                  const totalApps = applications.filter(a => activityProfileIds.has(a.applicant_id)).length;
+                  const acceptedApps = applications.filter(a => activityProfileIds.has(a.applicant_id) && a.status === "accepted").length;
                   const acceptanceRate = totalApps > 0 ? Math.round((acceptedApps / totalApps) * 100) : 100;
 
                   return (
@@ -2284,7 +2573,7 @@ const AppContent: React.FC = () => {
 
               {/* User profile / Actions triggers on the right */}
               <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-                <NotificationBell />
+                <NotificationBell onOpenNotification={handleNotificationOpen} />
                 <button
                   id="nav-profile-card-btn"
                   onClick={() => {

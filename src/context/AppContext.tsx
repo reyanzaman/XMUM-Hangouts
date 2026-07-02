@@ -61,6 +61,37 @@ const filterProfilesForRuntime = (items: Profile[]) =>
 const filterHangoutsForRuntime = (items: Hangout[]) =>
   demoDataEnabled ? items : items.filter(hangout => !isDemoProfileId(hangout.creator_id));
 
+const LOCKED_MEETING_POINT_MARKERS = [
+  "apply and get accepted to unlock",
+  "visible after the host approves your request"
+];
+
+const isLockedMeetingPointPlaceholder = (value: string | null | undefined) => {
+  const normalizedValue = (value || "").trim().toLowerCase();
+  return LOCKED_MEETING_POINT_MARKERS.some(marker => normalizedValue.includes(marker));
+};
+
+const mergeHangoutCollections = (primary: Hangout[], secondary: Hangout[]) => {
+  const secondaryById = new Map(secondary.map(item => [item.id, item]));
+  const merged = mergeByField(primary, secondary);
+
+  return merged.map(hangout => {
+    const fallback = secondaryById.get(hangout.id);
+    if (
+      fallback &&
+      (!hangout.meeting_point || isLockedMeetingPointPlaceholder(hangout.meeting_point)) &&
+      Boolean(fallback.meeting_point) &&
+      !isLockedMeetingPointPlaceholder(fallback.meeting_point)
+    ) {
+      return {
+        ...hangout,
+        meeting_point: fallback.meeting_point
+      };
+    }
+    return hangout;
+  });
+};
+
 const filterApplicationsForRuntime = (items: HangoutApplication[], hangoutIds: Set<string>) =>
   demoDataEnabled
     ? items
@@ -524,7 +555,12 @@ interface AppContextType {
   ) => { success: boolean; error?: string };
   deleteHangout: (hangoutId: string) => { success: boolean; error?: string };
   toggleLike: (hangoutId: string) => void;
-  addComment: (hangoutId: string, content: string, parentCommentId?: string | null) => { success: boolean; error?: string };
+  addComment: (
+    hangoutId: string,
+    content: string,
+    parentCommentId?: string | null,
+    isAnonymous?: boolean
+  ) => { success: boolean; error?: string };
   
   // Application Functions
   applyToHangout: (hangoutId: string, isAnonymous: boolean) => { success: boolean; error?: string };
@@ -602,6 +638,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const companionProfileSyncTimeoutRef = useRef<number | null>(null);
   const [hangouts, setHangouts] = useState<Hangout[]>(() => getStoredHangoutsSnapshot());
   const [applications, setApplications] = useState<HangoutApplication[]>(() => getStoredApplicationsSnapshot());
+  const applicationsRef = useRef<HangoutApplication[]>(getStoredApplicationsSnapshot());
   const [likes, setLikes] = useState<HangoutLike[]>(() => getStoredLikesSnapshot());
   const [comments, setComments] = useState<HangoutComment[]>(() => getStoredCommentsSnapshot());
   const [reports, setReports] = useState<Report[]>(() => getStoredReportsSnapshot());
@@ -632,6 +669,66 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
   }, []);
+
+  useEffect(() => {
+    applicationsRef.current = applications;
+  }, [applications]);
+
+  useEffect(() => {
+    if (applications.length === 0 || hangouts.length === 0) return;
+    const hangoutCreatorMap = new Map(hangouts.map(hangout => [hangout.id, hangout.creator_id]));
+    const cleanedApplications = applications.filter(
+      application => hangoutCreatorMap.get(application.hangout_id) !== application.applicant_id
+    );
+    if (cleanedApplications.length !== applications.length) {
+      void saveApplications(cleanedApplications);
+    }
+  }, [applications, hangouts]);
+
+  useEffect(() => {
+    const hydrateAccessibleHangouts = async () => {
+      if (!currentUser?.id) return;
+
+      try {
+        const acceptedHangoutIds = applications
+          .filter(application => application.applicant_id === currentUser.id && application.status === "accepted")
+          .map(application => application.hangout_id);
+
+        const accessibleHangouts: Hangout[] = [];
+
+        const { data: ownedData, error: ownedError } = await supabase.from("xmum_hangouts").select("*").eq("creator_id", currentUser.id);
+        if (!ownedError && ownedData?.length) {
+          accessibleHangouts.push(...(ownedData as Hangout[]));
+        }
+
+        if (acceptedHangoutIds.length > 0) {
+          const { data: acceptedData, error: acceptedError } = await supabase
+            .from("xmum_hangouts")
+            .select("*")
+            .in("id", acceptedHangoutIds);
+
+          if (!acceptedError && acceptedData?.length) {
+            accessibleHangouts.push(...(acceptedData as Hangout[]));
+          }
+        }
+
+        if (accessibleHangouts.length === 0) return;
+
+        setHangouts(prev => {
+          const merged = mergeHangoutCollections(accessibleHangouts, prev);
+          if (JSON.stringify(merged) === JSON.stringify(prev)) {
+            return prev;
+          }
+          localStorage.setItem("xmum_hangouts", JSON.stringify(merged));
+          return merged;
+        });
+      } catch (error) {
+        console.warn("Failed to hydrate accessible hangouts from base table:", error);
+      }
+    };
+
+    void hydrateAccessibleHangouts();
+  }, [currentUser?.id, applications]);
 
   // Rate limits state tracker for simulation
   const [lastHangoutCreatedTime, setLastHangoutCreatedTime] = useState<number>(0);
@@ -990,6 +1087,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     id: c.id,
     hangout_id: c.hangout_id,
     user_id: c.user_id,
+    is_anonymous: Boolean(c.is_anonymous),
     parent_comment_id: c.parent_comment_id || null,
     content: c.content,
     created_at: c.created_at
@@ -1356,8 +1454,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ]);
 
         const browserLocalHangouts = getStoredHangoutsSnapshot();
-        let finalHangouts = mergeByField(
-          mergeByField(dbHangoutsRaw, localHangouts),
+        let finalHangouts = mergeHangoutCollections(
+          mergeHangoutCollections(dbHangoutsRaw, localHangouts),
           browserLocalHangouts
         );
 
@@ -1477,10 +1575,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const activeHangoutIds = new Set(cleanHangouts.map(hangout => hangout.id));
         setHangouts(cleanHangouts);
         localStorage.setItem("xmum_hangouts", JSON.stringify(cleanHangouts));
-        void syncHangoutsToRemote(cleanHangouts);
 
         // --- 3. Applications ---
-        let finalApps = mergeByField(dbAppsRaw, localApps);
+        const browserLocalApplications = getStoredApplicationsSnapshot(activeHangoutIds);
+        let finalApps = mergeByField(
+          mergeByField(dbAppsRaw, localApps),
+          browserLocalApplications
+        );
 
         if (finalApps.length === 0 && demoDataEnabled) {
           const seedApps: HangoutApplication[] = [
@@ -1861,67 +1962,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const saveHangouts = async (data: Hangout[]) => {
-    setHangouts(data);
-    localStorage.setItem("xmum_hangouts", JSON.stringify(data));
+    const normalizedData = mergeHangoutCollections(data, hangouts);
+    setHangouts(normalizedData);
+    localStorage.setItem("xmum_hangouts", JSON.stringify(normalizedData));
 
     const persistHangouts = async (items: Hangout[]) => {
       try {
-        await fetch("/api/hangouts/sync", {
+        const response = await fetch("/api/hangouts/sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ hangouts: items })
         });
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.warn("Hangouts sync failed:", errorText);
+        }
       } catch (syncErr) {
         console.warn("Local backend hangouts mirror sync failed:", syncErr);
       }
-
-      try {
-        if (items.length > 0) {
-          await supabase.from("xmum_hangouts").upsert(items.map(item => sanitizeHangout(item)));
-        }
-      } catch (e) {
-        console.error("Hangouts sync exception:", e);
-      }
     };
 
-    await persistHangouts(data);
+    await persistHangouts(normalizedData);
   };
 
   const syncHangoutsToRemote = async (data: Hangout[]) => {
     if (data.length === 0) return;
+    const normalizedData = mergeHangoutCollections(data, hangouts);
     try {
-      await fetch("/api/hangouts/sync", {
+      const response = await fetch("/api/hangouts/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hangouts: data })
+        body: JSON.stringify({ hangouts: normalizedData })
       });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.warn("Hangouts sync failed:", errorText);
+      }
     } catch (syncErr) {
       console.warn("Local backend hangouts mirror sync failed:", syncErr);
     }
-
-    try {
-      await supabase.from("xmum_hangouts").upsert(data.map(item => sanitizeHangout(item)));
-    } catch (e) {
-      console.error("Hangouts sync exception:", e);
-    }
   };
   const saveApplications = async (data: HangoutApplication[]) => {
-    const prev = applications;
-    setApplications(data);
-    localStorage.setItem("xmum_applications", JSON.stringify(data));
+    const dedupedData = Array.from(
+      new Map(data.map(item => [item.id, item])).values()
+    );
+    const hangoutCreatorMap = new Map(hangouts.map(hangout => [hangout.id, hangout.creator_id]));
+    const normalizedData = dedupedData.filter(
+      application => hangoutCreatorMap.get(application.hangout_id) !== application.applicant_id
+    );
+    const prev = applicationsRef.current;
+    applicationsRef.current = normalizedData;
+    setApplications(normalizedData);
+    localStorage.setItem("xmum_applications", JSON.stringify(normalizedData));
 
     try {
       await fetch("/api/applications/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ applications: data })
+        body: JSON.stringify({ applications: normalizedData })
       });
     } catch (syncErr) {
       console.warn("Local backend applications mirror sync failed:", syncErr);
     }
 
     try {
-      const changed = data.filter(item => {
+      const changed = normalizedData.filter(item => {
         const matchingPrev = prev.find(a => a.id === item.id);
         return !matchingPrev || JSON.stringify(matchingPrev) !== JSON.stringify(item);
       });
@@ -2351,6 +2456,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: "comment_" + Math.random().toString(36).substring(2, 11),
       hangout_id: hangout.id,
       user_id: hangout.creator_id,
+      is_anonymous: false,
       parent_comment_id: null,
       content: serializeHangoutEditHistoryEntry({
         at: new Date().toISOString(),
@@ -3257,7 +3363,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Comments
-  const addComment = (hangoutId: string, content: string, parentCommentId: string | null = null) => {
+  const addComment = (
+    hangoutId: string,
+    content: string,
+    parentCommentId: string | null = null,
+    isAnonymous = false
+  ) => {
     if (!currentUser) return { success: false, error: "Please log in to leave a comment." };
     if (!currentUser.is_profile_complete) return { success: false, error: "Please complete your profile first." };
     if (!content.trim()) return { success: false, error: "Comment cannot be empty." };
@@ -3312,6 +3423,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: "comment_" + Math.random().toString(36).substring(2, 11),
       hangout_id: hangoutId,
       user_id: currentUser.id,
+      is_anonymous: Boolean(isAnonymous),
       parent_comment_id: parentCommentId,
       content: content.trim(),
       created_at: new Date().toISOString()
@@ -3328,6 +3440,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         : targetHangout.creator_id;
 
       if (notifyUserId && notifyUserId !== currentUser.id) {
+        const commenterLabel = isAnonymous ? "An anonymous student" : currentUser.name;
         const newNotif: AppNotification = {
           id: "notif_" + Math.random().toString(36).substring(2, 11),
           user_id: notifyUserId,
@@ -3335,7 +3448,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           payload: {
             hangout_id: hangoutId,
             comment_id: newComment.id,
-            custom_text: `${currentUser.name} left a comment on your post: "${content.substring(0, 20)}..."`
+            custom_text: `${commenterLabel} left a comment on your post: "${content.substring(0, 20)}..."`
           },
           is_read: false,
           created_at: new Date().toISOString()
@@ -3353,8 +3466,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!currentUser) return { success: false, error: "Please log in to apply." };
     if (!currentUser.is_profile_complete) return { success: false, error: "Please complete your profile to apply." };
 
+    const latestApplications = applicationsRef.current;
     const targetHangout = hangouts.find(h => h.id === hangoutId);
     if (!targetHangout) return { success: false, error: "Hangout not found." };
+    if (targetHangout.creator_id === currentUser.id) {
+      const cleanedApplications = latestApplications.filter(
+        application => !(application.hangout_id === hangoutId && application.applicant_id === currentUser.id)
+      );
+      if (cleanedApplications.length !== latestApplications.length) {
+        void saveApplications(cleanedApplications);
+      }
+      return { success: false, error: "You cannot apply to your own hangout." };
+    }
 
     // Check Eligibility
     const { eligible, reasons } = isEligibleForHangout(currentUser, targetHangout);
@@ -3372,7 +3495,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // Check existing application
-    const existingApp = applications.find(a => a.hangout_id === hangoutId && a.applicant_id === currentUser.id && a.status !== "retracted");
+    const existingApp = latestApplications.find(
+      a => a.hangout_id === hangoutId && a.applicant_id === currentUser.id && a.status !== "retracted"
+    );
     if (existingApp) {
       return { success: false, error: "You have already applied to this hangout." };
     }
@@ -3388,7 +3513,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updated_at: new Date().toISOString()
     };
 
-    saveApplications([...applications, newApp]);
+    saveApplications([...latestApplications, newApp]);
 
     // Send notification to hangout creator
     const newNotif: AppNotification = {
@@ -3409,7 +3534,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const retractApplication = (applicationId: string) => {
-    const updated = applications.map(app => {
+    const latestApplications = applicationsRef.current;
+    const updated = latestApplications.map(app => {
       if (app.id === applicationId) {
         // Find hangout to notify creator
         const targetHangout = hangouts.find(h => h.id === app.hangout_id);
@@ -3437,13 +3563,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const manageApplication = (applicationId: string, status: "accepted" | "rejected", rejectMessage?: string) => {
-    const targetApp = applications.find(a => a.id === applicationId);
+    const latestApplications = applicationsRef.current;
+    const targetApp = latestApplications.find(a => a.id === applicationId);
     if (!targetApp) return;
 
     const targetHangout = hangouts.find(h => h.id === targetApp.hangout_id);
     if (!targetHangout) return;
 
-    const nextApps = applications.map(app => {
+    const nextApps = latestApplications.map(app => {
       if (app.id === applicationId) {
         return { 
           ...app, 
@@ -3597,7 +3724,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       saveBlocks([...blocks, newBlock]);
 
       // Remove any pending applications between them both
-      saveApplications(applications.map(app => {
+      saveApplications(applicationsRef.current.map(app => {
         const creatorId = hangouts.find(h => h.id === app.hangout_id)?.creator_id;
         if (
           (app.applicant_id === currentUser.id && creatorId === otherUserId) ||

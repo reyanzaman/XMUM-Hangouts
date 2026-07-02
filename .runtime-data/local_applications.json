@@ -1,1 +1,32 @@
-[]
+[
+  {
+    "id": "app_rc3n2xada",
+    "hangout_id": "hangout_tj6b5cfie",
+    "applicant_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "is_anonymous": false,
+    "status": "pending",
+    "rejection_message": null,
+    "created_at": "2026-07-02T16:55:59.789Z",
+    "updated_at": "2026-07-02T16:55:59.789Z"
+  },
+  {
+    "id": "app_sw43lfywj",
+    "hangout_id": "hangout_odi2os3nw",
+    "applicant_id": "62af49a3-b92d-4253-a8e5-8d560f86e7ef",
+    "is_anonymous": false,
+    "status": "accepted",
+    "rejection_message": null,
+    "created_at": "2026-07-02T17:01:05.422Z",
+    "updated_at": "2026-07-02T17:39:20.688Z"
+  },
+  {
+    "id": "app_f2mlx227a",
+    "hangout_id": "hangout_61stot4ql",
+    "applicant_id": "62af49a3-b92d-4253-a8e5-8d560f86e7ef",
+    "is_anonymous": false,
+    "status": "rejected",
+    "rejection_message": "Sorry but I hate studying under Dr. Mahdi.",
+    "created_at": "2026-07-02T17:04:44.768Z",
+    "updated_at": "2026-07-02T17:39:39.296Z"
+  }
+]

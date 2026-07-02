@@ -191,6 +191,114 @@ function sanitizeBlocks(rows: any[]) {
   return Array.from(latestByPair.values());
 }
 
+const LOCKED_MEETING_POINT_MARKERS = [
+  "apply and get accepted to unlock",
+  "visible after the host approves your request"
+];
+
+function isLockedMeetingPointPlaceholder(value: unknown) {
+  const normalizedValue = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return LOCKED_MEETING_POINT_MARKERS.some(marker => normalizedValue.includes(marker));
+}
+
+function sanitizeHangoutRestrictions(restrictions: any) {
+  const source = restrictions && typeof restrictions === "object" ? restrictions : {};
+  const toArray = (value: unknown) => (Array.isArray(value) ? value.filter(item => typeof item === "string") : []);
+  const toNullableNumber = (value: unknown) => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  return {
+    countries: toArray(source.countries),
+    languages: toArray(source.languages),
+    programs: toArray(source.programs),
+    years: toArray(source.years),
+    student_types: toArray(source.student_types),
+    age_min: toNullableNumber(source.age_min),
+    age_max: toNullableNumber(source.age_max),
+    genders: toArray(source.genders)
+  };
+}
+
+function sanitizeHangoutForDatabase(hangout: any) {
+  return {
+    id: hangout.id,
+    creator_id: hangout.creator_id,
+    intention: typeof hangout.intention === "string" ? hangout.intention.trim() : "",
+    location: typeof hangout.location === "string" ? hangout.location.trim() : "",
+    event_datetime: hangout.event_datetime,
+    meeting_point: typeof hangout.meeting_point === "string" ? hangout.meeting_point.trim() : "",
+    additional_info: typeof hangout.additional_info === "string" ? hangout.additional_info.trim() : "",
+    max_participants:
+      hangout.max_participants === null || hangout.max_participants === undefined || hangout.max_participants === ""
+        ? null
+        : Number(hangout.max_participants),
+    restrictions: sanitizeHangoutRestrictions(hangout.restrictions),
+    status: hangout.status,
+    created_at: hangout.created_at,
+    updated_at: hangout.updated_at,
+    is_anonymous: Boolean(hangout.is_anonymous)
+  };
+}
+
+function sanitizeCommentForDatabase(comment: any) {
+  return {
+    id: comment.id,
+    hangout_id: comment.hangout_id,
+    user_id: comment.user_id,
+    is_anonymous: Boolean(comment.is_anonymous),
+    parent_comment_id: comment.parent_comment_id || null,
+    content: comment.content,
+    created_at: comment.created_at
+  };
+}
+
+async function prepareHangoutRowsForPersistence(rows: any[]) {
+  const sanitizedRows = rows.map(sanitizeHangoutForDatabase).filter(row => row?.id);
+  if (!supabaseAdmin || sanitizedRows.length === 0) {
+    return sanitizedRows;
+  }
+
+  const ids = Array.from(new Set(sanitizedRows.map(row => row.id).filter(Boolean)));
+  const existingById = new Map<string, any>();
+  const chunkSize = 100;
+
+  for (let index = 0; index < ids.length; index += chunkSize) {
+    const chunk = ids.slice(index, index + chunkSize);
+    const { data, error } = await supabaseAdmin.from("xmum_hangouts").select("*").in("id", chunk);
+    if (error) {
+      throw error;
+    }
+
+    for (const row of data || []) {
+      if (row?.id) {
+        existingById.set(row.id, row);
+      }
+    }
+  }
+
+  return sanitizedRows.map(row => {
+    const existing = existingById.get(row.id);
+    const existingMeetingPoint = typeof existing?.meeting_point === "string" ? existing.meeting_point.trim() : "";
+    const needsPreservedMeetingPoint = !row.meeting_point || isLockedMeetingPointPlaceholder(row.meeting_point);
+
+    if (
+      needsPreservedMeetingPoint &&
+      existingMeetingPoint &&
+      !isLockedMeetingPointPlaceholder(existingMeetingPoint)
+    ) {
+      return {
+        ...row,
+        meeting_point: existingMeetingPoint
+      };
+    }
+
+    return row;
+  });
+}
+
 function buildDeletedUserProfile() {
   return {
     id: SYSTEM_DELETED_USER_ID,
@@ -1457,7 +1565,7 @@ async function startServer() {
     fileName: string;
     table: string;
     localProfileMode?: boolean;
-    transformRows?: (rows: any[]) => any[];
+    transformRows?: (rows: any[]) => any[] | Promise<any[]>;
     removedIdsKey?: string;
   }) => {
     const { getPath, postPath, payloadKey, fileName, table, localProfileMode, transformRows, removedIdsKey } = options;
@@ -1476,7 +1584,7 @@ async function startServer() {
           return res.status(400).json({ error: "Invalid payload: must be array." });
         }
 
-        const transformedData = transformRows ? transformRows(data) : data;
+        const transformedData = transformRows ? await transformRows(data) : data;
         const removedIds = Array.isArray(req.body?.[removedIdsKey || ""])
           ? req.body[removedIdsKey || ""].filter((id: unknown) => typeof id === "string" && id.trim().length > 0)
           : [];
@@ -1514,14 +1622,16 @@ async function startServer() {
     postPath: "/api/hangouts/sync",
     payloadKey: "hangouts",
     fileName: LOCAL_HANGOUTS_FILE,
-    table: "xmum_hangouts"
+    table: "xmum_hangouts",
+    transformRows: rows => prepareHangoutRowsForPersistence(rows)
   });
   registerSyncRoute({
     getPath: "/api/comments",
     postPath: "/api/comments/sync",
     payloadKey: "comments",
     fileName: LOCAL_COMMENTS_FILE,
-    table: "xmum_comments"
+    table: "xmum_comments",
+    transformRows: rows => rows.map(sanitizeCommentForDatabase)
   });
   registerSyncRoute({
     getPath: "/api/applications",
@@ -1748,10 +1858,13 @@ async function startServer() {
       ];
 
       saveLocalProfiles(nextProfiles);
-      saveLocalData(LOCAL_HANGOUTS_FILE, nextHangouts);
+      const persistedHangouts = await prepareHangoutRowsForPersistence(nextHangouts);
+      const persistedComments = nextComments.map(sanitizeCommentForDatabase);
+
+      saveLocalData(LOCAL_HANGOUTS_FILE, persistedHangouts);
       saveLocalData(LOCAL_APPLICATIONS_FILE, nextApplications);
       saveLocalData(LOCAL_LIKES_FILE, nextLikes);
-      saveLocalData(LOCAL_COMMENTS_FILE, nextComments);
+      saveLocalData(LOCAL_COMMENTS_FILE, persistedComments);
       saveLocalData(LOCAL_CHATS_FILE, nextChats);
       saveLocalData(LOCAL_MESSAGES_FILE, nextMessages);
       saveLocalData(LOCAL_REPORTS_FILE, nextReports);
@@ -1760,8 +1873,8 @@ async function startServer() {
       saveLocalData(LOCAL_NOTIFICATIONS_FILE, nextNotifications);
 
       await supabaseAdmin.from("xmum_profiles").upsert([sanitizeProfileForDatabase(deletedUserProfile)]);
-      await supabaseAdmin.from("xmum_hangouts").upsert(nextHangouts);
-      await supabaseAdmin.from("xmum_comments").upsert(nextComments);
+      await supabaseAdmin.from("xmum_hangouts").upsert(persistedHangouts);
+      await supabaseAdmin.from("xmum_comments").upsert(persistedComments);
       await supabaseAdmin.from("xmum_notifications").upsert(nextNotifications);
 
       await deleteRowsByIds(
@@ -1815,10 +1928,10 @@ async function startServer() {
       return res.status(200).json({
         success: true,
         profiles: nextProfiles,
-        hangouts: nextHangouts,
+        hangouts: persistedHangouts,
         applications: nextApplications,
         likes: nextLikes,
-        comments: nextComments,
+        comments: persistedComments,
         chats: nextChats,
         messages: nextMessages,
         reports: nextReports,

@@ -3,11 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Hangout, Profile, HangoutComment, HangoutApplication } from "../types";
 import { useApp } from "../context/AppContext";
 import { motion, AnimatePresence } from "motion/react";
 import { isHangoutEditHistoryComment, parseHangoutEditHistoryEntry } from "../lib/hangouts";
+import { buildAnonymousAliasProfile } from "../lib/profiles";
 import { AvatarSVG } from "./AvatarSVG";
 import { ProfileCard } from "./ProfileCard";
 import { ApplicantList } from "./ApplicantList";
@@ -25,6 +26,7 @@ import {
   AlertTriangle,
   Lock,
   Send,
+  EyeOff,
   Flag,
   Trash2,
   X,
@@ -41,6 +43,11 @@ import {
 interface HangoutCardProps {
   hangout: Hangout;
   onReportCreator: () => void;
+  commentResetKey: string;
+  notificationTarget?: {
+    hangoutId?: string;
+    commentId?: string;
+  } | null;
 }
 
 const ANONYMOUS_ANIMALS = [
@@ -54,7 +61,12 @@ const ANONYMOUS_ANIMALS = [
   { name: "Frog 🐸", avatar: "frog" }
 ];
 
-export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreator }) => {
+export const HangoutCard: React.FC<HangoutCardProps> = ({
+  hangout,
+  onReportCreator,
+  commentResetKey,
+  notificationTarget
+}) => {
   const {
     currentUser,
     profiles,
@@ -83,10 +95,23 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
   // Comments form
   const [newCommentText, setNewCommentText] = useState("");
   const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
+  const [commentAnonymously, setCommentAnonymously] = useState(false);
 
   // Apply inputs
   const [showJoinConfirm, setShowJoinConfirm] = useState(false);
   const [applyAnonymously, setApplyAnonymously] = useState(false);
+
+  useEffect(() => {
+    setShowComments(false);
+    setReplyToCommentId(null);
+  }, [commentResetKey]);
+
+  useEffect(() => {
+    if (notificationTarget?.hangoutId === hangout.id && notificationTarget.commentId) {
+      setShowComments(true);
+      setShowApplicants(false);
+    }
+  }, [hangout.id, notificationTarget]);
 
   // Helpers to resolve items
   const realCreator = profiles.find(p => p.id === hangout.creator_id);
@@ -98,26 +123,13 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
     Boolean(hangout.is_anonymous) &&
     (Boolean(isCreatorMe) || (!isAcceptedApplicant && !currentUser?.is_admin));
 
-  const getAnonAnimal = (id: string) => {
-    let hash = 0;
-    for (let i = 0; i < id.length; i++) {
-      hash += id.charCodeAt(i);
-    }
-    return ANONYMOUS_ANIMALS[hash % ANONYMOUS_ANIMALS.length];
-  };
-
-  const anonAnimal = getAnonAnimal(hangout.creator_id);
+  const anonymousCreatorProfile = buildAnonymousAliasProfile(realCreator, {
+    seed: hangout.creator_id,
+    aboutMe: "This student is hosting this hangout anonymously to protect their privacy on the public feed."
+  });
 
   const creator = shouldMaskAnonymousOnCard
-    ? {
-        id: hangout.creator_id,
-        name: `Anonymous ${anonAnimal.name}`,
-        avatar_id: anonAnimal.avatar,
-        flag_status: realCreator?.flag_status || ("none" as const),
-        hide_details: true,
-        is_admin: false,
-        about_me: "This student is hosting this hangout anonymously to protect their privacy on the public feed."
-      }
+    ? anonymousCreatorProfile
     : (realCreator || {
         id: "unknown",
         name: "XMUM Student",
@@ -204,10 +216,11 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
   const handleAddCommentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCommentText.trim()) return;
-    const { success } = addComment(hangout.id, newCommentText, replyToCommentId);
+    const { success } = addComment(hangout.id, newCommentText, replyToCommentId, commentAnonymously);
     if (success) {
       setNewCommentText("");
       setReplyToCommentId(null);
+      setCommentAnonymously(false);
     }
   };
 
@@ -236,30 +249,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
           id={`view-creator-profile-${hangout.id}`}
           onClick={() => {
             if (hangout.is_anonymous && shouldMaskAnonymousOnCard && !isCreatorMe) {
-              const anonProfile: Profile = {
-                id: hangout.creator_id,
-                email: "",
-                student_id: "",
-                name: `Anonymous ${anonAnimal.name}`,
-                name_last_changed_at: null,
-                country: realCreator?.country || "Malaysia",
-                country_last_changed_at: null,
-                languages: realCreator?.languages || [],
-                age: realCreator?.age || 20,
-                program: realCreator?.program || "Undergraduate",
-                year_of_study: realCreator?.year_of_study || "Year 1",
-                gender: realCreator?.gender || "other",
-                student_type: realCreator?.student_type || "degree",
-                about_me: "This student is hosting this hangout anonymously to protect their privacy on the public feed.",
-                avatar_id: anonAnimal.avatar,
-                is_profile_complete: true,
-                hide_details: true,
-                is_admin: false,
-                is_blocked_globally: false,
-                flag_status: realCreator?.flag_status || "none",
-                appeal_count: realCreator?.appeal_count || 0
-              };
-              setViewedProfile(anonProfile);
+              setViewedProfile(anonymousCreatorProfile);
               return;
             }
             setViewedProfile(creator as Profile);
@@ -281,7 +271,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
                   ({realCreator?.name})
                 </span>
               )}
-              {renderGenderIcon(realCreator?.gender || "other")}
+              {renderGenderIcon(creator.gender || realCreator?.gender || "other")}
             </div>
             {realCreator ? (
               <span className="text-[10px] text-slate-400 block mt-0.5 truncate max-w-[200px] sm:max-w-xs font-medium">
@@ -662,7 +652,37 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
           <div className="space-y-3 max-h-56 overflow-y-auto">
             {myComments.length === 0 ? null : (
               myComments.map(c => {
-                const author = (currentUser && c.user_id === currentUser.id) ? currentUser : (profiles.find(p => p.id === c.user_id) || { name: "Student", avatar_id: "panda" });
+                const realAuthor =
+                  (currentUser && c.user_id === currentUser.id) ? currentUser : profiles.find(p => p.id === c.user_id);
+                const canRevealCommentAuthor = Boolean(currentUser?.is_admin || currentUser?.id === c.user_id);
+                const author = c.is_anonymous && !canRevealCommentAuthor
+                  ? buildAnonymousAliasProfile(realAuthor, {
+                      seed: c.user_id,
+                      aboutMe: "This student left a discussion comment anonymously."
+                    })
+                  : (realAuthor || {
+                      id: c.user_id,
+                      email: "",
+                      student_id: "",
+                      name: "Student",
+                      name_last_changed_at: null,
+                      country: "Malaysia",
+                      country_last_changed_at: null,
+                      languages: [],
+                      age: 20,
+                      program: "Not Specified",
+                      year_of_study: "Not Specified",
+                      gender: "Prefer not to say",
+                      student_type: "Not Specified",
+                      about_me: "",
+                      avatar_id: "panda",
+                      is_profile_complete: true,
+                      hide_details: false,
+                      is_admin: false,
+                      is_blocked_globally: false,
+                      flag_status: "none" as const,
+                      appeal_count: 0
+                    });
                 const lovesCount = commentLikes.filter(lk => lk.comment_id === c.id).length;
                 const isLovedByMe = currentUser && commentLikes.some(lk => lk.comment_id === c.id && lk.user_id === currentUser.id);
                 return (
@@ -672,10 +692,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
                       <div className="flex justify-between items-center mb-0.5">
                         <button
                           type="button"
-                          onClick={() => {
-                            const p = (currentUser && c.user_id === currentUser.id) ? currentUser : profiles.find(x => x.id === c.user_id);
-                            if (p) setViewedProfile(p);
-                          }}
+                          onClick={() => setViewedProfile(author)}
                           className="font-bold text-rose-600 hover:text-rose-700 hover:underline transition-all text-left truncate cursor-pointer max-w-[120px] sm:max-w-[200px]"
                         >
                           {author.name}
@@ -710,22 +727,37 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({ hangout, onReportCreat
           {/* Add a comment form */}
           {currentUser ? (
             <form onSubmit={handleAddCommentSubmit} className="flex gap-2">
-              <input
-                id={`comment-input-${hangout.id}`}
-                type="text"
-                value={newCommentText}
-                onChange={e => setNewCommentText(e.target.value)}
-                placeholder="Ask a question or discuss..."
-                className="flex-grow bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-700 outline-none focus:ring-1 focus:ring-rose-400 placeholder-gray-400"
-              />
-              <button
-                id={`comment-send-btn-${hangout.id}`}
-                type="submit"
-                className="bg-rose-500 hover:bg-rose-600 text-white rounded-xl p-2.5 transition-colors"
-                title="Comment"
-              >
-                <Send className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex flex-1 gap-2">
+                <input
+                  id={`comment-input-${hangout.id}`}
+                  type="text"
+                  value={newCommentText}
+                  onChange={e => setNewCommentText(e.target.value)}
+                  placeholder="Ask a question or discuss..."
+                  className="flex-grow bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-700 outline-none focus:ring-1 focus:ring-rose-400 placeholder-gray-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setCommentAnonymously(prev => !prev)}
+                  className={`rounded-xl border px-2.5 transition-colors ${
+                    commentAnonymously
+                      ? "border-rose-300 bg-rose-50 text-rose-600"
+                      : "border-gray-200 bg-white text-gray-400 hover:bg-slate-50 hover:text-gray-600"
+                  }`}
+                  title={commentAnonymously ? "Anonymous comment enabled" : "Comment anonymously"}
+                  aria-label={commentAnonymously ? "Anonymous comment enabled" : "Comment anonymously"}
+                >
+                  <EyeOff className="h-4 w-4" />
+                </button>
+                <button
+                  id={`comment-send-btn-${hangout.id}`}
+                  type="submit"
+                  className="bg-rose-500 hover:bg-rose-600 text-white rounded-xl p-2.5 transition-colors"
+                  title="Comment"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </form>
           ) : (
             <p className="text-[11px] text-gray-400 text-center">Please login to write a comment.</p>

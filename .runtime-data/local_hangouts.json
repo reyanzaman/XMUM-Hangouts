@@ -110,5 +110,53 @@
     "updated_at": "2026-06-30T18:52:24.616Z",
     "is_anonymous": false,
     "meeting_point": "🔒 [Apply and get accepted to unlock]"
+  },
+  {
+    "id": "hangout_tj6b5cfie",
+    "creator_id": "user_odir44fcp",
+    "intention": "Start a pyramid scheme who's with me",
+    "location": "Egypt",
+    "event_datetime": "2026-07-02T17:30:00.000Z",
+    "additional_info": "(for legal reasons, I'm just helping test the app)",
+    "max_participants": null,
+    "restrictions": {
+      "years": [],
+      "age_max": null,
+      "age_min": null,
+      "genders": [],
+      "programs": [],
+      "countries": [],
+      "languages": [],
+      "student_types": []
+    },
+    "status": "active",
+    "created_at": "2026-07-02T16:54:01.823Z",
+    "updated_at": "2026-07-02T16:54:01.823Z",
+    "is_anonymous": true,
+    "meeting_point": "🔒 [Apply and get accepted to unlock]"
+  },
+  {
+    "id": "hangout_pajh6tgeq",
+    "creator_id": "62af49a3-b92d-4253-a8e5-8d560f86e7ef",
+    "intention": "Swim",
+    "location": "B1",
+    "event_datetime": "2026-07-02T20:02:00.000Z",
+    "additional_info": "For people who love to be in good health, swimming is the best exercise",
+    "max_participants": null,
+    "restrictions": {
+      "years": [],
+      "age_max": null,
+      "age_min": null,
+      "genders": [],
+      "programs": [],
+      "countries": [],
+      "languages": [],
+      "student_types": []
+    },
+    "status": "active",
+    "created_at": "2026-07-02T17:03:48.093Z",
+    "updated_at": "2026-07-02T17:03:48.093Z",
+    "is_anonymous": false,
+    "meeting_point": "🔒 [Apply and get accepted to unlock]"
   }
 ]

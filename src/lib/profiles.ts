@@ -8,6 +8,69 @@ export const DEMO_PROFILE_EMAILS = new Set([
   "xiaoming@xmu.edu.my"
 ]);
 const SYNTHETIC_PROFILE_PATTERN = /^(test|demo|mock|sample|dummy)([._-]|$)/i;
+const ANONYMOUS_PROFILE_VARIANTS = [
+  { label: "Panda", avatarId: "panda" },
+  { label: "Kitten", avatarId: "cat" },
+  { label: "Bunny", avatarId: "bunny" },
+  { label: "Bear", avatarId: "bear" },
+  { label: "Fox", avatarId: "fox" },
+  { label: "Koala", avatarId: "koala" },
+  { label: "Owl", avatarId: "owl" },
+  { label: "Frog", avatarId: "frog" }
+] as const;
+
+export function getAnonymousProfileVariant(seed: string) {
+  const normalizedSeed = seed.trim() || "anonymous";
+  let hash = 0;
+
+  for (let index = 0; index < normalizedSeed.length; index += 1) {
+    hash += normalizedSeed.charCodeAt(index);
+  }
+
+  return ANONYMOUS_PROFILE_VARIANTS[Math.abs(hash) % ANONYMOUS_PROFILE_VARIANTS.length];
+}
+
+export function buildAnonymousAliasProfile(
+  profile: Profile | null | undefined,
+  options?: {
+    seed?: string;
+    aboutMe?: string;
+    hideDetails?: boolean;
+  }
+): Profile {
+  const seed = options?.seed || profile?.id || "anonymous";
+  const variant = getAnonymousProfileVariant(seed);
+
+  return {
+    id: profile?.id || seed,
+    email: "",
+    student_id: "",
+    name: `Anonymous ${variant.label}`,
+    name_last_changed_at: null,
+    country: profile?.country || "Malaysia",
+    country_last_changed_at: null,
+    languages: Array.isArray(profile?.languages) ? profile.languages : [],
+    age: profile?.age || 20,
+    birthdate: profile?.birthdate,
+    program: profile?.program || "Undergraduate",
+    year_of_study: profile?.year_of_study || "Year 1",
+    gender: profile?.gender || "Prefer not to say",
+    student_type: profile?.student_type || "degree",
+    about_me:
+      options?.aboutMe || "This student is staying anonymous while still sharing a few verified basics.",
+    avatar_id: variant.avatarId,
+    is_profile_complete: true,
+    hide_details: options?.hideDetails ?? true,
+    is_admin: false,
+    is_blocked_globally: Boolean(profile?.is_blocked_globally),
+    flag_status: profile?.flag_status || "none",
+    appeal_count: profile?.appeal_count || 0,
+    companion_pet_count: profile?.companion_pet_count ?? 0,
+    companion_selected_state_id: profile?.companion_selected_state_id ?? null,
+    password_hash: null,
+    is_demo_profile: false
+  };
+}
 
 export function isDemoProfile(profile: Pick<Profile, "id" | "email" | "is_demo_profile">): boolean {
   if (profile.is_demo_profile) {

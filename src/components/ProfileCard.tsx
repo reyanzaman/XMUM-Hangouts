@@ -44,6 +44,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
 
   const isFull = shouldShowFull();
   const isMe = currentUser?.id === profile.id;
+  const isSyntheticAnonymousProfile = Boolean(profile.hide_details && !profile.email && !profile.student_id);
 
   return (
     <div
@@ -138,12 +139,25 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
           </div>
         </div>
       ) : (
-        <div className="bg-gray-50 rounded-2xl p-3 text-[11px] text-gray-500 flex items-center justify-between">
-          <span className="flex items-center gap-1.5">
-            <EyeOff className="w-4.h-4 text-gray-400" />
-            Private profile details hidden based on safety settings.
-          </span>
-          {profile.hide_details && <span className="text-[10px] bg-gray-200/50 px-1.5 py-0.5 rounded font-mono">Hidden</span>}
+        <div className="bg-gray-50 rounded-2xl p-3 text-[11px] text-gray-500 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5">
+              <EyeOff className="w-4 h-4 text-gray-400" />
+              Private profile details hidden based on safety settings.
+            </span>
+            {profile.hide_details && <span className="text-[10px] bg-gray-200/50 px-1.5 py-0.5 rounded font-mono">Hidden</span>}
+          </div>
+
+          {isSyntheticAnonymousProfile && (
+            <div className="flex flex-wrap gap-2 text-[10px] font-semibold text-slate-700">
+              <span className="rounded-full bg-white px-2.5 py-1 border border-slate-200">
+                Gender: <strong className="text-slate-900">{profile.gender || "Prefer not to say"}</strong>
+              </span>
+              <span className="rounded-full bg-white px-2.5 py-1 border border-slate-200">
+                Age: <strong className="text-slate-900">{profile.age || 20}</strong>
+              </span>
+            </div>
+          )}
         </div>
       )}
 

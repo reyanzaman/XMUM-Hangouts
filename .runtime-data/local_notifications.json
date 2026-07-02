@@ -1,1 +1,46 @@
-[]
+[
+  {
+    "id": "notif_fc3zabyzb",
+    "user_id": "62af49a3-b92d-4253-a8e5-8d560f86e7ef",
+    "type": "application_rejected",
+    "payload": {
+      "hangout_id": "hangout_61stot4ql",
+      "custom_text": "Your application to \"I want to study together!...\" was declined. \"Sorry but I hate studying under Dr. Mahdi.\""
+    },
+    "is_read": false,
+    "created_at": "2026-07-02T17:39:39.296Z"
+  },
+  {
+    "id": "notif_pwov02h8u",
+    "user_id": "62af49a3-b92d-4253-a8e5-8d560f86e7ef",
+    "type": "application_accepted",
+    "payload": {
+      "hangout_id": "hangout_odi2os3nw",
+      "custom_text": "Your application to \"I want to play board game...\" was ACCEPTED! Meeting point is unlocked."
+    },
+    "is_read": false,
+    "created_at": "2026-07-02T17:39:20.688Z"
+  },
+  {
+    "id": "notif_fml9urnaq",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "type": "new_application",
+    "payload": {
+      "hangout_id": "hangout_61stot4ql",
+      "custom_text": "pcs2509001 requested to join: \"I want to study together!...\""
+    },
+    "is_read": true,
+    "created_at": "2026-07-02T17:04:44.769Z"
+  },
+  {
+    "id": "notif_uj00jx2vy",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "type": "new_application",
+    "payload": {
+      "hangout_id": "hangout_odi2os3nw",
+      "custom_text": "pcs2509001 requested to join: \"I want to play board games tog...\""
+    },
+    "is_read": true,
+    "created_at": "2026-07-02T17:01:05.423Z"
+  }
+]

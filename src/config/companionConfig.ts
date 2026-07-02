@@ -4,7 +4,9 @@ export type CompanionPose =
   | "bounce"
   | "fly"
   | "wiggle"
+  | "shimmy"
   | "spin"
+  | "snuggle"
   | "stretch"
   | "peek"
   | "dash"
@@ -155,7 +157,10 @@ export const companionDialogue = {
     "You arrived, so the whole page feels a touch cozier now.",
     "If today feels heavy, I can sit beside you and be small and brave.",
     "I am in a very good mood and my whiskers say that matters.",
-    "Let us make today feel a little kinder than yesterday."
+    "Let us make today feel a little kinder than yesterday.",
+    "I brought a tiny amount of courage and an unreasonable amount of fluff.",
+    "If you need a calm little start, I can do calm little starts all day.",
+    "I am prepared to be adorable and quietly helpful at the same time."
   ],
   wake: [
     "Good morning, {name}. Let us get things done.",
@@ -167,7 +172,9 @@ export const companionDialogue = {
     "Welcome back, {name}. I am awake and pretending to be very responsible.",
     "I heard you come back and decided that deserved a tiny happy stretch.",
     "The room feels nicer again now that you are here, {name}.",
-    "I had a small nap and a big amount of affection ready for you."
+    "I had a small nap and a big amount of affection ready for you.",
+    "You are back, {name}. I refreshed my whiskers and my morale for this.",
+    "I am so pleased to see you that I nearly did an undignified little hop."
   ],
   nap: "Zzz... Napping... soft snores.",
   signedIn: [
@@ -185,7 +192,9 @@ export const companionDialogue = {
     "I can already tell this is a good moment for a soft fresh start.",
     "You and me, {name}. We are going to make this day feel manageable.",
     "I have enough purr energy saved up for whatever today becomes.",
-    "You look like someone who deserves a peaceful little win today."
+    "You look like someone who deserves a peaceful little win today.",
+    "I am here for planning, moral support, and tiny silent cheering.",
+    "If the day gets noisy, we can still make one good calm choice at a time."
   ],
   dragAngrySignedIn: [
     "You are back, {name}. I am still grumpy, but I am listening.",
@@ -207,7 +216,9 @@ export const companionDialogue = {
     "Sign in when you are ready and I will scoot closer.",
     "I have cozy campus support prepared for you the moment you arrive.",
     "I am small, but I take welcoming people very seriously.",
-    "Once you sign in, I can keep you company properly."
+    "Once you sign in, I can keep you company properly.",
+    "University email only, please. I am fluffy, but my gatekeeping is very academic.",
+    "Use your university email and I will upgrade this greeting into full companion mode."
   ],
   pet: [
     "Meow. You are so warm.",
@@ -230,7 +241,10 @@ export const companionDialogue = {
     "That headpat was tidy, thoughtful, and deeply appreciated.",
     "You make being a campus companion feel very easy.",
     "I am trying to look composed, but that made me ridiculously happy.",
-    "A few more pats like that and I may become unbearably affectionate."
+    "A few more pats like that and I may become unbearably affectionate.",
+    "That was so gentle that even my tiny leaf looked proud.",
+    "You pet with the confidence of someone who understands emotional maintenance.",
+    "My heart is doing a neat little somersault, but in a subtle professional way."
   ],
   petHint: [
     "Tiny secret: gentle pats help me learn new cozy forms.",
@@ -241,7 +255,9 @@ export const companionDialogue = {
     "Between us, I become much fluffier when I feel adored.",
     "My next form might be hiding inside one more thoughtful headpat.",
     "I would never beg for pats. I am only offering a very strong hint.",
-    "There may be a secret relationship between kindness and cat magic."
+    "There may be a secret relationship between kindness and cat magic.",
+    "At five pets I get just a tiny bit fancier. Very modest. Very tasteful.",
+    "The early milestone is subtle, but I still preened for it."
   ],
   safety: [
     "Always meet in busy, public areas of XMUM first.",
@@ -261,7 +277,9 @@ export const companionDialogue = {
     "I am looking too. Two sets of eyes are better than one.",
     "That click had purpose. I respect purposeful clicking.",
     "Lead the way. I will bring emotional fluffiness.",
-    "I am right behind you in spirit and in tiny cat confidence."
+    "I am right behind you in spirit and in tiny cat confidence.",
+    "I felt that click in my whiskers. Something interesting is happening.",
+    "Excellent. A crisp little decision has been made."
   ],
   angryClick: [
     "Hmph. I saw that click. I am still supervising with a pout.",
@@ -281,7 +299,9 @@ export const companionDialogue = {
     "I like this part. It feels like peeking through little windows of possibility.",
     "Go slowly if you want. Good things do not need rushing.",
     "There is something soothing about browsing together like this.",
-    "I will keep you company while you wander through the options."
+    "I will keep you company while you wander through the options.",
+    "Every card is a tiny maybe. I enjoy a good maybe.",
+    "You browse like someone arranging stars into a plan."
   ],
   angryScroll: [
     "Scooting through the page while I simmer, I see.",
@@ -448,6 +468,26 @@ export const companionEventDialogue = {
 };
 
 export const companionTierStates: CompanionTierState[] = [
+  {
+    id: "leaf-bud",
+    count: 5,
+    name: "Leaf Bud",
+    summary: "A tiny leaf pin and a shy, cozy little cuddle sway.",
+    unlockLine: "5 pets reached, {name}. Leaf Bud state unlocked.",
+    particles: 12,
+    reaction: "subtle",
+    pose: "snuggle",
+    mood: "happy",
+    accessory: "none",
+    traits: ["leafpin"],
+    ambientLines: [
+      "My tiny leaf pin is trying very hard to look elegant.",
+      "Leaf Bud mode is subtle, but I am secretly thrilled about it.",
+      "Five pets already. I am feeling softly decorated."
+    ],
+    ringClass: "bg-emerald-50/75 shadow-[0_4px_12px_rgba(74,222,128,0.12)]",
+    glowClass: ""
+  },
   {
     id: "ribbon-beginner",
     count: 10,
@@ -933,7 +973,9 @@ export const companionTierStates: CompanionTierState[] = [
 
 export const companionRandomActions: CompanionAction[] = [
   { text: "I am stretching my tiny soft paws.", pose: "stretch", mood: "sleepy", accessory: "none", speechChance: 0.08 },
+  { text: "Doing a tiny shoulder shimmy because the mood feels right.", pose: "shimmy", mood: "happy", accessory: "none", speechChance: 0.08 },
   { text: "Doing a little happy spin.", pose: "spin", mood: "excited", accessory: "none", speechChance: 0.08 },
+  { text: "Tucking into a cozy little cuddle pose.", pose: "snuggle", mood: "sleepy", accessory: "none", speechChance: 0.08 },
   { text: "Chasing a virtual campus butterfly.", pose: "bounce", mood: "excited", accessory: "none", speechChance: 0.08 },
   { text: "Purring next to you, {name}.", pose: "wiggle", mood: "happy", accessory: "none", speechChance: 0.08 },
   { text: "Rolling around in a very organized way.", pose: "bounce", mood: "bouncy", accessory: "none", speechChance: 0.08 },
@@ -945,6 +987,7 @@ export const companionRandomActions: CompanionAction[] = [
   { text: "Tiny paws tucked in. I am supervising from a cozy angle.", pose: "rest", mood: "sleepy", accessory: "none", speechChance: 0.07 },
   { text: "I spotted a nice little corner and inspected it carefully.", pose: "peek", mood: "happy", accessory: "none", speechChance: 0.07 },
   { text: "I am taking three graceful steps and calling it exercise.", pose: "walk", mood: "happy", accessory: "none", speechChance: 0.07 },
+  { text: "Leaf pin check complete. Everything is sitting cutely.", pose: "snuggle", mood: "happy", accessory: "none", minPetCount: 5, speechChance: 0.08 },
   { text: "Counting tiny stars over the campus.", pose: "rest", mood: "sleepy", accessory: "moon", minPetCount: 200, speechChance: 0.08 },
   {
     text: "Study mode on. I am reviewing one neat page at a time.",
@@ -990,6 +1033,14 @@ export const companionGrumpyActions: CompanionAction[] = [
 ];
 
 export const companionRareActions: CompanionAction[] = [
+  {
+    text: "Small shimmy patrol complete. Confidence restored.",
+    pose: "shimmy",
+    mood: "happy",
+    accessory: "none",
+    speechChance: 0.16,
+    durationMs: 3600
+  },
   {
     text: "Peek patrol complete. I checked the corner and came back.",
     pose: "peek",
@@ -1169,11 +1220,27 @@ export const companionAnimations = {
     y: [0, -2, 2, -1, 1, 0],
     transition: { duration: 3.0, ease: "easeInOut" }
   },
+  shimmy: {
+    x: [0, -5, 5, -4, 4, -2, 2, 0],
+    y: [0, -1, 0, -1, 0],
+    rotate: [0, -7, 7, -5, 5, -2, 2, 0],
+    scaleY: [1, 1.04, 0.98, 1.03, 1],
+    scaleX: [1, 1.02, 0.99, 1.01, 1],
+    transition: { duration: 2.4, ease: "easeInOut" }
+  },
   spin: {
     rotate: [0, 180, 360, 350, 365, 360],
     scale: [1, 1.15, 0.85, 1.05, 0.98, 1],
     y: [0, -20, 5, -8, 0],
     transition: { duration: 4.5, ease: "easeInOut" }
+  },
+  snuggle: {
+    x: [0, -2, 2, -1, 1, 0],
+    y: [0, 1, 0, 1.5, 0],
+    rotate: [0, -3, 2, -2, 0],
+    scaleY: [1, 1.03, 1.01, 1.04, 1],
+    scaleX: [1, 1.01, 1.03, 1.01, 1],
+    transition: { duration: 3.6, ease: "easeInOut" }
   },
   stretch: {
     scaleY: [1, 1.35, 0.8, 1.15, 0.95, 1.02, 1],

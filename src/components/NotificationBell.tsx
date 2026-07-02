@@ -5,11 +5,27 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { useApp } from "../context/AppContext";
-import { Bell, Check, Trash2, X } from "lucide-react";
+import { AppNotification } from "../types";
+import {
+  Bell,
+  BellRing,
+  Check,
+  Clock3,
+  Dot,
+  Heart,
+  MessageCircle,
+  ShieldAlert,
+  Trash2,
+  UserCheck
+} from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
-export const NotificationBell: React.FC = () => {
-  const { notifications, markNotificationsAsRead, clearNotification, switchUser } = useApp();
+interface NotificationBellProps {
+  onOpenNotification: (notification: AppNotification) => void;
+}
+
+export const NotificationBell: React.FC<NotificationBellProps> = ({ onOpenNotification }) => {
+  const { notifications, markNotificationsAsRead, clearNotification } = useApp();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -37,20 +53,89 @@ export const NotificationBell: React.FC = () => {
     }
   };
 
+  const handleNotificationOpen = (notification: AppNotification) => {
+    onOpenNotification(notification);
+    setIsOpen(false);
+  };
+
+  const getNotificationMeta = (notification: AppNotification) => {
+    switch (notification.type) {
+      case "new_application":
+        return {
+          label: "Join Request",
+          icon: UserCheck,
+          accent: "text-amber-700 bg-amber-50 border-amber-100",
+          iconWrap: "bg-amber-100 text-amber-700"
+        };
+      case "application_accepted":
+        return {
+          label: "Accepted",
+          icon: Check,
+          accent: "text-teal-700 bg-teal-50 border-teal-100",
+          iconWrap: "bg-teal-100 text-teal-700"
+        };
+      case "application_rejected":
+        return {
+          label: "Update",
+          icon: BellRing,
+          accent: "text-rose-700 bg-rose-50 border-rose-100",
+          iconWrap: "bg-rose-100 text-rose-700"
+        };
+      case "comment_reply":
+        return {
+          label: "Comment",
+          icon: MessageCircle,
+          accent: "text-sky-700 bg-sky-50 border-sky-100",
+          iconWrap: "bg-sky-100 text-sky-700"
+        };
+      case "hangout_like":
+        return {
+          label: "Reaction",
+          icon: Heart,
+          accent: "text-rose-700 bg-rose-50 border-rose-100",
+          iconWrap: "bg-rose-100 text-rose-700"
+        };
+      case "upcoming_hangout_reminder":
+        return {
+          label: "Reminder",
+          icon: Clock3,
+          accent: "text-indigo-700 bg-indigo-50 border-indigo-100",
+          iconWrap: "bg-indigo-100 text-indigo-700"
+        };
+      case "report_approved":
+      case "report_appeal_result":
+      case "new_report_admin":
+        return {
+          label: "Safety",
+          icon: ShieldAlert,
+          accent: "text-purple-700 bg-purple-50 border-purple-100",
+          iconWrap: "bg-purple-100 text-purple-700"
+        };
+      default:
+        return {
+          label: "Notice",
+          icon: Bell,
+          accent: "text-slate-700 bg-slate-50 border-slate-100",
+          iconWrap: "bg-slate-100 text-slate-700"
+        };
+    }
+  };
+
   return (
     <div className="relative" ref={dropdownRef} id="notification-bell-container">
       <button
         id="notification-bell-btn"
         onClick={handleToggle}
-        className="relative p-2 text-gray-600 hover:bg-rose-50 hover:text-rose-600 rounded-full transition-colors duration-200 focus:outline-none"
+        className="relative rounded-2xl border border-transparent bg-white/70 p-2 text-gray-600 shadow-sm transition-all duration-200 hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600 hover:shadow focus:outline-none"
         title="Notifications"
       >
         <Bell className="w-6 h-6" />
         {unreadCount > 0 && (
           <span
             id="notif-count-badge"
-            className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-white ring-2 ring-white animate-bounce"
+            className="absolute -right-1 -top-1 flex min-w-5 items-center justify-center gap-0.5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white ring-2 ring-white shadow-[0_10px_22px_rgba(244,63,94,0.35)]"
           >
+            {unreadCount < 10 && <Dot className="-ml-1 h-3 w-3" />}
             {unreadCount}
           </span>
         )}
@@ -64,59 +149,120 @@ export const NotificationBell: React.FC = () => {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: -10 }}
             transition={{ duration: 0.15, ease: "easeOut" }}
-            className="absolute right-[-54px] xs:right-[-20px] sm:right-0 mt-2 w-[calc(100vw-24px)] sm:w-96 max-w-[350px] sm:max-w-none rounded-2xl bg-white py-2 shadow-xl ring-1 ring-black/5 z-50 border border-rose-100/50"
+            className="absolute right-[-54px] xs:right-[-20px] sm:right-0 z-50 mt-2 w-[calc(100vw-24px)] max-w-[360px] overflow-hidden rounded-[1.75rem] border border-rose-100/70 bg-white/95 shadow-[0_24px_70px_rgba(15,23,42,0.14)] ring-1 ring-black/5 backdrop-blur-sm sm:right-0 sm:w-[24rem] sm:max-w-none"
           >
-            <div className="flex items-center justify-between px-4 pb-2 border-b border-gray-100">
-              <h3 className="font-semibold text-gray-800 text-sm">Notifications</h3>
-              {unreadCount > 0 && (
-                <button
-                  id="mark-all-read-btn"
-                  onClick={markNotificationsAsRead}
-                  className="text-xs text-rose-500 hover:text-rose-600 flex items-center gap-1 font-medium"
-                >
-                  <Check className="w-3 h-3" /> Mark all read
-                </button>
-              )}
-            </div>
-
-            <div id="notifications-list" className="max-h-80 overflow-y-auto">
-              {myNotifications.length === 0 ? (
-                <div id="no-notifications" className="py-8 text-center text-gray-400 text-sm">
-                  <Bell className="w-8 h-8 mx-auto stroke-1 mb-2 text-gray-300" />
-                  No notifications yet. Keep hanging!
-                </div>
-              ) : (
-                myNotifications.map(notif => (
-                  <div
-                    id={`notif-${notif.id}`}
-                    key={notif.id}
-                    className={`flex gap-3 px-4 py-3 hover:bg-amber-50/30 transition-colors border-b border-gray-50 last:border-0 relative group ${
-                      !notif.is_read ? "bg-rose-50/20" : ""
-                    }`}
-                  >
-                    <div className="flex-1">
-                      <p className="text-xs text-gray-700 leading-relaxed font-sans">
-                        {notif.payload.custom_text}
-                      </p>
-                      <span className="text-[10px] text-gray-400 block mt-1 font-mono">
-                        {new Date(notif.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      {!notif.is_read && (
-                        <span className="w-2 h-2 rounded-full bg-rose-500 self-center" />
-                      )}
-                      <button
-                        id={`delete-notif-${notif.id}`}
-                        onClick={() => clearNotification(notif.id)}
-                        className="p-1 text-gray-300 hover:text-rose-500 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
+            <div className="border-b border-rose-100/70 bg-[radial-gradient(circle_at_top_left,_rgba(251,113,133,0.14),_transparent_55%),linear-gradient(180deg,_rgba(255,255,255,1),_rgba(255,241,242,0.75))] px-4 py-3.5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-rose-500 shadow-sm ring-1 ring-rose-100">
+                      <BellRing className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h3 className="font-extrabold text-slate-800 text-sm tracking-tight">Notifications</h3>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <p className="text-[11px] text-slate-500">
+                          {unreadCount > 0 ? `${unreadCount} unread update${unreadCount === 1 ? "" : "s"}` : "All caught up for now"}
+                        </p>
+                        {myNotifications.length > 0 && (
+                          <span className="rounded-full border border-white/80 bg-white/90 px-2 py-0.5 text-[10px] font-bold text-slate-500 shadow-sm">
+                            {myNotifications.length} total
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                ))
+                </div>
+                {unreadCount > 0 && (
+                  <button
+                    id="mark-all-read-btn"
+                    onClick={markNotificationsAsRead}
+                    className="shrink-0 rounded-xl border border-white/90 bg-white/90 px-2.5 py-1.5 text-[11px] font-bold text-rose-600 shadow-sm transition-colors hover:bg-rose-50 hover:text-rose-700"
+                  >
+                    Mark all read
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div id="notifications-list" className="max-h-[24rem] overflow-y-auto px-3 py-3">
+              {myNotifications.length === 0 ? (
+                <div id="no-notifications" className="py-10 text-center text-gray-400 text-sm">
+                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-300 ring-1 ring-rose-100">
+                    <Bell className="w-6 h-6 stroke-1.5" />
+                  </div>
+                  <p className="font-semibold text-slate-500">No notifications yet</p>
+                  <p className="mt-1 text-[11px] text-slate-400">Replies, approvals, and reminders will show up here.</p>
+                </div>
+              ) : (
+                myNotifications.map(notif => {
+                  const meta = getNotificationMeta(notif);
+                  const Icon = meta.icon;
+
+                  return (
+                    <div
+                      id={`notif-${notif.id}`}
+                      key={notif.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleNotificationOpen(notif)}
+                      onKeyDown={event => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          handleNotificationOpen(notif);
+                        }
+                      }}
+                      className={`group relative mb-2 flex cursor-pointer gap-3 rounded-[1.35rem] border px-3.5 py-3 transition-all last:mb-0 ${
+                        !notif.is_read
+                          ? "border-rose-100 bg-[linear-gradient(135deg,_rgba(255,241,242,0.95),_rgba(255,255,255,1))] shadow-[0_10px_30px_rgba(251,113,133,0.08)]"
+                          : "border-slate-100 bg-white hover:border-rose-100 hover:bg-slate-50/80 hover:shadow-sm"
+                      }`}
+                    >
+                      {!notif.is_read && <span className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-rose-400" />}
+
+                      <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl shadow-sm ring-1 ring-black/5 ${meta.iconWrap}`}>
+                        <Icon className="w-4 h-4" />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span className={`rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${meta.accent}`}>
+                              {meta.label}
+                            </span>
+                            {!notif.is_read && (
+                              <span className="inline-flex h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_0_4px_rgba(244,63,94,0.12)]" />
+                            )}
+                          </div>
+                          <button
+                            id={`delete-notif-${notif.id}`}
+                            onClick={event => {
+                              event.stopPropagation();
+                              clearNotification(notif.id);
+                            }}
+                            className="shrink-0 rounded-xl p-1.5 text-slate-300 opacity-70 transition-all hover:bg-white hover:text-rose-500 sm:opacity-0 sm:group-hover:opacity-100"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <p className="mt-2 text-[12px] font-medium leading-5 text-slate-700">
+                          {notif.payload.custom_text}
+                        </p>
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                          <span className="block text-[10px] font-mono text-slate-400">
+                            {new Date(notif.created_at).toLocaleDateString([], { month: "short", day: "numeric" })} at{" "}
+                            {new Date(notif.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                          <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300 transition-colors group-hover:text-rose-400">
+                            Open
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
           </motion.div>

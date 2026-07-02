@@ -1155,8 +1155,12 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     activeAnimation = companionAnimations.fly;
   } else if (companionPose === "wiggle") {
     activeAnimation = companionAnimations.wiggle;
+  } else if (companionPose === "shimmy") {
+    activeAnimation = companionAnimations.shimmy;
   } else if (companionPose === "spin") {
     activeAnimation = companionAnimations.spin;
+  } else if (companionPose === "snuggle") {
+    activeAnimation = companionAnimations.snuggle;
   } else if (companionPose === "stretch") {
     activeAnimation = companionAnimations.stretch;
   } else if (companionPose === "peek") {
@@ -1175,6 +1179,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     activeAnimation = companionAnimations.cook;
   } else if (companionPose === "exercise") {
     activeAnimation = companionAnimations.exercise;
+  } else if (companionPose === "golf") {
+    activeAnimation = companionAnimations.golf;
   };
 
   // Eyes rendering based on states

@@ -497,7 +497,7 @@ export const StudentProfilePage: React.FC = () => {
               <p className="text-[11px] text-slate-500 leading-relaxed">
                 {companionSelectedState
                   ? `${companionSelectedState.name}: ${companionSelectedState.summary}`
-                  : "Headpat the companion to unlock forms at 10, 20, 30, 40, 50, then every 50 pets up to 1000."}
+                  : "Headpat the companion to unlock forms at 5, 10, 20, 30, 40, 50, then every 50 pets up to 1000."}
               </p>
             </div>
 

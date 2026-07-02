@@ -44,7 +44,7 @@ function isConfiguredAdminEmail(email: string) {
 type SyncConfig = {
   payloadKey: string;
   table: string;
-  transformRows?: (rows: any[]) => any[];
+  transformRows?: (rows: any[]) => any[] | Promise<any[]>;
   removedIdsKey?: string;
 };
 
@@ -202,14 +202,123 @@ const sanitizeBlocks = (rows: any[]) => {
   return Array.from(latestByPair.values());
 };
 
+const LOCKED_MEETING_POINT_MARKERS = [
+  "apply and get accepted to unlock",
+  "visible after the host approves your request"
+];
+
+const isLockedMeetingPointPlaceholder = (value: unknown) => {
+  const normalizedValue = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return LOCKED_MEETING_POINT_MARKERS.some(marker => normalizedValue.includes(marker));
+};
+
+const sanitizeHangoutRestrictions = (restrictions: any) => {
+  const source = restrictions && typeof restrictions === "object" ? restrictions : {};
+  const toArray = (value: unknown) => (Array.isArray(value) ? value.filter(item => typeof item === "string") : []);
+  const toNullableNumber = (value: unknown) => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  return {
+    countries: toArray(source.countries),
+    languages: toArray(source.languages),
+    programs: toArray(source.programs),
+    years: toArray(source.years),
+    student_types: toArray(source.student_types),
+    age_min: toNullableNumber(source.age_min),
+    age_max: toNullableNumber(source.age_max),
+    genders: toArray(source.genders)
+  };
+};
+
+const sanitizeHangoutForDatabase = (hangout: any) => ({
+  id: hangout.id,
+  creator_id: hangout.creator_id,
+  intention: typeof hangout.intention === "string" ? hangout.intention.trim() : "",
+  location: typeof hangout.location === "string" ? hangout.location.trim() : "",
+  event_datetime: hangout.event_datetime,
+  meeting_point: typeof hangout.meeting_point === "string" ? hangout.meeting_point.trim() : "",
+  additional_info: typeof hangout.additional_info === "string" ? hangout.additional_info.trim() : "",
+  max_participants:
+    hangout.max_participants === null || hangout.max_participants === undefined || hangout.max_participants === ""
+      ? null
+      : Number(hangout.max_participants),
+  restrictions: sanitizeHangoutRestrictions(hangout.restrictions),
+  status: hangout.status,
+  created_at: hangout.created_at,
+  updated_at: hangout.updated_at,
+  is_anonymous: Boolean(hangout.is_anonymous)
+});
+
+const sanitizeCommentForDatabase = (comment: any) => ({
+  id: comment.id,
+  hangout_id: comment.hangout_id,
+  user_id: comment.user_id,
+  is_anonymous: Boolean(comment.is_anonymous),
+  parent_comment_id: comment.parent_comment_id || null,
+  content: comment.content,
+  created_at: comment.created_at
+});
+
+const prepareHangoutRowsForPersistence = async (rows: any[]) => {
+  const sanitizedRows = rows.map(sanitizeHangoutForDatabase).filter(row => row?.id);
+  if (!supabaseAdmin || sanitizedRows.length === 0) {
+    return sanitizedRows;
+  }
+
+  const ids = Array.from(new Set(sanitizedRows.map(row => row.id).filter(Boolean)));
+  const existingById = new Map<string, any>();
+
+  for (let index = 0; index < ids.length; index += 100) {
+    const chunk = ids.slice(index, index + 100);
+    const { data, error } = await supabaseAdmin.from("xmum_hangouts").select("*").in("id", chunk);
+    if (error) throw error;
+
+    for (const row of data || []) {
+      if (row?.id) {
+        existingById.set(row.id, row);
+      }
+    }
+  }
+
+  return sanitizedRows.map(row => {
+    const existing = existingById.get(row.id);
+    const existingMeetingPoint = typeof existing?.meeting_point === "string" ? existing.meeting_point.trim() : "";
+    const needsPreservedMeetingPoint = !row.meeting_point || isLockedMeetingPointPlaceholder(row.meeting_point);
+
+    if (
+      needsPreservedMeetingPoint &&
+      existingMeetingPoint &&
+      !isLockedMeetingPointPlaceholder(existingMeetingPoint)
+    ) {
+      return {
+        ...row,
+        meeting_point: existingMeetingPoint
+      };
+    }
+
+    return row;
+  });
+};
+
 const syncConfigs: Record<string, SyncConfig> = {
   profiles: {
     payloadKey: "profiles",
     table: "xmum_profiles",
     transformRows: rows => collapseProfilesByEmail(rows).map(sanitizeProfileForDatabase)
   },
-  hangouts: { payloadKey: "hangouts", table: "xmum_hangouts" },
-  comments: { payloadKey: "comments", table: "xmum_comments" },
+  hangouts: {
+    payloadKey: "hangouts",
+    table: "xmum_hangouts",
+    transformRows: rows => prepareHangoutRowsForPersistence(rows)
+  },
+  comments: {
+    payloadKey: "comments",
+    table: "xmum_comments",
+    transformRows: rows => rows.map(sanitizeCommentForDatabase)
+  },
   applications: { payloadKey: "applications", table: "xmum_applications" },
   likes: { payloadKey: "likes", table: "xmum_likes" },
   chats: { payloadKey: "chats", table: "xmum_chats" },
@@ -644,7 +753,7 @@ async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config
       });
     }
 
-    const rawRows = transformRows ? transformRows(data) : data;
+    const rawRows = transformRows ? await transformRows(data) : data;
     const removedIds = Array.isArray(req.body?.[removedIdsKey || ""])
       ? req.body[removedIdsKey || ""].filter((id: unknown) => typeof id === "string" && id.trim().length > 0)
       : [];
@@ -1446,8 +1555,11 @@ async function handleDeleteAccount(req: VercelRequest, res: VercelResponse) {
   ];
 
   await supabaseAdmin.from("xmum_profiles").upsert([sanitizeProfileForDatabase(deletedUserProfile)]);
-  await supabaseAdmin.from("xmum_hangouts").upsert(nextHangouts);
-  await supabaseAdmin.from("xmum_comments").upsert(nextComments);
+  const persistedHangouts = await prepareHangoutRowsForPersistence(nextHangouts);
+  const persistedComments = nextComments.map(sanitizeCommentForDatabase);
+
+  await supabaseAdmin.from("xmum_hangouts").upsert(persistedHangouts);
+  await supabaseAdmin.from("xmum_comments").upsert(persistedComments);
   await supabaseAdmin.from("xmum_notifications").upsert(nextNotifications);
 
   await deleteRowsByIds("xmum_messages", messages.filter(message => !nextMessages.some(item => item.id === message.id)).map(message => message.id));
@@ -1474,10 +1586,10 @@ async function handleDeleteAccount(req: VercelRequest, res: VercelResponse) {
   return res.status(200).json({
     success: true,
     profiles: nextProfiles,
-    hangouts: nextHangouts,
+    hangouts: persistedHangouts,
     applications: nextApplications,
     likes: nextLikes,
-    comments: nextComments,
+    comments: persistedComments,
     chats: nextChats,
     messages: nextMessages,
     reports: nextReports,
