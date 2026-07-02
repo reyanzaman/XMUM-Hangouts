@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useApp } from "../context/AppContext";
 import { AvatarSVG } from "./AvatarSVG";
+import { ChatWindowSkeleton } from "./LoadingSkeletons";
 import { Send, BookOpen, AlertCircle, MessageSquare, ShieldAlert, ArrowLeft, MoreVertical, X } from "lucide-react";
 import { Chat, Message, Profile } from "../types";
 import { motion, AnimatePresence } from "motion/react";
@@ -13,6 +14,7 @@ import { motion, AnimatePresence } from "motion/react";
 export const ChatWindow: React.FC = () => {
   const {
     currentUser,
+    isAuthInitializing,
     profiles,
     chats,
     messages,
@@ -43,6 +45,10 @@ export const ChatWindow: React.FC = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, activeChatId]);
+
+  if (isAuthInitializing && !currentUser) {
+    return <ChatWindowSkeleton />;
+  }
 
   if (!currentUser) {
     return (

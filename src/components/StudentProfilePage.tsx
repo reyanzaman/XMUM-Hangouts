@@ -10,6 +10,7 @@ import { AvatarPicker } from "./AvatarPicker";
 import { COUNTRIES, XMUM_PROGRAMS, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
 import { companionBaseStateOption, companionTierStates, getCompanionStateById, getUnlockedCompanionState } from "../config/companionConfig";
 import { resolveStoredCompanionState, writeStoredCompanionState } from "../lib/companionState";
+import { ProfilePageSkeleton } from "./LoadingSkeletons";
 import { 
   User, 
   Settings, 
@@ -34,6 +35,7 @@ import {
 export const StudentProfilePage: React.FC = () => {
   const { 
     currentUser, 
+    isAuthInitializing,
     updateProfile, 
     profiles, 
     switchUser, 
@@ -45,6 +47,10 @@ export const StudentProfilePage: React.FC = () => {
     signOutSimulated,
     deleteCurrentAccount
   } = useApp();
+
+  if (isAuthInitializing && !currentUser) {
+    return <ProfilePageSkeleton />;
+  }
 
   if (!currentUser) {
     return (

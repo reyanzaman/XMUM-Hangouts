@@ -31,6 +31,7 @@ import { ApplicantList } from "./components/ApplicantList";
 import { StudentProfilePage } from "./components/StudentProfilePage";
 import { Logo } from "./components/Logo";
 import { CampusCompanion } from "./components/CampusCompanion";
+import { ChatWindowSkeleton, FeedSkeleton, PortalSkeleton } from "./components/LoadingSkeletons";
 import {
   Sparkles,
   Search,
@@ -281,6 +282,7 @@ const AppContent: React.FC = () => {
     window.location.hash.includes("access_token=") ||
     window.location.hash.includes("refresh_token=")
   );
+  const showAppSkeletons = isAuthInitializing && !isReturningFromOAuth && !hasPendingAuthRedirect;
 
   // Navigation states
   const [activeTab, setActiveTab] = useState<"feed" | "create" | "profile" | "my-plans" | "chats" | "admin" | "terms" | "privacy" | "safety" | "about" | "donation" | "bug-report">("feed");
@@ -791,6 +793,10 @@ const AppContent: React.FC = () => {
       case "profile":
         return <StudentProfilePage />;
       case "feed":
+        if (showAppSkeletons) {
+          return <FeedSkeleton />;
+        }
+
         // Filter logic
         let feed = hangouts.filter(h => showExpired ? (h.status === "active" || h.status === "expired") : h.status === "active");
 
@@ -1433,6 +1439,10 @@ const AppContent: React.FC = () => {
         );
 
       case "my-plans":
+        if (showAppSkeletons) {
+          return <PortalSkeleton />;
+        }
+
         return (
           <div className="space-y-6 font-sans max-w-4xl mx-auto px-1 sm:px-3">
             {/* Modern Header Container */}
@@ -1798,6 +1808,10 @@ const AppContent: React.FC = () => {
         );
 
       case "chats":
+        if (showAppSkeletons) {
+          return <ChatWindowSkeleton />;
+        }
+
         return <ChatWindow />;
 
       case "admin":
