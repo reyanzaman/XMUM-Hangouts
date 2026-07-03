@@ -1,5 +1,77 @@
 [
   {
+    "id": "notif_schedule_started_647rqorpu",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "type": "upcoming_hangout_reminder",
+    "payload": {
+      "hangout_id": "hangout_61stot4ql",
+      "reminder_stage": "started",
+      "custom_text": "Your hangout \"study together!\" is starting now."
+    },
+    "is_read": true,
+    "created_at": "2026-07-03T12:02:19.630Z"
+  },
+  {
+    "id": "notif_schedule_expired_955sajbu9",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "type": "admin_message",
+    "payload": {
+      "hangout_id": "hangout_61stot4ql",
+      "reminder_stage": "expired",
+      "custom_text": "Your hangout \"study together!\" has now ended and moved to past plans."
+    },
+    "is_read": true,
+    "created_at": "2026-07-03T12:02:19.630Z"
+  },
+  {
+    "id": "notif_schedule_started_zsmy99ucm",
+    "user_id": "user_odir44fcp",
+    "type": "upcoming_hangout_reminder",
+    "payload": {
+      "hangout_id": "hangout_tj6b5cfie",
+      "reminder_stage": "started",
+      "custom_text": "Your hangout \"Start a pyramid scheme who's with me\" is starting now."
+    },
+    "is_read": false,
+    "created_at": "2026-07-03T12:02:19.630Z"
+  },
+  {
+    "id": "notif_schedule_expired_3gdpql61i",
+    "user_id": "user_odir44fcp",
+    "type": "admin_message",
+    "payload": {
+      "hangout_id": "hangout_tj6b5cfie",
+      "reminder_stage": "expired",
+      "custom_text": "Your hangout \"Start a pyramid scheme who's with me\" has now ended and moved to past plans."
+    },
+    "is_read": false,
+    "created_at": "2026-07-03T12:02:19.630Z"
+  },
+  {
+    "id": "notif_schedule_started_o1yh93sig",
+    "user_id": "62af49a3-b92d-4253-a8e5-8d560f86e7ef",
+    "type": "upcoming_hangout_reminder",
+    "payload": {
+      "hangout_id": "hangout_pajh6tgeq",
+      "reminder_stage": "started",
+      "custom_text": "Your hangout \"Swim\" is starting now."
+    },
+    "is_read": false,
+    "created_at": "2026-07-03T12:02:19.630Z"
+  },
+  {
+    "id": "notif_schedule_expired_nqozx4vj5",
+    "user_id": "62af49a3-b92d-4253-a8e5-8d560f86e7ef",
+    "type": "admin_message",
+    "payload": {
+      "hangout_id": "hangout_pajh6tgeq",
+      "reminder_stage": "expired",
+      "custom_text": "Your hangout \"Swim\" has now ended and moved to past plans."
+    },
+    "is_read": false,
+    "created_at": "2026-07-03T12:02:19.630Z"
+  },
+  {
     "id": "notif_xuuyndsnt",
     "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
     "type": "hangout_like",

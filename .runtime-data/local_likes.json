@@ -1,1 +1,38 @@
-[]
+[
+  {
+    "id": "like_icsqm12d8",
+    "hangout_id": "hangout_tj6b5cfie",
+    "user_id": "user_odir44fcp",
+    "created_at": "2026-07-02T16:54:18.865Z"
+  },
+  {
+    "id": "like_m1xtyvhpl",
+    "hangout_id": "hangout_tj6b5cfie",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "created_at": "2026-07-02T16:55:12.729Z"
+  },
+  {
+    "id": "like_xfv24uipp",
+    "hangout_id": "hangout_pajh6tgeq",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "created_at": "2026-07-02T17:19:09.500Z"
+  },
+  {
+    "id": "like_0gtc8cob9",
+    "hangout_id": "hangout_tj6b5cfie",
+    "user_id": "user_5r9s5tgjn",
+    "created_at": "2026-07-03T07:17:18.643Z"
+  },
+  {
+    "id": "like_6pgb37kq6",
+    "hangout_id": "hangout_odi2os3nw",
+    "user_id": "user_5r9s5tgjn",
+    "created_at": "2026-07-03T07:17:30.408Z"
+  },
+  {
+    "id": "like_d3pnfoz3o",
+    "hangout_id": "hangout_61stot4ql",
+    "user_id": "user_5r9s5tgjn",
+    "created_at": "2026-07-03T07:17:35.359Z"
+  }
+]

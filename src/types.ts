@@ -164,6 +164,7 @@ export interface AppNotification {
     actor_user_id?: string;
     actor_name?: string;
     actor_is_anonymous?: boolean;
+    reminder_stage?: "one_hour" | "thirty_minutes" | "started" | "expired";
     reporter_name?: string;
     hangout_title?: string;
     message?: string;

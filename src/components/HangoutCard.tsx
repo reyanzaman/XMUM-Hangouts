@@ -92,6 +92,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
   const [showApplicants, setShowApplicants] = useState(false);
   const [showApplicantsModal, setShowApplicantsModal] = useState(false);
   const [showEditHistory, setShowEditHistory] = useState(false);
+  const [showLikers, setShowLikers] = useState(false);
 
   // Comments form
   const [newCommentText, setNewCommentText] = useState("");
@@ -192,6 +193,30 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
   };
 
   const myLikes = likes.filter(l => l.hangout_id === hangout.id);
+  const likerProfiles = Array.from(
+    new Map(
+      myLikes
+        .map(like => {
+          const profile = profiles.find(item => item.id === like.user_id);
+          return profile ? [profile.id, profile] : null;
+        })
+        .filter((entry): entry is [string, Profile] => Boolean(entry))
+    ).values()
+  ).filter(profile => {
+    if (!currentUser) return true;
+    return !blocks.some(
+      block =>
+        (block.blocker_id === currentUser.id && block.blocked_id === profile.id) ||
+        (block.blocker_id === profile.id && block.blocked_id === currentUser.id)
+    );
+  });
+  const likerPreviewText = (() => {
+    if (likerProfiles.length === 0) return "";
+    if (likerProfiles.length === 1) return likerProfiles[0].name;
+    if (likerProfiles.length === 2) return `${likerProfiles[0].name} and ${likerProfiles[1].name}`;
+    if (likerProfiles.length === 3) return `${likerProfiles[0].name}, ${likerProfiles[1].name}, and ${likerProfiles[2].name}`;
+    return `${likerProfiles[0].name}, ${likerProfiles[1].name}, and ${likerProfiles.length - 2} others`;
+  })();
   const hangoutComments = comments.filter(c => c.hangout_id === hangout.id);
   const editHistoryEntries = hangoutComments
     .map(comment => parseHangoutEditHistoryEntry(comment.content))
@@ -242,7 +267,10 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
     }
   };
 
-  const isExpired = hangout.status === "expired";
+  const eventTime = new Date(hangout.event_datetime).getTime();
+  const isExpired =
+    hangout.status === "expired" ||
+    (hangout.status !== "cancelled" && !Number.isNaN(eventTime) && eventTime <= Date.now());
 
   return (
     <div
@@ -538,18 +566,59 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
       <div className="flex flex-wrap gap-2 items-center justify-between pt-3 border-t border-gray-50 flex-shrink-0">
         <div className="flex items-center gap-1.5">
           {/* Reaction Button */}
-          <button
-            id={`hangout-like-btn-${hangout.id}`}
-            onClick={() => toggleLike(hangout.id)}
-            className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl sm:rounded-2xl text-xs font-bold transition-all ${
-              isLikedByMe
-                ? "bg-rose-50 text-rose-500 border border-rose-100"
-                : "hover:bg-slate-50 border border-transparent text-gray-500"
-            }`}
-          >
-            <Heart className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isLikedByMe ? "fill-rose-500 text-rose-500" : ""}`} />
-            <span>{myLikes.length}</span>
-          </button>
+          <div className="relative flex items-center gap-1">
+            <button
+              id={`hangout-like-btn-${hangout.id}`}
+              onClick={() => toggleLike(hangout.id)}
+              className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl sm:rounded-2xl text-xs font-bold transition-all ${
+                isLikedByMe
+                  ? "bg-rose-50 text-rose-500 border border-rose-100"
+                  : "hover:bg-slate-50 border border-transparent text-gray-500"
+              }`}
+            >
+              <Heart className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isLikedByMe ? "fill-rose-500 text-rose-500" : ""}`} />
+              <span>{myLikes.length}</span>
+            </button>
+
+            {likerProfiles.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowLikers(prev => !prev)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-all hover:bg-slate-50 hover:text-rose-500"
+                  title={`See who liked this post: ${likerPreviewText}`}
+                  aria-label="See who liked this post"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                </button>
+
+                {showLikers && (
+                  <div className="absolute left-0 top-full z-20 mt-2 w-64 rounded-2xl border border-slate-100 bg-white p-3 shadow-xl">
+                    <div className="mb-2 flex items-center gap-2">
+                      <Heart className="h-3.5 w-3.5 fill-rose-500 text-rose-500" />
+                      <p className="text-[11px] font-black text-slate-700">Liked by</p>
+                    </div>
+                    <div className="flex max-h-48 flex-col gap-2 overflow-y-auto">
+                      {likerProfiles.map(profile => (
+                        <button
+                          key={`liker-${hangout.id}-${profile.id}`}
+                          type="button"
+                          onClick={() => setViewedProfile(profile)}
+                          className="inline-flex items-center gap-2 rounded-2xl border border-slate-100 bg-white px-2.5 py-2 text-left shadow-sm transition-all hover:border-rose-200 hover:bg-rose-50/40"
+                          title={`View ${profile.name}'s profile`}
+                        >
+                          <AvatarSVG id={profile.avatar_id} size={24} />
+                          <span className="max-w-[170px] truncate text-[11px] font-semibold text-slate-700">
+                            {profile.name}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
 
           {/* Comment toggle trigger */}
           <button

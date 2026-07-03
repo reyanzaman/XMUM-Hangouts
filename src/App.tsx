@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { AppProvider, useApp } from "./context/AppContext";
 import { supabase } from "./lib/supabase";
 import { AppNotification, Hangout, Profile } from "./types";
@@ -89,6 +89,35 @@ const getHangoutEventTime = (hangout: Hangout) => {
   return Number.isNaN(eventTime) ? null : eventTime;
 };
 
+const deriveHangoutCategory = (hangout: Hangout) => {
+  const text = `${hangout.intention} ${hangout.additional_info} ${hangout.location}`.toLowerCase();
+
+  const categoryMatchers: Array<{ label: string; keywords: string[] }> = [
+    { label: "Study", keywords: ["study", "assignment", "revision", "exam", "library", "tutorial", "coursework", "class"] },
+    { label: "Food", keywords: ["eat", "food", "dinner", "lunch", "breakfast", "cafe", "coffee", "tea", "supper", "meal"] },
+    { label: "Sports", keywords: ["badminton", "basketball", "football", "futsal", "gym", "workout", "run", "jog", "sports", "tennis"] },
+    { label: "Gaming", keywords: ["game", "gaming", "valorant", "dota", "ml", "mobile legends", "board game", "switch"] },
+    { label: "Entertainment", keywords: ["movie", "cinema", "karaoke", "concert", "music", "show", "watch", "anime"] },
+    { label: "Outdoors", keywords: ["walk", "hike", "park", "beach", "picnic", "outdoor", "sunset", "nature"] },
+    { label: "Social", keywords: ["hangout", "chat", "meet", "friends", "social", "chill", "lepak", "network"] },
+    { label: "Creative", keywords: ["art", "drawing", "design", "photo", "photography", "writing", "music jam", "dance"] }
+  ];
+
+  const matched = categoryMatchers.find(category =>
+    category.keywords.some(keyword => text.includes(keyword))
+  );
+
+  return matched?.label || "General";
+};
+
+const getEffectiveHangoutStatus = (hangout: Hangout, nowStamp = Date.now()) => {
+  if (hangout.status === "cancelled") return "cancelled";
+  const eventTime = getHangoutEventTime(hangout);
+  if (hangout.status === "expired") return "expired";
+  if (eventTime !== null && eventTime <= nowStamp) return "expired";
+  return "active";
+};
+
 const getHangoutRecencyTime = (hangout: Hangout) => {
   const eventTime = getHangoutEventTime(hangout);
   const postedTime = getHangoutPostedTime(hangout);
@@ -107,7 +136,10 @@ const isOlderThanRecentHangoutWindow = (hangout: Hangout) =>
 
 const sortHangoutsForFeed = (items: Hangout[], sortMode: "posted" | "event") =>
   [...items].sort((a, b) => {
-    const statusRank = (hangout: Hangout) => (hangout.status === "active" ? 0 : hangout.status === "expired" ? 1 : 2);
+    const statusRank = (hangout: Hangout) => {
+      const effectiveStatus = getEffectiveHangoutStatus(hangout);
+      return effectiveStatus === "active" ? 0 : effectiveStatus === "expired" ? 1 : 2;
+    };
     const rankDifference = statusRank(a) - statusRank(b);
     if (rankDifference !== 0) return rankDifference;
 
@@ -115,7 +147,7 @@ const sortHangoutsForFeed = (items: Hangout[], sortMode: "posted" | "event") =>
       const aEventTime = getHangoutEventTime(a);
       const bEventTime = getHangoutEventTime(b);
 
-      if (a.status === "active" && b.status === "active") {
+      if (getEffectiveHangoutStatus(a) === "active" && getEffectiveHangoutStatus(b) === "active") {
         if (aEventTime !== null && bEventTime !== null && aEventTime !== bEventTime) {
           return aEventTime - bEventTime;
         }
@@ -332,6 +364,7 @@ const AppContent: React.FC = () => {
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [notificationTarget, setNotificationTarget] = useState<{ hangoutId?: string; commentId?: string } | null>(null);
+  const dismissedAutoShowExpiredKeysRef = useRef<Set<string>>(new Set());
   const canViewTestUserCards = Boolean(currentUser?.is_admin);
   const isTestCreatorHangout = (creatorId: string) => {
     if (creatorId === SYSTEM_DELETED_USER_ID) return false;
@@ -360,6 +393,144 @@ const AppContent: React.FC = () => {
     genderFilter,
     feedSortMode
   ].join("|");
+
+  const browseFeedAutoExpiredKey = [
+    activeTab,
+    currentUser?.id || "guest",
+    searchLocation.trim().toLowerCase(),
+    eligibleOnlyFilter ? "1" : "0",
+    showAllHangoutHistory ? "1" : "0",
+    datePeriodFilter,
+    languageFilter,
+    genderFilter,
+    feedSortMode
+  ].join("|");
+
+  const buildBrowseFeed = (includeExpiredCards: boolean) => {
+    let feed = hangouts.filter(h => {
+      const effectiveStatus = getEffectiveHangoutStatus(h);
+      return includeExpiredCards
+        ? effectiveStatus === "active" || effectiveStatus === "expired"
+        : effectiveStatus === "active";
+    });
+
+    if (searchLocation.trim()) {
+      const query = searchLocation.toLowerCase().trim();
+      feed = feed.filter(h => {
+        const matchLocation = h.location.toLowerCase().includes(query);
+        const matchIntention = h.intention.toLowerCase().includes(query);
+        const matchCategory = deriveHangoutCategory(h).toLowerCase().includes(query);
+        const hostUser = profiles.find(p => p.id === h.creator_id);
+        const matchHostName = hostUser ? hostUser.name.toLowerCase().includes(query) : false;
+        return matchLocation || matchIntention || matchCategory || matchHostName;
+      });
+    }
+
+    if (datePeriodFilter !== "all") {
+      const nowTime = Date.now();
+      if (datePeriodFilter === "today") {
+        const todayStr = new Date().toDateString();
+        feed = feed.filter(h => new Date(h.event_datetime).toDateString() === todayStr);
+      } else if (datePeriodFilter === "week") {
+        const oneWeekAhead = nowTime + 7 * 24 * 60 * 60 * 1000;
+        feed = feed.filter(h => {
+          const eventTime = new Date(h.event_datetime).getTime();
+          return eventTime >= nowTime && eventTime <= oneWeekAhead;
+        });
+      } else if (datePeriodFilter === "month") {
+        const oneMonthAhead = nowTime + 30 * 24 * 60 * 60 * 1000;
+        feed = feed.filter(h => {
+          const eventTime = new Date(h.event_datetime).getTime();
+          return eventTime >= nowTime && eventTime <= oneMonthAhead;
+        });
+      }
+    }
+
+    if (eligibleOnlyFilter && currentUser) {
+      feed = feed.filter(h => isEligibleForHangout(currentUser, h).eligible);
+    }
+
+    if (languageFilter === "en") {
+      feed = feed.filter(h => {
+        const hostUser = profiles.find(p => p.id === h.creator_id);
+        const hostEn = hostUser ? hostUser.languages.some(l => l.toLowerCase().includes("english")) : true;
+        const restrictEn = h.restrictions.languages.length === 0 || h.restrictions.languages.some(l => l.toLowerCase().includes("english"));
+        return hostEn && restrictEn;
+      });
+    } else if (languageFilter === "zh") {
+      feed = feed.filter(h => {
+        const hostUser = profiles.find(p => p.id === h.creator_id);
+        const hostZh = hostUser ? hostUser.languages.some(l => l.toLowerCase().includes("chinese") || l.toLowerCase().includes("mandarin")) : false;
+        const restrictZh = h.restrictions.languages.length === 0 || h.restrictions.languages.some(l => l.toLowerCase().includes("chinese") || l.toLowerCase().includes("mandarin"));
+        return hostZh || restrictZh;
+      });
+    }
+
+    if (genderFilter === "male") {
+      feed = feed.filter(h => {
+        const hostUser = profiles.find(p => p.id === h.creator_id);
+        const hostGender = (hostUser?.gender || "prefer not to say").toLowerCase();
+        return hostGender.includes("male") && !hostGender.includes("female");
+      });
+    } else if (genderFilter === "female") {
+      feed = feed.filter(h => {
+        const hostUser = profiles.find(p => p.id === h.creator_id);
+        const hostGender = (hostUser?.gender || "prefer not to say").toLowerCase();
+        return hostGender.includes("female");
+      });
+    }
+
+    feed = feed.filter(h => {
+      if (h.creator_id === SYSTEM_DELETED_USER_ID) {
+        return true;
+      }
+      return canViewTestUserCards || !isTestCreatorHangout(h.creator_id);
+    });
+
+    const hasOlderFilteredHangouts = feed.some(isOlderThanRecentHangoutWindow);
+    if (!showAllHangoutHistory) {
+      feed = feed.filter(h => !isOlderThanRecentHangoutWindow(h));
+    }
+
+    return {
+      feed: sortHangoutsForFeed(feed, feedSortMode),
+      hasOlderFilteredHangouts
+    };
+  };
+
+  useEffect(() => {
+    if (activeTab !== "feed" || showExpired) return;
+    if (dismissedAutoShowExpiredKeysRef.current.has(browseFeedAutoExpiredKey)) return;
+    const { feed } = buildBrowseFeed(false);
+    if (feed.length < 2) {
+      setShowExpired(true);
+    }
+  }, [
+    activeTab,
+    showExpired,
+    hangouts,
+    profiles,
+    currentUser,
+    searchLocation,
+    eligibleOnlyFilter,
+    showAllHangoutHistory,
+    datePeriodFilter,
+    languageFilter,
+    genderFilter,
+    feedSortMode,
+    browseFeedAutoExpiredKey
+  ]);
+
+  const handleToggleShowExpired = () => {
+    if (showExpired) {
+      dismissedAutoShowExpiredKeysRef.current.add(browseFeedAutoExpiredKey);
+      setShowExpired(false);
+      return;
+    }
+
+    dismissedAutoShowExpiredKeysRef.current.delete(browseFeedAutoExpiredKey);
+    setShowExpired(true);
+  };
 
   // Create hangout input state
   const [createIntentionLead, setCreateIntentionLead] = useState("I want to");
@@ -839,7 +1010,7 @@ const AppContent: React.FC = () => {
     ? hangouts.filter(h => h.creator_id === currentUser.id) 
     : [];
   const visibleHostedHangouts = myCreatedHangouts.filter(h =>
-    showHostedPastPlans ? true : h.status === "active"
+    showHostedPastPlans ? true : getEffectiveHangoutStatus(h) === "active"
   );
 
   // Active unread messages indicator count
@@ -895,9 +1066,12 @@ const AppContent: React.FC = () => {
     return targetHangout?.creator_id === currentUser.id ? "hosted" : "requested";
   };
 
-  const navigateToMyPlansTarget = (hangoutId?: string) => {
+  const navigateToMyPlansTarget = (hangoutId?: string, options?: { revealExpired?: boolean }) => {
     const nextSubTab = resolveMyPlansSubTab(hangoutId);
     setPortalSubTab(nextSubTab);
+    if (options?.revealExpired && nextSubTab === "hosted") {
+      setShowHostedPastPlans(true);
+    }
     setNotificationTarget(null);
     setActiveTab("my-plans");
 
@@ -915,6 +1089,10 @@ const AppContent: React.FC = () => {
 
   const handleNotificationOpen = (notification: AppNotification) => {
     const { hangout_id: hangoutId, comment_id: commentId, chat_id: chatId } = notification.payload;
+    const relatedHangout = hangoutId ? hangouts.find(h => h.id === hangoutId) : null;
+    const revealExpiredInPlans =
+      notification.payload.reminder_stage === "expired" ||
+      (relatedHangout ? getEffectiveHangoutStatus(relatedHangout) === "expired" : false);
 
     if (chatId) {
       setNotificationTarget(null);
@@ -932,7 +1110,7 @@ const AppContent: React.FC = () => {
       case "application_rejected":
       case "hangout_like":
       case "upcoming_hangout_reminder":
-        navigateToMyPlansTarget(hangoutId);
+        navigateToMyPlansTarget(hangoutId, { revealExpired: revealExpiredInPlans });
         return;
       case "new_report_admin":
         setNotificationTarget(null);
@@ -947,7 +1125,7 @@ const AppContent: React.FC = () => {
         return;
       case "admin_message":
         if (hangoutId) {
-          navigateToMyPlansTarget(hangoutId);
+          navigateToMyPlansTarget(hangoutId, { revealExpired: revealExpiredInPlans });
           return;
         }
         setNotificationTarget(null);
@@ -975,97 +1153,7 @@ const AppContent: React.FC = () => {
           return <FeedSkeleton />;
         }
 
-        // Filter logic
-        let feed = hangouts.filter(h => showExpired ? (h.status === "active" || h.status === "expired") : h.status === "active");
-
-        // Search match everything (location, intention, category, host name)
-        if (searchLocation.trim()) {
-          const query = searchLocation.toLowerCase().trim();
-          feed = feed.filter(h => {
-            const matchLocation = h.location.toLowerCase().includes(query);
-            const matchIntention = h.intention.toLowerCase().includes(query);
-            const matchCategory = h.category?.toLowerCase()?.includes(query);
-            
-            // Find creator's profile
-            const hostUser = profiles.find(p => p.id === h.creator_id);
-            const matchHostName = hostUser ? hostUser.name.toLowerCase().includes(query) : false;
-            
-            return matchLocation || matchIntention || matchCategory || matchHostName;
-          });
-        }
-
-        // Search dates by modern period buttons (today, upcoming week, upcoming month, all time)
-        if (datePeriodFilter !== "all") {
-          const nowTime = new Date().getTime();
-          
-          if (datePeriodFilter === "today") {
-            const todayStr = new Date().toDateString();
-            feed = feed.filter(h => new Date(h.event_datetime).toDateString() === todayStr);
-          } else if (datePeriodFilter === "week") {
-            const oneWeekAhead = nowTime + 7 * 24 * 60 * 60 * 1000;
-            feed = feed.filter(h => {
-              const eventTime = new Date(h.event_datetime).getTime();
-              return eventTime >= nowTime && eventTime <= oneWeekAhead;
-            });
-          } else if (datePeriodFilter === "month") {
-            const oneMonthAhead = nowTime + 30 * 24 * 60 * 60 * 1000;
-            feed = feed.filter(h => {
-              const eventTime = new Date(h.event_datetime).getTime();
-              return eventTime >= nowTime && eventTime <= oneMonthAhead;
-            });
-          }
-        }
-
-        // Eligibility match
-        if (eligibleOnlyFilter && currentUser) {
-          feed = feed.filter(h => isEligibleForHangout(currentUser, h).eligible);
-        }
-
-        // Language filter
-        if (languageFilter === "en") {
-          feed = feed.filter(h => {
-            const hostUser = profiles.find(p => p.id === h.creator_id);
-            const hostEn = hostUser ? hostUser.languages.some(l => l.toLowerCase().includes("english")) : true;
-            const restrictEn = h.restrictions.languages.length === 0 || h.restrictions.languages.some(l => l.toLowerCase().includes("english"));
-            return hostEn && restrictEn;
-          });
-        } else if (languageFilter === "zh") {
-          feed = feed.filter(h => {
-            const hostUser = profiles.find(p => p.id === h.creator_id);
-            const hostZh = hostUser ? hostUser.languages.some(l => l.toLowerCase().includes("chinese") || l.toLowerCase().includes("mandarin")) : false;
-            const restrictZh = h.restrictions.languages.length === 0 || h.restrictions.languages.some(l => l.toLowerCase().includes("chinese") || l.toLowerCase().includes("mandarin"));
-            return hostZh || restrictZh;
-          });
-        }
-
-        // Gender filter
-        if (genderFilter === "male") {
-          feed = feed.filter(h => {
-            const hostUser = profiles.find(p => p.id === h.creator_id);
-            const hostGender = (hostUser?.gender || "prefer not to say").toLowerCase();
-            return hostGender.includes("male") && !hostGender.includes("female");
-          });
-        } else if (genderFilter === "female") {
-          feed = feed.filter(h => {
-            const hostUser = profiles.find(p => p.id === h.creator_id);
-            const hostGender = (hostUser?.gender || "prefer not to say").toLowerCase();
-            return hostGender.includes("female");
-          });
-        }
-
-        // Always show deleted-user cards, but restrict demo/test cards to the primary admin account.
-        feed = feed.filter(h => {
-          if (h.creator_id === SYSTEM_DELETED_USER_ID) {
-            return true;
-          }
-          return canViewTestUserCards || !isTestCreatorHangout(h.creator_id);
-        });
-
-        const hasOlderFilteredHangouts = feed.some(isOlderThanRecentHangoutWindow);
-        if (!showAllHangoutHistory) {
-          feed = feed.filter(h => !isOlderThanRecentHangoutWindow(h));
-        }
-        feed = sortHangoutsForFeed(feed, feedSortMode);
+        const { feed, hasOlderFilteredHangouts } = buildBrowseFeed(showExpired);
 
         // Slice for pagination: 20 per page
         const itemsPerPage = 20;
@@ -1150,7 +1238,7 @@ const AppContent: React.FC = () => {
  
                   <button
                     id="toggle-expired-filter"
-                    onClick={() => setShowExpired(!showExpired)}
+                    onClick={handleToggleShowExpired}
                     className={`px-4.5 py-3 rounded-2xl font-black text-xs sm:text-sm border transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
                       showExpired
                         ? "bg-rose-50 text-rose-600 border-rose-200 shadow-sm"
@@ -1184,7 +1272,7 @@ const AppContent: React.FC = () => {
  
                     <button
                       id="toggle-expired-filter-mobile"
-                      onClick={() => setShowExpired(!showExpired)}
+                      onClick={handleToggleShowExpired}
                       className={`px-4.5 py-2.5 rounded-2xl font-black text-xs border transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
                         showExpired
                           ? "bg-rose-50 text-rose-600 border-rose-200 shadow-sm"
@@ -1764,6 +1852,7 @@ const AppContent: React.FC = () => {
                     <div className="grid grid-cols-1 gap-5">
                       {visibleHostedHangouts.map(h => {
                         const isMeetingPointCorrupted = isLockedMeetingPointPlaceholder(h.meeting_point);
+                        const hostedHangoutStatus = getEffectiveHangoutStatus(h);
 
                         return (
                         <details
@@ -1776,11 +1865,11 @@ const AppContent: React.FC = () => {
                               <div className="space-y-2">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className={`text-[10px] font-black uppercase tracking-[0.22em] px-2.5 py-1 rounded-full border ${
-                                    h.status === "active"
+                                    hostedHangoutStatus === "active"
                                       ? "bg-teal-50 text-teal-700 border-teal-100"
                                       : "bg-slate-100 text-slate-500 border-slate-200"
                                   }`}>
-                                    {h.status}
+                                    {hostedHangoutStatus}
                                   </span>
                                 </div>
                                 <div>
@@ -1883,7 +1972,7 @@ const AppContent: React.FC = () => {
                             </div>
 
                             <div className="flex flex-wrap gap-2 border-t border-slate-100/80 pt-4">
-                              {h.status === "active" && (
+                              {hostedHangoutStatus === "active" && (
                                 <>
                                   <button
                                     type="button"
@@ -2336,17 +2425,20 @@ const AppContent: React.FC = () => {
                   const categoriesCount = hangouts
                     .filter(h => activityProfileIds.has(h.creator_id))
                     .reduce((acc, h) => {
-                    const cat = h.category || "Study";
-                    acc[cat] = (acc[cat] || 0) + 1;
-                    return acc;
-                  }, {} as Record<string, number>);
+                      const category = deriveHangoutCategory(h);
+                      acc[category] = (acc[category] || 0) + 1;
+                      return acc;
+                    }, {} as Record<string, number>);
+                  const sortedCategories = Object.entries(categoriesCount)
+                    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                    .slice(0, 6);
 
                   return (
                     <div className="bg-slate-50 p-4.5 rounded-2xl border border-gray-100/60 flex flex-col justify-between">
                       <div>
                         <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-3">Popular Categories</h4>
                         <div className="space-y-2 text-xs">
-                          {Object.entries(categoriesCount).map(([category, count]) => (
+                          {sortedCategories.map(([category, count]) => (
                             <div key={category} className="flex items-center justify-between py-1 border-b border-gray-100 last:border-0">
                               <span className="font-semibold text-gray-600 flex items-center gap-1.5">
                                 <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />

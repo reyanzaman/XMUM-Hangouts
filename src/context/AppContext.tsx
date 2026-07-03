@@ -678,6 +678,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
   const companionProfileSyncTimeoutRef = useRef<number | null>(null);
   const [hangouts, setHangouts] = useState<Hangout[]>(() => getStoredHangoutsSnapshot());
+  const hangoutsRef = useRef<Hangout[]>(getStoredHangoutsSnapshot());
   const [applications, setApplications] = useState<HangoutApplication[]>(() => getStoredApplicationsSnapshot());
   const applicationsRef = useRef<HangoutApplication[]>(getStoredApplicationsSnapshot());
   const [likes, setLikes] = useState<HangoutLike[]>(() => getStoredLikesSnapshot());
@@ -688,6 +689,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [messages, setMessages] = useState<Message[]>(() => getStoredMessagesSnapshot());
   const [blocks, setBlocks] = useState<Block[]>(() => getStoredBlocksSnapshot());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => getStoredNotificationsSnapshot());
+  const notificationsRef = useRef<AppNotification[]>(getStoredNotificationsSnapshot());
   const [commentLikes, setCommentLikes] = useState<{ comment_id: string; user_id: string }[]>(() => {
     try {
       const saved = localStorage.getItem("xmum_comment_likes");
@@ -714,6 +716,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     applicationsRef.current = applications;
   }, [applications]);
+
+  useEffect(() => {
+    hangoutsRef.current = hangouts;
+  }, [hangouts]);
+
+  useEffect(() => {
+    notificationsRef.current = notifications;
+  }, [notifications]);
+
+  useEffect(() => {
+    if (isAuthInitializing) return;
+
+    runHangoutLifecycleCheck(false);
+    const intervalId = window.setInterval(() => {
+      runHangoutLifecycleCheck(false);
+    }, 60 * 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [isAuthInitializing]);
 
   useEffect(() => {
     if (applications.length === 0 || hangouts.length === 0) return;
@@ -1983,7 +2004,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const saveHangouts = async (data: Hangout[]) => {
-    const normalizedData = mergeHangoutCollections(data, hangouts);
+    const normalizedData = mergeHangoutCollections(data, hangoutsRef.current);
+    hangoutsRef.current = normalizedData;
     setHangouts(normalizedData);
     localStorage.setItem("xmum_hangouts", JSON.stringify(normalizedData));
 
@@ -2008,7 +2030,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const syncHangoutsToRemote = async (data: Hangout[]) => {
     if (data.length === 0) return;
-    const normalizedData = mergeHangoutCollections(data, hangouts);
+    const normalizedData = mergeHangoutCollections(data, hangoutsRef.current);
     try {
       const response = await fetch("/api/hangouts/sync", {
         method: "POST",
@@ -2279,7 +2301,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const uniqueData = Array.from(
       new Map(data.map(notification => [notification.id, notification])).values()
     ).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    const prev = notifications;
+    const prev = notificationsRef.current;
+    notificationsRef.current = uniqueData;
     setNotifications(uniqueData);
     localStorage.setItem("xmum_notifications", JSON.stringify(uniqueData));
 
@@ -4256,8 +4279,154 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
+  const runHangoutLifecycleCheck = (showFeedback = false) => {
+    const nowStamp = Date.now();
+    const currentHangouts = hangoutsRef.current;
+    const currentApplications = applicationsRef.current;
+    const currentNotifications = notificationsRef.current;
+    const newNotifications: AppNotification[] = [];
+
+    const hasReminderStage = (
+      hangoutId: string,
+      userId: string,
+      stage: "one_hour" | "thirty_minutes" | "started" | "expired"
+    ) =>
+      currentNotifications.some(
+        notification =>
+          notification.user_id === userId &&
+          notification.payload.hangout_id === hangoutId &&
+          notification.payload.reminder_stage === stage
+      ) ||
+      newNotifications.some(
+        notification =>
+          notification.user_id === userId &&
+          notification.payload.hangout_id === hangoutId &&
+          notification.payload.reminder_stage === stage
+      );
+
+    const queueReminderNotification = (
+      userId: string,
+      type: "upcoming_hangout_reminder" | "admin_message",
+      hangoutId: string,
+      stage: "one_hour" | "thirty_minutes" | "started" | "expired",
+      customText: string
+    ) => {
+      if (hasReminderStage(hangoutId, userId, stage)) return;
+      newNotifications.push({
+        id: `notif_schedule_${stage}_${Math.random().toString(36).substring(2, 11)}`,
+        user_id: userId,
+        type,
+        payload: {
+          hangout_id: hangoutId,
+          reminder_stage: stage,
+          custom_text: customText
+        },
+        is_read: false,
+        created_at: new Date().toISOString()
+      });
+    };
+
+    const nextHangouts = currentHangouts.map(hangout => {
+      const eventTime = new Date(hangout.event_datetime).getTime();
+      if (Number.isNaN(eventTime) || hangout.status === "cancelled") {
+        return hangout;
+      }
+
+      const acceptedParticipants = currentApplications
+        .filter(application => application.hangout_id === hangout.id && application.status === "accepted")
+        .map(application => application.applicant_id);
+      const recipients = Array.from(new Set([hangout.creator_id, ...acceptedParticipants]));
+      const timeUntilEvent = eventTime - nowStamp;
+
+      if (hangout.status === "active") {
+        if (timeUntilEvent <= 60 * 60 * 1000 && timeUntilEvent > 30 * 60 * 1000) {
+          recipients.forEach(userId => {
+            queueReminderNotification(
+              userId,
+              "upcoming_hangout_reminder",
+              hangout.id,
+              "one_hour",
+              userId === hangout.creator_id
+                ? `Your hangout "${hangout.intention}" starts in about 1 hour.`
+                : `A hangout you joined, "${hangout.intention}", starts in about 1 hour.`
+            );
+          });
+        }
+
+        if (timeUntilEvent <= 30 * 60 * 1000 && timeUntilEvent > 5 * 60 * 1000) {
+          recipients.forEach(userId => {
+            queueReminderNotification(
+              userId,
+              "upcoming_hangout_reminder",
+              hangout.id,
+              "thirty_minutes",
+              userId === hangout.creator_id
+                ? `Your hangout "${hangout.intention}" starts in about 30 minutes.`
+                : `A hangout you joined, "${hangout.intention}", starts in about 30 minutes.`
+            );
+          });
+        }
+
+        if (timeUntilEvent <= 5 * 60 * 1000 && timeUntilEvent > 0) {
+          recipients.forEach(userId => {
+            queueReminderNotification(
+              userId,
+              "upcoming_hangout_reminder",
+              hangout.id,
+              "started",
+              userId === hangout.creator_id
+                ? `Your hangout "${hangout.intention}" is starting now.`
+                : `A hangout you joined, "${hangout.intention}" is starting now.`
+            );
+          });
+        }
+
+        if (timeUntilEvent <= 0) {
+          recipients.forEach(userId => {
+            queueReminderNotification(
+              userId,
+              "admin_message",
+              hangout.id,
+              "expired",
+              userId === hangout.creator_id
+                ? `Your hangout "${hangout.intention}" has expired.`
+                : `The hangout "${hangout.intention}" has expired.`
+            );
+          });
+
+          return {
+            ...hangout,
+            status: "expired" as const,
+            updated_at: new Date().toISOString()
+          };
+        }
+      }
+
+      return hangout;
+    });
+
+    const hangoutsChanged = nextHangouts.some((hangout, index) => {
+      const current = currentHangouts[index];
+      return current?.status !== hangout.status || current?.updated_at !== hangout.updated_at;
+    });
+
+    if (hangoutsChanged) {
+      void saveHangouts(nextHangouts);
+    }
+
+    if (newNotifications.length > 0) {
+      void saveNotifications([...newNotifications, ...currentNotifications]);
+    }
+
+    if (showFeedback) {
+      showToast("Background safety cron verified: successfully scanned for expiries & reminders.", "info");
+    }
+  };
+
   // Helper automated cron checker which simulates daily pg_cron behavior to expire items
   const triggerCronJobs = () => {
+    runHangoutLifecycleCheck(true);
+    return;
     // Expiry: status = 'expired' where event_datetime has passed by more than 1 day
     const nowStamp = new Date().getTime();
     const oneDayMs = 24 * 60 * 60 * 1000;
