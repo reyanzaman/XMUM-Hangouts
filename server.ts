@@ -244,15 +244,20 @@ function sanitizeHangoutForDatabase(hangout: any) {
 }
 
 function sanitizeCommentForDatabase(comment: any) {
-  return {
+  const row: Record<string, any> = {
     id: comment.id,
     hangout_id: comment.hangout_id,
     user_id: comment.user_id,
-    is_anonymous: Boolean(comment.is_anonymous),
     parent_comment_id: comment.parent_comment_id || null,
     content: comment.content,
     created_at: comment.created_at
   };
+
+  if (commentColumnSupport.is_anonymous) {
+    row.is_anonymous = Boolean(comment.is_anonymous);
+  };
+
+  return row;
 }
 
 async function prepareHangoutRowsForPersistence(rows: any[]) {
@@ -381,11 +386,26 @@ function isMissingProfileColumnError(error: unknown, columnName: string) {
   return message.includes(columnName) && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
 }
 
+function isMissingCommentColumnError(error: unknown, columnName: string) {
+  const maybeError = error as { message?: unknown; code?: unknown };
+  const message = typeof maybeError?.message === "string"
+    ? maybeError.message
+    : error instanceof Error
+      ? error.message
+      : String(error || "");
+  const code = typeof maybeError?.code === "string" ? maybeError.code : "";
+  return message.includes(columnName) && message.includes("xmum_comments") && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
+}
+
 const profileColumnSupport = {
   birthdate: true,
   password_hash: true,
   companion_pet_count: true,
   companion_selected_state_id: true
+};
+
+const commentColumnSupport = {
+  is_anonymous: true
 };
 
 function markUnsupportedProfileColumns(error: unknown) {
@@ -400,6 +420,12 @@ function markUnsupportedProfileColumns(error: unknown) {
   }
   if (isMissingProfileColumnError(error, "companion_selected_state_id")) {
     profileColumnSupport.companion_selected_state_id = false;
+  }
+}
+
+function markUnsupportedCommentColumns(error: unknown) {
+  if (isMissingCommentColumnError(error, "is_anonymous")) {
+    commentColumnSupport.is_anonymous = false;
   }
 }
 
@@ -588,6 +614,16 @@ async function upsertToSupabase(table: string, rows: any[]) {
     ) {
       markUnsupportedProfileColumns(error);
       const fallbackRows = stripUnsupportedProfileColumns(preparedRows, error);
+      const fallback = await supabaseAdmin.from(table).upsert(fallbackRows);
+      if (fallback.error) {
+        throw fallback.error;
+      }
+      return;
+    }
+
+    if (table === "xmum_comments" && isMissingCommentColumnError(error, "is_anonymous")) {
+      markUnsupportedCommentColumns(error);
+      const fallbackRows = rows.map(sanitizeCommentForDatabase);
       const fallback = await supabaseAdmin.from(table).upsert(fallbackRows);
       if (fallback.error) {
         throw fallback.error;
@@ -1275,6 +1311,72 @@ async function startServer() {
     return crypto.createHmac("sha256", secretSalt).update(email).digest("hex");
   }
 
+  async function establishOtpAuthSession(email: string, deterministicPassword: string) {
+    let authResponse = await supabase.auth.signInWithPassword({
+      email,
+      password: deterministicPassword
+    });
+
+    if (!authResponse.error && authResponse.data?.session) {
+      return authResponse;
+    }
+
+    const authUser = await findAuthUserByEmail(email);
+
+    if (supabaseAdmin && authUser?.id) {
+      const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
+        password: deterministicPassword,
+        email_confirm: true
+      });
+
+      if (!updateError) {
+        authResponse = await supabase.auth.signInWithPassword({
+          email,
+          password: deterministicPassword
+        });
+
+        if (!authResponse.error && authResponse.data?.session) {
+          return authResponse;
+        }
+      } else {
+        console.warn("OTP auth password repair failed:", updateError.message);
+      }
+    } else if (supabaseAdmin && !authUser) {
+      const { error: createError } = await supabaseAdmin.auth.admin.createUser({
+        email,
+        password: deterministicPassword,
+        email_confirm: true
+      });
+
+      if (!createError) {
+        authResponse = await supabase.auth.signInWithPassword({
+          email,
+          password: deterministicPassword
+        });
+
+        if (!authResponse.error && authResponse.data?.session) {
+          return authResponse;
+        }
+      } else {
+        console.warn("OTP auth user creation failed:", createError.message);
+      }
+    }
+
+    const signUpResponse = await supabase.auth.signUp({
+      email,
+      password: deterministicPassword
+    });
+
+    if (!signUpResponse.error) {
+      authResponse = await supabase.auth.signInWithPassword({
+        email,
+        password: deterministicPassword
+      });
+    }
+
+    return authResponse;
+  }
+
   // 2. Clear & Authenticate verified OTP endpoint
   app.post("/api/auth/verify-otp", async (req, res) => {
     try {
@@ -1316,54 +1418,15 @@ async function startServer() {
       // Perform authentication logic on Supabase
       const deterministicPassword = getDeterministicPassword(formattedEmail);
 
-      // Try logging in existing user first
       let sessionData: any = null;
       let sessionErr: any = null;
       try {
-        const ret = await supabase.auth.signInWithPassword({
-          email: formattedEmail,
-          password: deterministicPassword
-        });
+        const ret = await establishOtpAuthSession(formattedEmail, deterministicPassword);
         sessionData = ret.data;
         sessionErr = ret.error;
       } catch (authErr: any) {
-        console.warn("Supabase auth signInWithPassword on verify-otp flow failed (offline/paused):", authErr);
+        console.warn("Supabase OTP session setup failed (offline/paused):", authErr);
         sessionErr = authErr;
-      }
-
-      // User does not exist, performs automated signUp in the background
-      if (sessionErr) {
-        console.log("Supabase account sign-in not resolved initially, trying registration...");
-        let signUpData: any = null;
-        let signUpErr: any = null;
-        try {
-          const ret = await supabase.auth.signUp({
-            email: formattedEmail,
-            password: deterministicPassword
-          });
-          signUpData = ret.data;
-          signUpErr = ret.error;
-        } catch (suErr: any) {
-          console.warn("Supabase auth signUp threw exception on verify-otp flow:", suErr);
-          signUpErr = suErr;
-        }
-
-        if (!signUpErr) {
-          try {
-            const retrySession = await supabase.auth.signInWithPassword({
-              email: formattedEmail,
-              password: deterministicPassword
-            });
-            sessionData = retrySession.data;
-            sessionErr = retrySession.error;
-          } catch (retErr: any) {
-            console.warn("Supabase auth retry signInWithPassword threw exception:", retErr);
-            sessionErr = retErr;
-          }
-        } else {
-          console.warn("Supabase background registration failed:", signUpErr?.message || signUpErr);
-          sessionErr = signUpErr;
-        }
       }
 
       if (sessionErr || !sessionData?.session) {
@@ -1521,26 +1584,9 @@ async function startServer() {
       const deterministicPassword = getDeterministicPassword(formattedEmail);
 
       // Retrieve existing / create new user
-      let { data: sessionData, error: sessionErr } = await supabase.auth.signInWithPassword({
-        email: formattedEmail,
-        password: deterministicPassword
-      });
-
-      if (sessionErr) {
-        const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-          email: formattedEmail,
-          password: deterministicPassword
-        });
-
-        if (!signUpErr) {
-          const retrySession = await supabase.auth.signInWithPassword({
-            email: formattedEmail,
-            password: deterministicPassword
-          });
-          sessionData = retrySession.data;
-          sessionErr = retrySession.error;
-        }
-      }
+      const otpSession = await establishOtpAuthSession(formattedEmail, deterministicPassword);
+      let sessionData = otpSession.data;
+      let sessionErr = otpSession.error;
 
       if (sessionErr || !sessionData?.session) {
         return res.status(500).send("<h3>Authentication service is temporarily busy. Try logging in normally.</h3>");
@@ -1874,7 +1920,7 @@ async function startServer() {
 
       await supabaseAdmin.from("xmum_profiles").upsert([sanitizeProfileForDatabase(deletedUserProfile)]);
       await supabaseAdmin.from("xmum_hangouts").upsert(persistedHangouts);
-      await supabaseAdmin.from("xmum_comments").upsert(persistedComments);
+      await upsertToSupabase("xmum_comments", persistedComments);
       await supabaseAdmin.from("xmum_notifications").upsert(nextNotifications);
 
       await deleteRowsByIds(

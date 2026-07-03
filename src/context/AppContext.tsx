@@ -342,11 +342,26 @@ const isMissingProfileColumnError = (error: unknown, columnName: string) => {
   return message.includes(columnName) && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
 };
 
+const isMissingCommentColumnError = (error: unknown, columnName: string) => {
+  const maybeError = error as { message?: unknown; code?: unknown };
+  const message = typeof maybeError?.message === "string"
+    ? maybeError.message
+    : error instanceof Error
+      ? error.message
+      : String(error || "");
+  const code = typeof maybeError?.code === "string" ? maybeError.code : "";
+  return message.includes(columnName) && message.includes("xmum_comments") && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
+};
+
 const profileColumnSupport = {
   birthdate: true,
   password_hash: true,
   companion_pet_count: true,
   companion_selected_state_id: true
+};
+
+const commentColumnSupport = {
+  is_anonymous: true
 };
 
 const markUnsupportedProfileColumns = (error: unknown) => {
@@ -361,6 +376,12 @@ const markUnsupportedProfileColumns = (error: unknown) => {
   }
   if (isMissingProfileColumnError(error, "companion_selected_state_id")) {
     profileColumnSupport.companion_selected_state_id = false;
+  }
+};
+
+const markUnsupportedCommentColumns = (error: unknown) => {
+  if (isMissingCommentColumnError(error, "is_anonymous")) {
+    commentColumnSupport.is_anonymous = false;
   }
 };
 
@@ -1083,15 +1104,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     password_hash: profile.password_hash ?? null
   });
 
-  const sanitizeComment = (c: any) => ({
-    id: c.id,
-    hangout_id: c.hangout_id,
-    user_id: c.user_id,
-    is_anonymous: Boolean(c.is_anonymous),
-    parent_comment_id: c.parent_comment_id || null,
-    content: c.content,
-    created_at: c.created_at
-  });
+  const sanitizeComment = (c: any) => {
+    const row: Record<string, any> = {
+      id: c.id,
+      hangout_id: c.hangout_id,
+      user_id: c.user_id,
+      parent_comment_id: c.parent_comment_id || null,
+      content: c.content,
+      created_at: c.created_at
+    };
+
+    if (commentColumnSupport.is_anonymous) {
+      row.is_anonymous = Boolean(c.is_anonymous);
+    }
+
+    return row;
+  };
 
   const prepareProfileRowsForSupabase = async (items: Profile[]) => {
     const collapsedItems = collapseProfilesByEmail(items).map(sanitizeProfileForDatabase);
@@ -2086,7 +2114,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       if (changed.length > 0) {
         const sanitized = changed.map(item => sanitizeComment(item));
-        await supabase.from("xmum_comments").upsert(sanitized);
+        let { error } = await supabase.from("xmum_comments").upsert(sanitized);
+        if (error && isMissingCommentColumnError(error, "is_anonymous")) {
+          markUnsupportedCommentColumns(error);
+          const fallbackRows = changed.map(item => sanitizeComment(item));
+          ({ error } = await supabase.from("xmum_comments").upsert(fallbackRows));
+        }
+        if (error) {
+          throw error;
+        }
       }
     } catch (e) {
       console.error("Comments sync exception:", e);

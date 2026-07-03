@@ -70,11 +70,26 @@ const isMissingProfileColumnError = (error: unknown, columnName: string) => {
   return message.includes(columnName) && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
 };
 
+const isMissingCommentColumnError = (error: unknown, columnName: string) => {
+  const maybeError = error as { message?: unknown; code?: unknown };
+  const message = typeof maybeError?.message === "string"
+    ? maybeError.message
+    : error instanceof Error
+      ? error.message
+      : String(error || "");
+  const code = typeof maybeError?.code === "string" ? maybeError.code : "";
+  return message.includes(columnName) && message.includes("xmum_comments") && (message.includes("does not exist") || message.includes("schema cache") || code === "PGRST204");
+};
+
 const profileColumnSupport = {
   birthdate: true,
   password_hash: true,
   companion_pet_count: true,
   companion_selected_state_id: true
+};
+
+const commentColumnSupport = {
+  is_anonymous: true
 };
 
 const markUnsupportedProfileColumns = (error: unknown) => {
@@ -89,6 +104,12 @@ const markUnsupportedProfileColumns = (error: unknown) => {
   }
   if (isMissingProfileColumnError(error, "companion_selected_state_id")) {
     profileColumnSupport.companion_selected_state_id = false;
+  }
+};
+
+const markUnsupportedCommentColumns = (error: unknown) => {
+  if (isMissingCommentColumnError(error, "is_anonymous")) {
+    commentColumnSupport.is_anonymous = false;
   }
 };
 
@@ -252,15 +273,22 @@ const sanitizeHangoutForDatabase = (hangout: any) => ({
   is_anonymous: Boolean(hangout.is_anonymous)
 });
 
-const sanitizeCommentForDatabase = (comment: any) => ({
-  id: comment.id,
-  hangout_id: comment.hangout_id,
-  user_id: comment.user_id,
-  is_anonymous: Boolean(comment.is_anonymous),
-  parent_comment_id: comment.parent_comment_id || null,
-  content: comment.content,
-  created_at: comment.created_at
-});
+const sanitizeCommentForDatabase = (comment: any) => {
+  const row: Record<string, any> = {
+    id: comment.id,
+    hangout_id: comment.hangout_id,
+    user_id: comment.user_id,
+    parent_comment_id: comment.parent_comment_id || null,
+    content: comment.content,
+    created_at: comment.created_at
+  };
+
+  if (commentColumnSupport.is_anonymous) {
+    row.is_anonymous = Boolean(comment.is_anonymous);
+  }
+
+  return row;
+};
 
 const prepareHangoutRowsForPersistence = async (rows: any[]) => {
   const sanitizedRows = rows.map(sanitizeHangoutForDatabase).filter(row => row?.id);
@@ -413,6 +441,72 @@ function getLocalAuthSecret() {
 
 function getDeterministicPassword(email: string): string {
   return crypto.createHmac("sha256", getLocalAuthSecret()).update(email).digest("hex");
+}
+
+async function establishOtpAuthSession(email: string, deterministicPassword: string) {
+  let authResponse = await supabase.auth.signInWithPassword({
+    email,
+    password: deterministicPassword
+  });
+
+  if (!authResponse.error && authResponse.data?.session) {
+    return authResponse;
+  }
+
+  const authUser = await findAuthUserByEmail(email);
+
+  if (supabaseAdmin && authUser?.id) {
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
+      password: deterministicPassword,
+      email_confirm: true
+    });
+
+    if (!updateError) {
+      authResponse = await supabase.auth.signInWithPassword({
+        email,
+        password: deterministicPassword
+      });
+
+      if (!authResponse.error && authResponse.data?.session) {
+        return authResponse;
+      }
+    } else {
+      console.warn("OTP auth password repair failed:", updateError.message);
+    }
+  } else if (supabaseAdmin && !authUser) {
+    const { error: createError } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password: deterministicPassword,
+      email_confirm: true
+    });
+
+    if (!createError) {
+      authResponse = await supabase.auth.signInWithPassword({
+        email,
+        password: deterministicPassword
+      });
+
+      if (!authResponse.error && authResponse.data?.session) {
+        return authResponse;
+      }
+    } else {
+      console.warn("OTP auth user creation failed:", createError.message);
+    }
+  }
+
+  const signUpResponse = await supabase.auth.signUp({
+    email,
+    password: deterministicPassword
+  });
+
+  if (!signUpResponse.error) {
+    authResponse = await supabase.auth.signInWithPassword({
+      email,
+      password: deterministicPassword
+    });
+  }
+
+  return authResponse;
 }
 
 function generateLocalAuthToken(profile: { id: string; email: string }) {
@@ -776,6 +870,14 @@ async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config
             console.error(`Supabase sync failed for ${table}:`, fallback.error);
             return res.status(500).json({ error: `Failed to sync ${payloadKey} to Supabase.` });
           }
+        } else if (table === "xmum_comments" && isMissingCommentColumnError(error, "is_anonymous")) {
+          markUnsupportedCommentColumns(error);
+          const fallbackRows = (rows as Array<Record<string, any>>).map(sanitizeCommentForDatabase);
+          const fallback = await supabaseAdmin.from(table).upsert(fallbackRows);
+          if (fallback.error) {
+            console.error(`Supabase sync failed for ${table}:`, fallback.error);
+            return res.status(500).json({ error: `Failed to sync ${payloadKey} to Supabase.` });
+          }
         } else {
           console.error(`Supabase sync failed for ${table}:`, error);
           return res.status(500).json({ error: `Failed to sync ${payloadKey} to Supabase.` });
@@ -791,6 +893,20 @@ async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config
   } catch (error) {
     console.error(`Failed to sync ${payloadKey}:`, error);
     return res.status(500).json({ error: `Failed to sync ${payloadKey}` });
+  }
+}
+
+async function upsertCommentsWithFallback(rows: any[]) {
+  if (!supabaseAdmin || rows.length === 0) return;
+
+  const sanitizedRows = rows.map(sanitizeCommentForDatabase);
+  let { error } = await supabaseAdmin.from("xmum_comments").upsert(sanitizedRows);
+  if (error && isMissingCommentColumnError(error, "is_anonymous")) {
+    markUnsupportedCommentColumns(error);
+    ({ error } = await supabaseAdmin.from("xmum_comments").upsert(rows.map(sanitizeCommentForDatabase)));
+  }
+  if (error) {
+    throw error;
   }
 }
 
@@ -1060,24 +1176,7 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
   await deleteOtpRecord(formattedEmail);
 
   const deterministicPassword = getDeterministicPassword(formattedEmail);
-  let authResponse = await supabase.auth.signInWithPassword({
-    email: formattedEmail,
-    password: deterministicPassword
-  });
-
-  if (authResponse.error || !authResponse.data?.session) {
-    const signUpResponse = await supabase.auth.signUp({
-      email: formattedEmail,
-      password: deterministicPassword
-    });
-
-    if (!signUpResponse.error) {
-      authResponse = await supabase.auth.signInWithPassword({
-        email: formattedEmail,
-        password: deterministicPassword
-      });
-    }
-  }
+  let authResponse = await establishOtpAuthSession(formattedEmail, deterministicPassword);
 
   const { data: matchedProfiles } = await backendProfileClient
     .from("xmum_profiles")
@@ -1119,7 +1218,7 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
   }
 
   profile = mergeProfileWithAuthMetadata(profile, authResponse.data?.user);
-  await mirrorProfileToAuthUser(profile);
+  await mirrorProfileToAuthUser(profile, deterministicPassword);
 
   if (authResponse.error || !authResponse.data?.session) {
     return res.status(200).json({
@@ -1370,31 +1469,9 @@ async function handleLoginBackup(req: VercelRequest, res: VercelResponse) {
     await deleteOtpRecord(formattedEmail);
 
     const deterministicPassword = getDeterministicPassword(formattedEmail);
-    let sessionData: any = null;
-    let sessionErr: any = null;
-
-    const loginResult = await supabase.auth.signInWithPassword({
-      email: formattedEmail,
-      password: deterministicPassword
-    });
-    sessionData = loginResult.data;
-    sessionErr = loginResult.error;
-
-    if (sessionErr) {
-      const signUpResult = await supabase.auth.signUp({
-        email: formattedEmail,
-        password: deterministicPassword
-      });
-
-      if (!signUpResult.error) {
-        const retrySession = await supabase.auth.signInWithPassword({
-          email: formattedEmail,
-          password: deterministicPassword
-        });
-        sessionData = retrySession.data;
-        sessionErr = retrySession.error;
-      }
-    }
+    const loginResult = await establishOtpAuthSession(formattedEmail, deterministicPassword);
+    let sessionData: any = loginResult.data;
+    let sessionErr: any = loginResult.error;
 
     if (sessionErr || !sessionData?.session) {
       return res.status(500).send("<h3>Authentication service is temporarily busy. Try logging in normally.</h3>");
@@ -1559,7 +1636,7 @@ async function handleDeleteAccount(req: VercelRequest, res: VercelResponse) {
   const persistedComments = nextComments.map(sanitizeCommentForDatabase);
 
   await supabaseAdmin.from("xmum_hangouts").upsert(persistedHangouts);
-  await supabaseAdmin.from("xmum_comments").upsert(persistedComments);
+  await upsertCommentsWithFallback(persistedComments);
   await supabaseAdmin.from("xmum_notifications").upsert(nextNotifications);
 
   await deleteRowsByIds("xmum_messages", messages.filter(message => !nextMessages.some(item => item.id === message.id)).map(message => message.id));
