@@ -19,6 +19,7 @@ export interface Profile {
   program?: string;
   year_of_study?: string; // e.g. "Year 1", "Year 2", etc.
   gender: string;
+  gender_last_changed_at?: string | null;
   student_type?: "foundation" | "degree" | "postgraduate" | "Not Specified" | "";
   about_me: string;
   avatar_id: string; // references bundled SVG
@@ -160,6 +161,9 @@ export interface AppNotification {
     comment_id?: string;
     chat_id?: string;
     report_id?: string;
+    actor_user_id?: string;
+    actor_name?: string;
+    actor_is_anonymous?: boolean;
     reporter_name?: string;
     hangout_title?: string;
     message?: string;

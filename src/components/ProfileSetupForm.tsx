@@ -149,9 +149,9 @@ export const ProfileSetupForm: React.FC = () => {
           <div className="flex items-start gap-2">
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
             <div className="space-y-1">
-              <p className="font-black">Double-check the locked details before you finish.</p>
+              <p className="font-black">Double-check the important details before you finish.</p>
               <p>
-                Your student ID is permanent. Your country of origin and gender will be locked after profile completion.
+                Your student ID is permanent. Your country of origin and gender can each be changed once from My Profile after completion.
               </p>
             </div>
           </div>
@@ -208,7 +208,7 @@ export const ProfileSetupForm: React.FC = () => {
               ))}
             </select>
             <div className="text-[10px] text-gray-400 italic">
-              You can set this now. It becomes restricted after your profile is completed.
+              You can change this once later from My Profile after your profile is completed.
             </div>
           </div>
 
@@ -314,6 +314,9 @@ export const ProfileSetupForm: React.FC = () => {
               <option value="Male">Male</option>
               <option value="Female">Female</option>
             </select>
+            <div className="text-[10px] text-gray-400 italic">
+              You can change this once later from My Profile after your profile is completed.
+            </div>
           </div>
 
         </div>

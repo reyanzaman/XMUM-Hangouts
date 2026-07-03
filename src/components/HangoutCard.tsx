@@ -7,7 +7,7 @@ import React, { useEffect, useState } from "react";
 import { Hangout, Profile, HangoutComment, HangoutApplication } from "../types";
 import { useApp } from "../context/AppContext";
 import { motion, AnimatePresence } from "motion/react";
-import { isHangoutEditHistoryComment, parseHangoutEditHistoryEntry } from "../lib/hangouts";
+import { isHangoutEditHistoryComment, parseHangoutEditHistoryEntry, splitHangoutIntentParts } from "../lib/hangouts";
 import { buildAnonymousAliasProfile } from "../lib/profiles";
 import { AvatarSVG } from "./AvatarSVG";
 import { ProfileCard } from "./ProfileCard";
@@ -67,6 +67,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
   commentResetKey,
   notificationTarget
 }) => {
+  const hangoutIntentParts = splitHangoutIntentParts(hangout.intention);
   const {
     currentUser,
     profiles,
@@ -196,6 +197,16 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
     .map(comment => parseHangoutEditHistoryEntry(comment.content))
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  const getEditHistorySummary = (entry: NonNullable<ReturnType<typeof parseHangoutEditHistoryEntry>>) => {
+    if (!entry.editorId || !entry.editorName) {
+      return entry.summary;
+    }
+    const latestEditorName = profiles.find(profile => profile.id === entry.editorId)?.name?.trim();
+    if (!latestEditorName || latestEditorName === entry.editorName) {
+      return entry.summary;
+    }
+    return entry.summary.split(entry.editorName).join(latestEditorName);
+  };
   const myComments = hangoutComments.filter(c => !isHangoutEditHistoryComment(c.content));
   const isLikedByMe = currentUser ? likes.some(l => l.hangout_id === hangout.id && l.user_id === currentUser.id) : false;
 
@@ -329,7 +340,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
           {editHistoryEntries.map((entry, index) => (
             <div key={`${entry.at}-${index}`} className="bg-white/70 rounded-xl border border-amber-100 p-3 space-y-2">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-                <span className="font-semibold text-amber-900">{entry.summary}</span>
+                <span className="font-semibold text-amber-900">{getEditHistorySummary(entry)}</span>
                 <span className="text-[10px] text-amber-700">
                   {new Date(entry.at).toLocaleString([], {
                     month: "short",
@@ -374,7 +385,8 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
       <div className="space-y-3 font-sans">
         {/* Intention statement */}
         <h3 id={`hangout-intention-${hangout.id}`} className="text-sm sm:text-base font-extrabold text-gray-900 tracking-tight leading-snug line-clamp-3 md:line-clamp-2 overflow-hidden text-ellipsis">
-          I want to <span className="text-rose-500">{hangout.intention}</span>
+          <span className="text-gray-900">{hangoutIntentParts.lead}</span>{" "}
+          <span className="text-rose-500">{hangoutIntentParts.detail}</span>
         </h3>
 
         {/* Location & Time info list */}

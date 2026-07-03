@@ -319,6 +319,7 @@ function buildDeletedUserProfile() {
     program: "Not Specified",
     year_of_study: "Not Specified",
     gender: "Prefer not to say",
+    gender_last_changed_at: null,
     student_type: "Not Specified",
     about_me: "This account has been removed.",
     avatar_id: "owl",
@@ -349,6 +350,7 @@ function sanitizeProfileForDatabase(profile: any) {
     program: profile.program,
     year_of_study: profile.year_of_study,
     gender: profile.gender,
+    gender_last_changed_at: profile.gender_last_changed_at ?? null,
     student_type: profile.student_type,
     about_me: profile.about_me,
     avatar_id: profile.avatar_id,
@@ -401,7 +403,8 @@ const profileColumnSupport = {
   birthdate: true,
   password_hash: true,
   companion_pet_count: true,
-  companion_selected_state_id: true
+  companion_selected_state_id: true,
+  gender_last_changed_at: true
 };
 
 const commentColumnSupport = {
@@ -421,6 +424,19 @@ function markUnsupportedProfileColumns(error: unknown) {
   if (isMissingProfileColumnError(error, "companion_selected_state_id")) {
     profileColumnSupport.companion_selected_state_id = false;
   }
+  if (isMissingProfileColumnError(error, "gender_last_changed_at")) {
+    profileColumnSupport.gender_last_changed_at = false;
+  }
+}
+
+function isMissingOptionalProfileColumnError(error: unknown) {
+  return (
+    isMissingPasswordHashColumnError(error) ||
+    isMissingProfileColumnError(error, "birthdate") ||
+    isMissingProfileColumnError(error, "companion_pet_count") ||
+    isMissingProfileColumnError(error, "companion_selected_state_id") ||
+    isMissingProfileColumnError(error, "gender_last_changed_at")
+  );
 }
 
 function markUnsupportedCommentColumns(error: unknown) {
@@ -457,6 +473,9 @@ function getProfileSelectColumns() {
   if (profileColumnSupport.birthdate) {
     baseColumns.push("birthdate");
   }
+  if (profileColumnSupport.gender_last_changed_at) {
+    baseColumns.push("gender_last_changed_at");
+  }
   if (profileColumnSupport.companion_pet_count) {
     baseColumns.push("companion_pet_count");
   }
@@ -484,6 +503,9 @@ function stripUnsupportedColumnsFromProfileRow(row: Record<string, any>) {
   if (!profileColumnSupport.companion_selected_state_id) {
     delete nextRow.companion_selected_state_id;
   }
+  if (!profileColumnSupport.gender_last_changed_at) {
+    delete nextRow.gender_last_changed_at;
+  }
   return nextRow;
 }
 
@@ -495,21 +517,18 @@ function stripUnsupportedProfileColumns(rows: Array<Record<string, any>>, error:
     if (isMissingPasswordHashColumnError(error)) delete nextRow.password_hash;
     if (isMissingProfileColumnError(error, "companion_pet_count")) delete nextRow.companion_pet_count;
     if (isMissingProfileColumnError(error, "companion_selected_state_id")) delete nextRow.companion_selected_state_id;
+    if (isMissingProfileColumnError(error, "gender_last_changed_at")) delete nextRow.gender_last_changed_at;
     return nextRow;
   });
 }
 
-async function upsertProfileWithFallback(profile: any) {
-  const [preparedProfile] = await prepareProfileRowsForSupabase([profile], backendProfileClient);
+async function upsertProfileWithFallback(profile: any, remoteFields: string[] = []) {
+  const [preparedProfile] = await prepareProfileRowsForSupabase([profile], backendProfileClient, remoteFields);
   if (!preparedProfile) return;
 
   const { error } = await backendProfileClient.from("xmum_profiles").upsert([preparedProfile]);
   if (error) {
-    if (
-      isMissingPasswordHashColumnError(error) ||
-      isMissingProfileColumnError(error, "companion_pet_count") ||
-      isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
-    ) {
+    if (isMissingOptionalProfileColumnError(error)) {
       markUnsupportedProfileColumns(error);
       const [fallbackProfile] = stripUnsupportedProfileColumns([preparedProfile], error);
       const fallback = await backendProfileClient.from("xmum_profiles").upsert([fallbackProfile]);
@@ -523,9 +542,10 @@ async function upsertProfileWithFallback(profile: any) {
   }
 }
 
-async function prepareProfileRowsForSupabase(rows: any[], client = supabaseAdmin || supabase) {
+async function prepareProfileRowsForSupabase(rows: any[], client = supabaseAdmin || supabase, remoteFields: string[] = []) {
   const collapsedRows = collapseProfilesByEmail(rows).map(sanitizeProfileForDatabase);
   const emails = Array.from(new Set(collapsedRows.map(row => normalizeProfileEmail(row.email || "")).filter(Boolean)));
+  const allowedRemoteFields = new Set(remoteFields);
 
   if (emails.length === 0) {
     return collapsedRows;
@@ -544,11 +564,7 @@ async function prepareProfileRowsForSupabase(rows: any[], client = supabaseAdmin
     let { data, error } = await client.from("xmum_profiles").select(getProfileSelectColumns()).in("email", emails);
     if (
       error &&
-      (
-        isMissingPasswordHashColumnError(error) ||
-        isMissingProfileColumnError(error, "companion_pet_count") ||
-        isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
-      )
+      isMissingOptionalProfileColumnError(error)
     ) {
       markUnsupportedProfileColumns(error);
       ({ data, error } = await client.from("xmum_profiles").select(getProfileSelectColumns()).in("email", emails));
@@ -568,16 +584,32 @@ async function prepareProfileRowsForSupabase(rows: any[], client = supabaseAdmin
       return row;
     }
 
-    return sanitizeProfileForDatabase({
+    const mergedProfile = {
       ...existing,
-      ...row,
       id: existing.id,
       email: normalizeProfileEmail(existing.email || row.email),
-      is_profile_complete: Boolean(existing.is_profile_complete || row.is_profile_complete),
-      companion_pet_count: Math.max(Number(row.companion_pet_count || 0), Number(existing.companion_pet_count || 0)),
-      companion_selected_state_id: row.companion_selected_state_id ?? existing.companion_selected_state_id ?? null,
-      password_hash: row.password_hash ?? existing.password_hash ?? null
-    });
+      is_profile_complete: allowedRemoteFields.has("is_profile_complete")
+        ? Boolean(existing.is_profile_complete || row.is_profile_complete)
+        : Boolean(existing.is_profile_complete)
+    };
+
+    for (const field of allowedRemoteFields) {
+      if (field === "id" || field === "email") continue;
+      (mergedProfile as any)[field] = row[field];
+    }
+
+    if (allowedRemoteFields.has("companion_pet_count")) {
+      (mergedProfile as any).companion_pet_count = Math.max(
+        Number(row.companion_pet_count || 0),
+        Number(existing.companion_pet_count || 0)
+      );
+    }
+
+    if (allowedRemoteFields.has("password_hash")) {
+      (mergedProfile as any).password_hash = row.password_hash ?? existing.password_hash ?? null;
+    }
+
+    return sanitizeProfileForDatabase(mergedProfile);
   });
 }
 
@@ -595,22 +627,18 @@ async function deleteRowsByIds(table: string, ids: string[]) {
   }
 }
 
-async function upsertToSupabase(table: string, rows: any[]) {
+async function upsertToSupabase(table: string, rows: any[], remoteFields: string[] = []) {
   if (!supabaseAdmin) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is required for server-side sync.");
   }
   if (rows.length === 0) return;
 
-  const preparedRows = table === "xmum_profiles" ? await prepareProfileRowsForSupabase(rows, supabaseAdmin) : rows;
+  const preparedRows = table === "xmum_profiles" ? await prepareProfileRowsForSupabase(rows, supabaseAdmin, remoteFields) : rows;
   const { error } = await supabaseAdmin.from(table).upsert(preparedRows);
   if (error) {
     if (
       table === "xmum_profiles" &&
-      (
-        isMissingPasswordHashColumnError(error) ||
-        isMissingProfileColumnError(error, "companion_pet_count") ||
-        isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
-      )
+      isMissingOptionalProfileColumnError(error)
     ) {
       markUnsupportedProfileColumns(error);
       const fallbackRows = stripUnsupportedProfileColumns(preparedRows, error);
@@ -740,11 +768,7 @@ async function resolveBestProfileByEmail(email: string): Promise<any | null> {
     let { data, error } = await backendProfileClient.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", formattedEmail);
     if (
       error &&
-      (
-        isMissingPasswordHashColumnError(error) ||
-        isMissingProfileColumnError(error, "companion_pet_count") ||
-        isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
-      )
+      isMissingOptionalProfileColumnError(error)
     ) {
       markUnsupportedProfileColumns(error);
       ({ data, error } = await backendProfileClient.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", formattedEmail));
@@ -762,11 +786,7 @@ async function resolveBestProfileByEmail(email: string): Promise<any | null> {
 
       if (
         insensitiveError &&
-        (
-          isMissingPasswordHashColumnError(insensitiveError) ||
-          isMissingProfileColumnError(insensitiveError, "companion_pet_count") ||
-          isMissingProfileColumnError(insensitiveError, "companion_selected_state_id") || isMissingProfileColumnError(insensitiveError, "birthdate")
-        )
+        isMissingOptionalProfileColumnError(insensitiveError)
       ) {
         markUnsupportedProfileColumns(insensitiveError);
         ({ data: insensitiveData, error: insensitiveError } = await backendProfileClient
@@ -1164,7 +1184,7 @@ async function startServer() {
 
       if (!appPasswordMatches && authResponse.data?.session) {
         profile.password_hash = hashPassword(formattedEmail, password);
-        await upsertProfileWithFallback(profile);
+        await upsertProfileWithFallback(profile, ["password_hash"]);
         await mirrorProfileToAuthUser(profile, password);
       }
 
@@ -1174,7 +1194,7 @@ async function startServer() {
 
         try {
           upsertLocalProfiles([profile]);
-          await upsertProfileWithFallback(profile);
+          await upsertProfileWithFallback(profile, ["password_hash"]);
         } catch (migrationErr) {
           console.warn("Password hash migration failed during login:", migrationErr);
         }
@@ -1288,7 +1308,7 @@ async function startServer() {
       }
 
       upsertLocalProfiles([nextProfile]);
-      await upsertProfileWithFallback(nextProfile);
+      await upsertProfileWithFallback(nextProfile, ["password_hash"]);
       await mirrorProfileToAuthUser(nextProfile, password);
 
       return res.status(200).json({ success: true });
@@ -1634,6 +1654,10 @@ async function startServer() {
         const removedIds = Array.isArray(req.body?.[removedIdsKey || ""])
           ? req.body[removedIdsKey || ""].filter((id: unknown) => typeof id === "string" && id.trim().length > 0)
           : [];
+        const profileRemoteFields =
+          table === "xmum_profiles" && Array.isArray(req.body?.profile_remote_fields)
+            ? req.body.profile_remote_fields.filter((field: unknown) => typeof field === "string" && field.trim().length > 0)
+            : [];
 
         if (localProfileMode) {
           upsertLocalProfiles(data);
@@ -1641,7 +1665,7 @@ async function startServer() {
           saveLocalData(fileName, transformedData);
         }
 
-        await upsertToSupabase(table, transformedData);
+        await upsertToSupabase(table, transformedData, profileRemoteFields);
         if (removedIds.length > 0) {
           await deleteRowsByIds(table, removedIds);
         }

@@ -55,6 +55,7 @@ export function buildAnonymousAliasProfile(
     program: profile?.program || "Undergraduate",
     year_of_study: profile?.year_of_study || "Year 1",
     gender: profile?.gender || "Prefer not to say",
+    gender_last_changed_at: profile?.gender_last_changed_at ?? null,
     student_type: profile?.student_type || "degree",
     about_me:
       options?.aboutMe || "This student is staying anonymous while still sharing a few verified basics.",
@@ -161,6 +162,7 @@ const ACCOUNT_SYNC_FIELDS: Array<keyof Profile> = [
   "program",
   "year_of_study",
   "gender",
+  "gender_last_changed_at",
   "student_type",
   "about_me",
   "avatar_id",

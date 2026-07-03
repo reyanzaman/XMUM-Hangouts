@@ -25,7 +25,7 @@ interface NotificationBellProps {
 }
 
 export const NotificationBell: React.FC<NotificationBellProps> = ({ onOpenNotification }) => {
-  const { notifications, markNotificationsAsRead, clearNotification } = useApp();
+  const { notifications, markNotificationsAsRead, clearNotification, profiles } = useApp();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -119,6 +119,21 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ onOpenNotifi
           iconWrap: "bg-slate-100 text-slate-700"
         };
     }
+  };
+
+  const getNotificationText = (notification: AppNotification) => {
+    const text = notification.payload.custom_text || notification.payload.message || "You have a new update.";
+    if (notification.payload.actor_is_anonymous || !notification.payload.actor_user_id || !notification.payload.actor_name) {
+      return text;
+    }
+
+    const latestActor = profiles.find(profile => profile.id === notification.payload.actor_user_id);
+    const latestName = latestActor?.name?.trim();
+    if (!latestName || latestName === notification.payload.actor_name) {
+      return text;
+    }
+
+    return text.split(notification.payload.actor_name).join(latestName);
   };
 
   return (
@@ -248,7 +263,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ onOpenNotifi
                         </div>
 
                         <p className="mt-2 text-[12px] font-medium leading-5 text-slate-700">
-                          {notif.payload.custom_text}
+                          {getNotificationText(notif)}
                         </p>
                         <div className="mt-2 flex items-center justify-between gap-3">
                           <span className="block text-[10px] font-mono text-slate-400">

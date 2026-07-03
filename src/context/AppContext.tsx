@@ -27,6 +27,7 @@ import { encryptMessage, decryptMessage } from "../lib/encryption";
 import { hashPassword, matchesStoredPassword } from "../lib/security";
 import {
   MIN_HANGOUT_DESCRIPTION_LENGTH,
+  parseHangoutEditHistoryEntry,
   serializeHangoutEditHistoryEntry,
   validateFutureHangoutDate
 } from "../lib/hangouts";
@@ -357,7 +358,8 @@ const profileColumnSupport = {
   birthdate: true,
   password_hash: true,
   companion_pet_count: true,
-  companion_selected_state_id: true
+  companion_selected_state_id: true,
+  gender_last_changed_at: true
 };
 
 const commentColumnSupport = {
@@ -377,7 +379,17 @@ const markUnsupportedProfileColumns = (error: unknown) => {
   if (isMissingProfileColumnError(error, "companion_selected_state_id")) {
     profileColumnSupport.companion_selected_state_id = false;
   }
+  if (isMissingProfileColumnError(error, "gender_last_changed_at")) {
+    profileColumnSupport.gender_last_changed_at = false;
+  }
 };
+
+const isMissingOptionalProfileColumnError = (error: unknown) =>
+  isMissingPasswordHashColumnError(error) ||
+  isMissingProfileColumnError(error, "birthdate") ||
+  isMissingProfileColumnError(error, "companion_pet_count") ||
+  isMissingProfileColumnError(error, "companion_selected_state_id") ||
+  isMissingProfileColumnError(error, "gender_last_changed_at");
 
 const markUnsupportedCommentColumns = (error: unknown) => {
   if (isMissingCommentColumnError(error, "is_anonymous")) {
@@ -413,6 +425,9 @@ const getProfileSelectColumns = () => {
   if (profileColumnSupport.birthdate) {
     baseColumns.push("birthdate");
   }
+  if (profileColumnSupport.gender_last_changed_at) {
+    baseColumns.push("gender_last_changed_at");
+  }
   if (profileColumnSupport.companion_pet_count) {
     baseColumns.push("companion_pet_count");
   }
@@ -440,6 +455,9 @@ const stripUnsupportedColumnsFromProfileRow = (row: Record<string, any>) => {
   if (!profileColumnSupport.companion_selected_state_id) {
     delete nextRow.companion_selected_state_id;
   }
+  if (!profileColumnSupport.gender_last_changed_at) {
+    delete nextRow.gender_last_changed_at;
+  }
   return nextRow;
 };
 
@@ -451,6 +469,7 @@ const stripUnsupportedProfileColumns = (rows: Array<Record<string, any>>, error:
     if (isMissingPasswordHashColumnError(error)) delete nextRow.password_hash;
     if (isMissingProfileColumnError(error, "companion_pet_count")) delete nextRow.companion_pet_count;
     if (isMissingProfileColumnError(error, "companion_selected_state_id")) delete nextRow.companion_selected_state_id;
+    if (isMissingProfileColumnError(error, "gender_last_changed_at")) delete nextRow.gender_last_changed_at;
     return nextRow;
   });
 };
@@ -513,6 +532,7 @@ const buildDeletedUserProfile = (): Profile => ({
   program: "Not Specified",
   year_of_study: "Not Specified",
   gender: "Prefer not to say",
+  gender_last_changed_at: null,
   student_type: "Not Specified",
   about_me: "This account has been removed.",
   avatar_id: "owl",
@@ -860,11 +880,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let { data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", normalizedEmail);
       if (
         error &&
-        (
-          isMissingPasswordHashColumnError(error) ||
-          isMissingProfileColumnError(error, "companion_pet_count") ||
-          isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
-        )
+        isMissingOptionalProfileColumnError(error)
       ) {
         markUnsupportedProfileColumns(error);
         ({ data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", normalizedEmail));
@@ -891,11 +907,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (
           fallbackError &&
-          (
-            isMissingPasswordHashColumnError(fallbackError) ||
-            isMissingProfileColumnError(fallbackError, "companion_pet_count") ||
-            isMissingProfileColumnError(fallbackError, "companion_selected_state_id") || isMissingProfileColumnError(fallbackError, "birthdate")
-          )
+          isMissingOptionalProfileColumnError(fallbackError)
         ) {
           markUnsupportedProfileColumns(fallbackError);
           const retryResponse = await supabase
@@ -1025,7 +1037,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         : [...prev, normalizedCurrentUser];
       const reconciledProfiles = normalizeProfiles(nextProfiles);
       localStorage.setItem("xmum_profiles", JSON.stringify(reconciledProfiles));
-      void syncServerMirror("/api/profiles/sync", { profiles: collapseProfilesByEmail(reconciledProfiles) });
       return reconciledProfiles;
     });
     localStorage.setItem("xmum_current_user_id", normalizedCurrentUser.id);
@@ -1090,6 +1101,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     program: profile.program,
     year_of_study: profile.year_of_study,
     gender: profile.gender,
+    gender_last_changed_at: profile.gender_last_changed_at ?? null,
     student_type: profile.student_type,
     about_me: profile.about_me,
     avatar_id: profile.avatar_id,
@@ -1121,9 +1133,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return row;
   };
 
-  const prepareProfileRowsForSupabase = async (items: Profile[]) => {
+  const prepareProfileRowsForSupabase = async (items: Profile[], remoteFields: Array<keyof Profile> = []) => {
     const collapsedItems = collapseProfilesByEmail(items).map(sanitizeProfileForDatabase);
     const emails = Array.from(new Set(collapsedItems.map(item => normalizeProfileEmail(item.email || "")).filter(Boolean)));
+    const allowedRemoteFields = new Set<string>(remoteFields as string[]);
 
     if (emails.length === 0) {
       return collapsedItems;
@@ -1134,11 +1147,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let { data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).in("email", emails);
       if (
         error &&
-        (
-          isMissingPasswordHashColumnError(error) ||
-          isMissingProfileColumnError(error, "companion_pet_count") ||
-          isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
-        )
+        isMissingOptionalProfileColumnError(error)
       ) {
         markUnsupportedProfileColumns(error);
         ({ data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).in("email", emails));
@@ -1158,32 +1167,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return item;
       }
 
-      return sanitizeProfileForDatabase({
+      const mergedProfile: Profile = {
         ...existing,
-        ...item,
         id: existing.id,
         email: normalizeProfileEmail(existing.email || item.email),
-        is_profile_complete: Boolean(existing.is_profile_complete || item.is_profile_complete),
-        companion_pet_count: Math.max(
+        is_profile_complete: allowedRemoteFields.has("is_profile_complete")
+          ? Boolean(existing.is_profile_complete || item.is_profile_complete)
+          : Boolean(existing.is_profile_complete)
+      } as Profile;
+
+      for (const field of allowedRemoteFields) {
+        if (field === "id" || field === "email") continue;
+        (mergedProfile as any)[field] = (item as any)[field];
+      }
+
+      if (allowedRemoteFields.has("companion_pet_count")) {
+        mergedProfile.companion_pet_count = Math.max(
           Number(item.companion_pet_count || 0),
           Number(existing.companion_pet_count || 0)
-        ),
-        companion_selected_state_id: item.companion_selected_state_id ?? existing.companion_selected_state_id ?? null,
-        password_hash: item.password_hash ?? existing.password_hash ?? null
-      } as Profile);
+        );
+      }
+
+      if (allowedRemoteFields.has("password_hash")) {
+        mergedProfile.password_hash = item.password_hash ?? existing.password_hash ?? null;
+      }
+
+      return sanitizeProfileForDatabase(mergedProfile);
     });
   };
 
-  const upsertProfilesDirect = async (items: Profile[]) => {
-    const rows = await prepareProfileRowsForSupabase(items);
+  const upsertProfilesDirect = async (items: Profile[], remoteFields: Array<keyof Profile> = []) => {
+    const rows = await prepareProfileRowsForSupabase(items, remoteFields);
     const { error } = await supabase.from("xmum_profiles").upsert(rows);
 
     if (error) {
-      if (
-        isMissingPasswordHashColumnError(error) ||
-        isMissingProfileColumnError(error, "companion_pet_count") ||
-        isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
-      ) {
+      if (isMissingOptionalProfileColumnError(error)) {
         const fallbackRows = stripUnsupportedProfileColumns(rows, error);
         const fallback = await supabase.from("xmum_profiles").upsert(fallbackRows);
         if (fallback.error) {
@@ -1280,11 +1298,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let { data: dbProfiles, error: errProfiles } = await supabase.from("xmum_profiles").select(getProfileSelectColumns());
         if (
           errProfiles &&
-          (
-            isMissingPasswordHashColumnError(errProfiles) ||
-            isMissingProfileColumnError(errProfiles, "companion_pet_count") ||
-            isMissingProfileColumnError(errProfiles, "companion_selected_state_id") || isMissingProfileColumnError(errProfiles, "birthdate")
-          )
+          isMissingOptionalProfileColumnError(errProfiles)
         ) {
           markUnsupportedProfileColumns(errProfiles);
           ({ data: dbProfiles, error: errProfiles } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()));
@@ -1392,24 +1406,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const storedProfilesSnapshot = getStoredProfilesSnapshot();
         const normalizedProfiles = filterProfilesForRuntime(normalizeProfiles([
-          ...storedProfilesSnapshot,
-          ...(((dbProfiles || []) as unknown) as Profile[])
+          ...(((dbProfiles || []) as unknown) as Profile[]),
+          ...storedProfilesSnapshot
         ]));
         setProfiles(normalizedProfiles);
         localStorage.setItem("xmum_profiles", JSON.stringify(normalizedProfiles));
-        void syncServerMirror("/api/profiles/sync", { profiles: collapseProfilesByEmail(normalizedProfiles) });
-
-        const dbProfilesById = new Map((((dbProfiles || []) as unknown) as Profile[]).map(profile => [profile.id, JSON.stringify(profile)]));
-        const profilesWereNormalized = normalizedProfiles.some(profile => {
-          return dbProfilesById.get(profile.id) !== JSON.stringify(profile);
-        });
-        if (profilesWereNormalized) {
-          try {
-            await upsertProfilesDirect(normalizedProfiles);
-          } catch (syncErr) {
-            console.warn("Initial normalized profile upsert failed:", syncErr);
-          }
-        }
 
         const authSubscription = supabase.auth.onAuthStateChange(async (_event, session) => {
           try {
@@ -1800,11 +1801,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               let { data: userProfile, error: userProfileError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", storedActiveUser).maybeSingle();
               if (
                 userProfileError &&
-                (
-                  isMissingPasswordHashColumnError(userProfileError) ||
-                  isMissingProfileColumnError(userProfileError, "companion_pet_count") ||
-                  isMissingProfileColumnError(userProfileError, "companion_selected_state_id") || isMissingProfileColumnError(userProfileError, "birthdate")
-                )
+                isMissingOptionalProfileColumnError(userProfileError)
               ) {
                 markUnsupportedProfileColumns(userProfileError);
                 ({ data: userProfile, error: userProfileError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", storedActiveUser).maybeSingle());
@@ -1897,7 +1894,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   // --- PERSISTENCE SYNCS ---
-  const saveProfiles = async (data: Profile[]) => {
+  const saveProfiles = async (data: Profile[], remoteFields: Array<keyof Profile> = []) => {
     const normalizedData = filterProfilesForRuntime(normalizeProfiles(data));
     const canonicalRows = collapseProfilesByEmail(normalizedData);
     const prev = profiles;
@@ -1909,7 +1906,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await fetch("/api/profiles/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profiles: canonicalRows })
+        body: JSON.stringify({ profiles: canonicalRows, profile_remote_fields: remoteFields })
       });
     } catch (syncErr) {
       console.warn("Local backend profiles mirror sync failed:", syncErr);
@@ -1921,14 +1918,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return !matchingPrev || JSON.stringify(matchingPrev) !== JSON.stringify(item);
       });
       if (changed.length > 0) {
-        const rows = await prepareProfileRowsForSupabase(changed);
+        const rows = await prepareProfileRowsForSupabase(changed, remoteFields);
         const { error } = await supabase.from("xmum_profiles").upsert(rows);
         if (error) {
-          if (
-            isMissingPasswordHashColumnError(error) ||
-            isMissingProfileColumnError(error, "companion_pet_count") ||
-            isMissingProfileColumnError(error, "companion_selected_state_id") || isMissingProfileColumnError(error, "birthdate")
-          ) {
+          if (isMissingOptionalProfileColumnError(error)) {
             const fallbackRows = stripUnsupportedProfileColumns(rows, error);
             const fallback = await supabase.from("xmum_profiles").upsert(fallbackRows);
             if (fallback.error) {
@@ -1982,7 +1975,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       companionProfileSyncTimeoutRef.current = window.setTimeout(() => {
-        void saveProfiles(nextProfiles);
+        void saveProfiles(nextProfiles, ["companion_pet_count", "companion_selected_state_id"]);
       }, 900);
 
       return nextProfiles;
@@ -2313,6 +2306,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const replaceNameInGeneratedText = (text: string | undefined, oldName: string, newName: string) => {
+    if (!text || !oldName.trim() || oldName === newName) return text;
+    return text.split(oldName).join(newName);
+  };
+
+  const refreshGeneratedNameReferences = (userId: string, oldName: string, newName: string) => {
+    if (!oldName.trim() || oldName === newName) return;
+
+    let notificationsChanged = false;
+    const nextNotifications = notifications.map(notification => {
+      const shouldRefreshByActor = notification.payload.actor_user_id === userId && !notification.payload.actor_is_anonymous;
+      const nextPayload = { ...notification.payload };
+
+      if (shouldRefreshByActor) {
+        nextPayload.actor_name = newName;
+      }
+
+      const nextCustomText = replaceNameInGeneratedText(nextPayload.custom_text, oldName, newName);
+      const nextReporterName = replaceNameInGeneratedText(nextPayload.reporter_name, oldName, newName);
+      const nextMessage = replaceNameInGeneratedText(nextPayload.message, oldName, newName);
+
+      if (
+        shouldRefreshByActor ||
+        nextCustomText !== nextPayload.custom_text ||
+        nextReporterName !== nextPayload.reporter_name ||
+        nextMessage !== nextPayload.message
+      ) {
+        notificationsChanged = true;
+        nextPayload.custom_text = nextCustomText;
+        nextPayload.reporter_name = nextReporterName;
+        nextPayload.message = nextMessage;
+        return { ...notification, payload: nextPayload };
+      }
+
+      return notification;
+    });
+
+    if (notificationsChanged) {
+      void saveNotifications(nextNotifications);
+    }
+
+    let commentsChanged = false;
+    const nextComments = comments.map(comment => {
+      const editEntry = parseHangoutEditHistoryEntry(comment.content);
+      if (!editEntry) return comment;
+
+      const shouldRefreshByEditor = editEntry.editorId === userId;
+      const nextSummary = replaceNameInGeneratedText(editEntry.summary, oldName, newName) || editEntry.summary;
+      if (!shouldRefreshByEditor && nextSummary === editEntry.summary) {
+        return comment;
+      }
+
+      commentsChanged = true;
+      return {
+        ...comment,
+        content: serializeHangoutEditHistoryEntry({
+          ...editEntry,
+          editorName: shouldRefreshByEditor ? newName : editEntry.editorName,
+          summary: nextSummary
+        })
+      };
+    });
+
+    if (commentsChanged) {
+      void saveComments(nextComments);
+    }
+
+    let messagesChanged = false;
+    const nextMessages = messages.map(message => {
+      if (message.sender_id !== userId) return message;
+      const isGeneratedSupportMessage =
+        message.content.startsWith("[BUG REPORT]") ||
+        message.content.startsWith("[FEATURE REQUEST]") ||
+        message.content.startsWith("[SYSTEM HELPDESK ROUTER]");
+
+      if (!isGeneratedSupportMessage) return message;
+
+      const nextContent = replaceNameInGeneratedText(message.content, oldName, newName);
+      if (nextContent === message.content) return message;
+
+      messagesChanged = true;
+      return { ...message, content: nextContent || message.content };
+    });
+
+    if (messagesChanged) {
+      void saveMessages(nextMessages);
+    }
+  };
+
   const replaceAllAppData = (payload: {
     profiles: Profile[];
     hangouts: Hangout[];
@@ -2496,6 +2578,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       parent_comment_id: null,
       content: serializeHangoutEditHistoryEntry({
         at: new Date().toISOString(),
+        editorId: currentUser?.id || hangout.creator_id,
         editorName: currentUser?.name || "Host",
         summary,
         changes: changeList
@@ -2774,11 +2857,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let { data: found, error: foundError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", profileId).maybeSingle();
       if (
         foundError &&
-        (
-          isMissingPasswordHashColumnError(foundError) ||
-          isMissingProfileColumnError(foundError, "companion_pet_count") ||
-          isMissingProfileColumnError(foundError, "companion_selected_state_id") || isMissingProfileColumnError(foundError, "birthdate")
-        )
+        isMissingOptionalProfileColumnError(foundError)
       ) {
         markUnsupportedProfileColumns(foundError);
         ({ data: found, error: foundError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", profileId).maybeSingle());
@@ -2839,7 +2918,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       appeal_count: 0,
       is_demo_profile: true
     };
-    saveProfiles([...profiles, newUser]);
+    saveProfiles([...profiles, newUser], [
+      "student_id",
+      "name",
+      "name_last_changed_at",
+      "country",
+      "country_last_changed_at",
+      "languages",
+      "age",
+      "birthdate",
+      "program",
+      "year_of_study",
+      "gender",
+      "student_type",
+      "about_me",
+      "avatar_id",
+      "is_profile_complete",
+      "hide_details",
+      "is_admin",
+      "is_blocked_globally",
+      "flag_status",
+      "appeal_count"
+    ]);
     showToast(`Simulated user ${name} created!`, "success");
   };
 
@@ -2868,16 +2968,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       update.name_last_changed_at = new Date().toISOString();
     }
 
-    // If changing country
+    // If changing country after completion, allow exactly one correction.
     if (data.country && data.country !== original.country) {
-      if (original.country_last_changed_at) {
-        const lastChanged = new Date(original.country_last_changed_at).getTime();
-        if (now - lastChanged < cooldownPeriod) {
-          const daysLeft = Math.ceil((cooldownPeriod - (now - lastChanged)) / (1000 * 60 * 60 * 24));
-          return { success: false, error: `Country cannot be changed. You must wait ${daysLeft} more day(s).` };
+      if (original.is_profile_complete && original.country_last_changed_at) {
+        return { success: false, error: "Country can only be changed once after profile completion." };
+      }
+      if (original.is_profile_complete) {
+        update.country_last_changed_at = new Date().toISOString();
+      }
+    }
+
+    if (data.gender && data.gender !== original.gender) {
+      if (original.is_profile_complete && original.gender_last_changed_at) {
+        return { success: false, error: "Gender can only be changed once after profile completion." };
+      }
+      if (original.is_profile_complete) {
+        update.gender_last_changed_at = new Date().toISOString();
+      }
+    }
+
+    if (original.is_profile_complete) {
+      for (const key of Object.keys(update) as Array<keyof Profile>) {
+        if (
+          key !== "password" &&
+          key !== "country_last_changed_at" &&
+          key !== "gender_last_changed_at" &&
+          key !== "is_profile_complete" &&
+          JSON.stringify(update[key]) === JSON.stringify(original[key])
+        ) {
+          delete update[key];
         }
       }
-      update.country_last_changed_at = new Date().toISOString();
     }
 
     // Email and student_id are permanently locked and cannot be changed
@@ -2888,9 +3009,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     delete update.flag_status;
     delete update.appeal_count;
     delete update.is_demo_profile;
-    if (original.is_profile_complete) {
-      delete update.gender;
-    }
 
     if (typeof update.password === "string") {
       const trimmedPassword = update.password.trim();
@@ -2903,9 +3021,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Build finalized profile
     const updatedUser = normalizeProfileRecord({ ...original, ...update, is_profile_complete: true });
+    const didChangeName = updatedUser.name !== original.name;
     
     const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
-    saveProfiles(nextProfiles);
+    const remoteFields = Array.from(
+      new Set([...Object.keys(update), "is_profile_complete"])
+    ) as Array<keyof Profile>;
+    saveProfiles(nextProfiles, remoteFields);
+    if (didChangeName) {
+      refreshGeneratedNameReferences(updatedUser.id, original.name, updatedUser.name);
+    }
     setCurrentUser(updatedUser);
     if (!original.is_profile_complete && updatedUser.is_profile_complete && !hasSeenOnboarding(updatedUser.email)) {
       setOnboardingStep(0);
@@ -2918,7 +3043,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setHideDetails = (hide: boolean) => {
     if (!currentUser) return;
     const updated = { ...currentUser, hide_details: hide };
-    saveProfiles(profiles.map(p => p.id === currentUser.id ? updated : p));
+    saveProfiles(profiles.map(p => p.id === currentUser.id ? updated : p), ["hide_details"]);
     setCurrentUser(updated);
     showToast(hide ? "Profile details hidden from public." : "Profile details visible to public.", "info");
   };
@@ -3036,6 +3161,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           user_id: ad.id,
           type: "new_report_admin",
           payload: {
+            actor_user_id: currentUser.id,
+            actor_name: currentUser.name,
             custom_text: `🚨 Abusive Behavior: ${currentUser.name} attempted vulgar hangout plan: "${data.intention.substring(0, 30)}..."`
           },
           is_read: false,
@@ -3268,6 +3395,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           payload: {
             hangout_id: hangoutId,
             hangout_title: targetHangout.intention.substring(0, 15) + "...",
+            actor_user_id: currentUser.id,
+            actor_name: currentUser.name,
             custom_text: `${currentUser.name} liked your hangout plan!`
           },
           is_read: false,
@@ -3386,6 +3515,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           payload: {
             hangout_id: commentObj.hangout_id,
             comment_id: commentId,
+            actor_user_id: currentUser.id,
+            actor_name: currentUser.name,
             custom_text: `💖 ${currentUser.name} loved your comment: "${commentObj.content.substring(0, 20)}..."`
           },
           is_read: false,
@@ -3436,6 +3567,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           user_id: ad.id,
           type: "new_report_admin",
           payload: {
+            actor_user_id: currentUser.id,
+            actor_name: currentUser.name,
             custom_text: `🚨 Abusive Behavior: ${currentUser.name} attempted vulgar comment: "${content.substring(0, 30)}..."`
           },
           is_read: false,
@@ -3484,6 +3617,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           payload: {
             hangout_id: hangoutId,
             comment_id: newComment.id,
+            actor_user_id: currentUser.id,
+            actor_name: currentUser.name,
+            actor_is_anonymous: isAnonymous,
             custom_text: `${commenterLabel} left a comment on your post: "${content.substring(0, 20)}..."`
           },
           is_read: false,
@@ -3558,6 +3694,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       type: "new_application",
       payload: {
         hangout_id: hangoutId,
+        actor_user_id: currentUser.id,
+        actor_name: currentUser.name,
+        actor_is_anonymous: isAnonymous,
         custom_text: `${isAnonymous ? "An anonymous student" : currentUser.name} requested to join: "I want to ${targetHangout.intention.substring(0, 20)}..."`
       },
       is_read: false,
@@ -3800,6 +3939,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       type: "new_report_admin",
       payload: {
         report_id: newReport.id,
+        actor_user_id: currentUser.id,
+        actor_name: currentUser.name,
         reporter_name: currentUser.name,
         custom_text: `New report submitted by ${currentUser.name} against profile target.`
       },
@@ -3862,6 +4003,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         user_id: admin.id,
         type: "new_report_admin",
         payload: {
+          actor_user_id: currentUser.id,
+          actor_name: currentUser.name,
           reporter_name: currentUser.name,
           custom_text: `New ${kindLabelLower} from ${currentUser.name}: ${subject || `General ${kindLabelLower}`}`
         },
@@ -3930,7 +4073,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Increment appeal count on user profile
     const updatedUser = { ...currentUser, appeal_count: currentAppealCount + 1 };
-    saveProfiles(profiles.map(p => p.id === currentUser.id ? updatedUser : p));
+    saveProfiles(profiles.map(p => p.id === currentUser.id ? updatedUser : p), ["appeal_count"]);
     setCurrentUser(updatedUser);
 
     saveAppeals([...appeals, newAppeal]);
@@ -3943,6 +4086,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       type: "new_report_admin",
       payload: {
         report_id: reportId,
+        actor_user_id: currentUser.id,
+        actor_name: currentUser.name,
         custom_text: `Safety ban appeal #${currentAppealCount + 1} filed by ${currentUser.name}`
       },
       is_read: false,
@@ -3975,7 +4120,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ...reportedProfile,
           flag_status: "potentially_unsafe"
         };
-        saveProfiles(profiles.map(p => p.id === updatedProfile.id ? updatedProfile : p));
+        saveProfiles(profiles.map(p => p.id === updatedProfile.id ? updatedProfile : p), ["flag_status"]);
 
         // Create a safety notification for reported user
         const warnNotif: AppNotification = {
@@ -4033,7 +4178,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ...targetUser,
           flag_status: finalFlagStatus
         };
-        saveProfiles(profiles.map(p => p.id === targetUser.id ? updatedProfile : p));
+        saveProfiles(profiles.map(p => p.id === targetUser.id ? updatedProfile : p), ["flag_status"]);
 
         // Sync local auth user state if they are the one being audited
         if (currentUser && currentUser.id === targetUser.id) {

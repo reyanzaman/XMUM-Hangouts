@@ -77,7 +77,7 @@ export const StudentProfilePage: React.FC = () => {
 
   // Edit fields state
   const [profileName, setProfileName] = useState(currentUser.name || "");
-  const [profileCountry] = useState(currentUser.country || "Malaysia");
+  const [profileCountry, setProfileCountry] = useState(currentUser.country || "Malaysia");
   const [profileLanguages, setProfileLanguages] = useState<string[]>(currentUser.languages || []);
   const [profileBirthdate, setProfileBirthdate] = useState(currentUser.birthdate || "2006-01-01");
   const [profileProgram, setProfileProgram] = useState(currentUser.program || "");
@@ -102,7 +102,8 @@ export const StudentProfilePage: React.FC = () => {
     () => resolveStoredCompanionState(currentUser.email, currentUser)
   );
   const hasExistingPassword = Boolean(currentUser.password_hash || currentUser.password);
-  const isGenderLocked = currentUser.is_profile_complete;
+  const isCountryLocked = Boolean(currentUser.is_profile_complete && currentUser.country_last_changed_at);
+  const isGenderLocked = Boolean(currentUser.is_profile_complete && currentUser.gender_last_changed_at);
   const deleteAccountConfirmationMatches =
     deleteAccountConfirmationInput.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
   const companionPetCount = Math.max(0, Number(companionProgress.petCount || 0));
@@ -293,6 +294,7 @@ export const StudentProfilePage: React.FC = () => {
   // Compute if any field differs from the currently saved user details
   const hasChanges = 
     profileName !== (currentUser.name || "") ||
+    profileCountry !== (currentUser.country || "Malaysia") ||
     profileBirthdate !== (currentUser.birthdate || "2006-01-01") ||
     profileProgram !== (currentUser.program || "") ||
     profileStudyYear !== (currentUser.year_of_study || "") ||
@@ -700,8 +702,13 @@ export const StudentProfilePage: React.FC = () => {
                 <label className="text-xs font-extrabold text-gray-500 block">Home Country</label>
                 <select
                   value={profileCountry}
-                  disabled
-                  className="w-full bg-slate-100 border border-gray-200 text-gray-400 rounded-xl px-4 py-2 text-xs sm:text-sm outline-none cursor-not-allowed"
+                  onChange={e => setProfileCountry(e.target.value)}
+                  disabled={isCountryLocked}
+                  className={`w-full border rounded-xl px-4 py-2 text-xs sm:text-sm outline-none transition-all ${
+                    isCountryLocked
+                      ? "bg-slate-100 border-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-slate-50 border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-1 focus:ring-rose-455 text-gray-700"
+                  }`}
                 >
                   {availableCountries.map(option => (
                     <option key={option} value={option}>
@@ -710,7 +717,9 @@ export const StudentProfilePage: React.FC = () => {
                   ))}
                 </select>
                 <div className="text-[10px] text-gray-400 italic mt-0.5">
-                  * Locked. Country of origin cannot be updated. Note: Required for safety.
+                  {isCountryLocked
+                    ? "* Country has already been changed once and is now locked."
+                    : "* Country can only be changed once after profile completion."}
                 </div>
               </div>
 
@@ -731,7 +740,9 @@ export const StudentProfilePage: React.FC = () => {
                   <option value="Female">Female</option>
                 </select>
                 <div className="text-[10px] text-gray-400 italic mt-0.5">
-                  * Locked after profile completion.
+                  {isGenderLocked
+                    ? "* Gender has already been changed once and is now locked."
+                    : "* Gender can only be changed once after profile completion."}
                 </div>
               </div>
 

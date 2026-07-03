@@ -12,6 +12,7 @@ export interface HangoutEditHistoryChange {
 
 export interface HangoutEditHistoryEntry {
   at: string;
+  editorId?: string;
   editorName: string;
   summary: string;
   changes: HangoutEditHistoryChange[];
@@ -109,6 +110,59 @@ export function getRoundedMinimumTime(date: Date = new Date()): Date {
   return rounded;
 }
 
+export function formatHangoutIntent(intent: string): string {
+  const trimmedIntent = intent.trim();
+  if (!trimmedIntent) {
+    return "I want to";
+  }
+
+  if (/^(i\b|i['’]|let['’]?s\b|looking to\b|hoping to\b|planning to\b|ready to\b|keen to\b|would love to\b|up for\b)/i.test(trimmedIntent)) {
+    return trimmedIntent;
+  }
+
+  return `I want to ${trimmedIntent}`;
+}
+
+export function splitHangoutIntentParts(intent: string): { lead: string; detail: string } {
+  const trimmedIntent = intent.trim();
+  if (!trimmedIntent) {
+    return { lead: "I want to", detail: "" };
+  }
+
+  const knownLeads = [
+    "I want to",
+    "I'd love to",
+    "I would love to",
+    "Let's",
+    "Looking to",
+    "Hoping to",
+    "Planning to",
+    "Ready to",
+    "Keen to",
+    "Up for"
+  ];
+
+  for (const lead of knownLeads) {
+    if (trimmedIntent.toLowerCase().startsWith(lead.toLowerCase())) {
+      const detail = trimmedIntent.slice(lead.length).trim();
+      if (detail) {
+        return {
+          lead: trimmedIntent.slice(0, lead.length).trim(),
+          detail
+        };
+      }
+    }
+  }
+
+  return { lead: "I want to", detail: trimmedIntent };
+}
+
+export function composeHangoutIntent(lead: string, detail: string): string {
+  const trimmedLead = lead.trim() || "I want to";
+  const trimmedDetail = detail.trim();
+  return trimmedDetail ? `${trimmedLead} ${trimmedDetail}`.trim() : trimmedLead;
+}
+
 export function serializeHangoutEditHistoryEntry(entry: HangoutEditHistoryEntry): string {
   return `${HANGOUT_EDIT_HISTORY_PREFIX}${JSON.stringify(entry)}`;
 }
@@ -126,6 +180,7 @@ export function parseHangoutEditHistoryEntry(content: string): HangoutEditHistor
 
     return {
       at: typeof parsed.at === "string" ? parsed.at : new Date().toISOString(),
+      editorId: typeof parsed.editorId === "string" ? parsed.editorId : undefined,
       editorName: typeof parsed.editorName === "string" ? parsed.editorName : "Host",
       summary: typeof parsed.summary === "string" ? parsed.summary : "This hangout was updated.",
       changes: parsed.changes

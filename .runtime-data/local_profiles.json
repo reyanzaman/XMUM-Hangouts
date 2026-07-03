@@ -22,7 +22,10 @@
     "is_blocked_globally": false,
     "flag_status": "none",
     "appeal_count": 0,
-    "is_demo_profile": false
+    "is_demo_profile": false,
+    "companion_pet_count": 0,
+    "companion_selected_state_id": null,
+    "password_hash": null
   },
   {
     "id": "deleted_user",
@@ -55,7 +58,7 @@
     "student_id": "mcs2509008",
     "name": "Ashik",
     "name_last_changed_at": "2026-07-02T05:03:47.870Z",
-    "country": "Malaysia",
+    "country": "Bangladesh",
     "country_last_changed_at": null,
     "languages": [
       "English",
@@ -107,8 +110,8 @@
     "flag_status": "none",
     "appeal_count": 0,
     "birthdate": "2006-01-01",
-    "companion_pet_count": 504,
-    "companion_selected_state_id": null,
+    "companion_pet_count": 1012,
+    "companion_selected_state_id": "ultimate-heartkeeper",
     "password_hash": "c4f8573262a403db1ba50cc0e2ed2aa9f79539cb8e5850654e004f133ae0a3e7",
     "is_demo_profile": false
   },
@@ -140,6 +143,66 @@
     "companion_pet_count": 0,
     "companion_selected_state_id": null,
     "password_hash": "95dc6933deb06c712e70506af417d4376f550d31fe49cfa6ee450d4bb35afc10",
+    "is_demo_profile": false
+  },
+  {
+    "id": "user_ulcv5brzf",
+    "email": "cst2509016@xmu.edu.my",
+    "student_id": "cst2509016",
+    "name": "cst2509016",
+    "name_last_changed_at": null,
+    "country": "Malaysia",
+    "country_last_changed_at": null,
+    "languages": [
+      "English"
+    ],
+    "age": 18,
+    "program": "Accounting",
+    "year_of_study": "Year 1",
+    "gender": "Male",
+    "student_type": "degree",
+    "about_me": "Hey there! I am new here on XMUM Hangouts.",
+    "avatar_id": "panda",
+    "is_profile_complete": true,
+    "hide_details": false,
+    "is_admin": false,
+    "is_blocked_globally": false,
+    "flag_status": "none",
+    "appeal_count": 0,
+    "birthdate": "2007-04-18",
+    "companion_pet_count": 0,
+    "companion_selected_state_id": null,
+    "password_hash": "cb62bb762cc9b2a5afbfd510a4d03bd727d31ae4a7928013e36dbd7c67b208a0",
+    "is_demo_profile": false
+  },
+  {
+    "id": "user_5r9s5tgjn",
+    "email": "mbt2509027@xmu.edu.my",
+    "student_id": "mbt2509027",
+    "name": "mbt2509027",
+    "name_last_changed_at": null,
+    "country": "Malaysia",
+    "country_last_changed_at": null,
+    "languages": [
+      "English"
+    ],
+    "age": 18,
+    "program": "Accounting",
+    "year_of_study": "Year 1",
+    "gender": "Male",
+    "student_type": "degree",
+    "about_me": "Hey there! I am new here on XMUM Hangouts.",
+    "avatar_id": "panda",
+    "is_profile_complete": true,
+    "hide_details": false,
+    "is_admin": false,
+    "is_blocked_globally": false,
+    "flag_status": "none",
+    "appeal_count": 0,
+    "birthdate": "2007-11-24",
+    "companion_pet_count": 0,
+    "companion_selected_state_id": null,
+    "password_hash": "9533beb886039361a83076b476b396b21ac6121bb94657e1b74cb31662afc6c1",
     "is_demo_profile": false
   }
 ]

@@ -10,6 +10,7 @@ import { ChatWindowSkeleton } from "./LoadingSkeletons";
 import { Send, BookOpen, AlertCircle, MessageSquare, ShieldAlert, ArrowLeft, MoreVertical, X } from "lucide-react";
 import { Chat, Message, Profile } from "../types";
 import { motion, AnimatePresence } from "motion/react";
+import { formatHangoutIntent } from "../lib/hangouts";
 
 export const ChatWindow: React.FC = () => {
   const {
@@ -242,7 +243,7 @@ export const ChatWindow: React.FC = () => {
                   Meet on-campus for security! Linked to hangout plan:{" "}
                   <strong>
                     {hangouts.find(h => h.id === activeChat.hangout_id)?.intention
-                      ? `I want to ${hangouts.find(h => h.id === activeChat.hangout_id)?.intention}`
+                      ? formatHangoutIntent(hangouts.find(h => h.id === activeChat.hangout_id)?.intention || "")
                       : "This plan has ended."}
                   </strong>
                 </div>

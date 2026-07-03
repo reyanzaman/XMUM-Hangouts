@@ -10,11 +10,13 @@ import { AppNotification, Hangout, Profile } from "./types";
 import { motion, AnimatePresence } from "motion/react";
 import {
   combineDateAndTimeToIso,
+  composeHangoutIntent,
   formatDateInputValue,
   formatTimeInputValue,
   getMaximumHangoutDate,
   getRoundedMinimumTime,
   MIN_HANGOUT_DESCRIPTION_LENGTH,
+  splitHangoutIntentParts,
   validateFutureHangoutDate
 } from "./lib/hangouts";
 import { matchesPrimaryAdminEmail } from "./lib/admin";
@@ -360,7 +362,8 @@ const AppContent: React.FC = () => {
   ].join("|");
 
   // Create hangout input state
-  const [createIntention, setCreateIntention] = useState("");
+  const [createIntentionLead, setCreateIntentionLead] = useState("I want to");
+  const [createIntentionDetail, setCreateIntentionDetail] = useState("");
   const [createLocation, setCreateLocation] = useState("");
   const [createDate, setCreateDate] = useState("");
   const [createTime, setCreateTime] = useState("");
@@ -419,6 +422,7 @@ const AppContent: React.FC = () => {
   const [loginMode, setLoginMode] = useState<"otp" | "password">("otp");
   const [loginPassword, setLoginPassword] = useState("");
   const [isMicrosoftLoading, setIsMicrosoftLoading] = useState(false);
+  const [microsoftOnlyAuthEmail, setMicrosoftOnlyAuthEmail] = useState<string | null>(null);
   const [showPasswordResetHelp, setShowPasswordResetHelp] = useState(false);
   const [showNavLogoutConfirm, setShowNavLogoutConfirm] = useState(false);
 
@@ -432,6 +436,17 @@ const AppContent: React.FC = () => {
   const minimumEditDateTime = new Date(Date.now() + 60 * 60 * 1000);
   const minimumEditDate = formatDateInputValue(minimumEditDateTime);
   const minimumEditTime = editDate === minimumEditDate ? formatTimeInputValue(minimumEditDateTime) : undefined;
+  const normalizedLoginEmail = loginEmail.trim().toLowerCase();
+  const isMicrosoftOnlyAuth = Boolean(
+    normalizedLoginEmail &&
+    microsoftOnlyAuthEmail &&
+    microsoftOnlyAuthEmail === normalizedLoginEmail
+  );
+  useEffect(() => {
+    if (isMicrosoftOnlyAuth && !magicLinkSent) {
+      setLoginMode("password");
+    }
+  }, [isMicrosoftOnlyAuth, magicLinkSent]);
 
   const handleVerifyOtp = async (codeToVerify?: string) => {
     const code = (codeToVerify || otpCode).trim();
@@ -571,6 +586,7 @@ const AppContent: React.FC = () => {
       setShowLoginModal(false);
       setMagicLinkSent(false);
       setOtpCode("");
+      setMicrosoftOnlyAuthEmail(null);
     } catch (err: any) {
       showToast(`Verification Failed: ${err.message || err}`, "error");
     } finally {
@@ -611,6 +627,7 @@ const AppContent: React.FC = () => {
       if (res.success) {
         setShowLoginModal(false);
         setLoginPassword("");
+        setMicrosoftOnlyAuthEmail(null);
       } else {
         showToast(res.error || "Password login failed. Check credentials.", "error");
       }
@@ -623,13 +640,15 @@ const AppContent: React.FC = () => {
 
     if (res.success) {
       setMagicLinkSent(true);
+      setMicrosoftOnlyAuthEmail(null);
       showToast(res.message || "Security verification code sent! Check your student inbox.", "success");
     } else {
-      if (res.otp_limit_reached || res.resend_expired) {
+      if (res.requires_microsoft || res.otp_limit_reached || res.resend_expired) {
+        setMicrosoftOnlyAuthEmail(email.trim().toLowerCase());
+        setMagicLinkSent(false);
+        setOtpCode("");
+        setLoginMode("password");
         showToast(res.error || "OTP sign-in is unavailable right now.", "error");
-        if (res.allows_password_login) {
-          setLoginMode("password");
-        }
       } else {
         showToast(res.error || "Authentication failed. Try again.", "error");
       }
@@ -638,7 +657,10 @@ const AppContent: React.FC = () => {
 
   const handleCreateHangoutSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!createIntention.trim()) return showToast("Please write down what you want to do.", "error");
+    const normalizedCreateIntention = composeHangoutIntent(createIntentionLead, createIntentionDetail);
+    if (!createIntentionLead.trim() || !createIntentionDetail.trim()) {
+      return showToast("Please complete both parts of your hangout title.", "error");
+    }
     if (!createLocation.trim()) return showToast("Where are you planning to do it?", "error");
     if (!createDate) return showToast("Please choose the date for your hangout.", "error");
     if (!createTime) return showToast("Please choose the time for your hangout.", "error");
@@ -655,7 +677,7 @@ const AppContent: React.FC = () => {
     if (dateTimeError) return showToast(dateTimeError, "error");
 
     const { success, error } = createHangout({
-      intention: createIntention.trim(),
+      intention: normalizedCreateIntention,
       location: createLocation.trim(),
       event_datetime: eventDateTime,
       meeting_point: createMeetingPoint.trim(),
@@ -667,7 +689,8 @@ const AppContent: React.FC = () => {
 
     if (success) {
       // Reset
-      setCreateIntention("");
+      setCreateIntentionLead("I want to");
+      setCreateIntentionDetail("");
       setCreateLocation("");
       setCreateDate("");
       setCreateTime("");
@@ -1406,7 +1429,7 @@ const AppContent: React.FC = () => {
 
       case "create":
         return (
-          <div className="max-w-md mx-auto bg-white border border-rose-100/45 rounded-2xl sm:rounded-3xl p-5 sm:p-7 shadow-sm space-y-5 animate-in fade-in duration-350">
+          <div className="max-w-md lg:max-w-lg mx-auto bg-white border border-rose-100/45 rounded-2xl sm:rounded-3xl p-5 sm:p-7 shadow-sm space-y-5 animate-in fade-in duration-350">
             {/* Minimal Header */}
             <div className="pb-2.5 border-b border-rose-100/30 flex items-center gap-2">
               <span className="text-rose-500 text-base sm:text-lg">✨</span>
@@ -1422,24 +1445,32 @@ const AppContent: React.FC = () => {
                 <label className="block text-xs font-bold text-slate-700">
                   What would you like to plan? <span className="text-rose-500">*</span>
                 </label>
-                <div className="relative flex items-center bg-slate-50/40 border border-slate-100 focus-within:border-rose-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-rose-200 rounded-xl transition-all duration-200 overflow-hidden">
-                  <span className="pl-4 pr-1 text-xs sm:text-sm text-rose-500 font-extrabold shrink-0 select-none">
-                    I want to
-                  </span>
+                <div className="relative flex items-center gap-1 bg-slate-50/40 border border-slate-100 focus-within:border-rose-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-rose-200 rounded-xl transition-all duration-200 overflow-hidden px-2">
+                  <input
+                    id="create-intention-lead"
+                    type="text"
+                    value={createIntentionLead}
+                    onChange={e => setCreateIntentionLead(e.target.value)}
+                    placeholder="I want to"
+                    required
+                    maxLength={28}
+                    className="w-[8.5rem] min-w-[7rem] max-w-[10rem] bg-transparent px-2 py-2 text-xs sm:text-sm text-rose-500 font-extrabold outline-none font-sans"
+                  />
                   <input
                     id="create-intention"
                     type="text"
-                    value={createIntention}
-                    onChange={e => setCreateIntention(e.target.value)}
+                    value={createIntentionDetail}
+                    onChange={e => setCreateIntentionDetail(e.target.value)}
                     placeholder="do a group study for philosophy..."
                     required
                     maxLength={130}
-                    className="w-full bg-transparent px-1 py-2 text-xs sm:text-sm text-slate-800 outline-none font-sans"
+                    className="w-full bg-transparent px-2 py-2 text-xs sm:text-sm text-slate-800 font-bold outline-none font-sans placeholder:text-slate-350"
                   />
                 </div>
-                {createIntention.trim() && (
+                {(createIntentionLead.trim() || createIntentionDetail.trim()) && (
                   <p className="text-[10px] text-gray-400 font-medium italic mt-1 pl-1 bg-slate-50/50 p-1.5 rounded-lg border border-slate-100/30">
-                    Sentence Preview: <span className="text-rose-600 font-bold">I want to {createIntention}</span>
+                    Sentence Preview: <span className="font-bold text-slate-700">{createIntentionLead}</span>{" "}
+                    <span className="text-rose-600 font-bold">{createIntentionDetail}</span>
                   </p>
                 )}
               </div>
@@ -1735,13 +1766,13 @@ const AppContent: React.FC = () => {
                         const isMeetingPointCorrupted = isLockedMeetingPointPlaceholder(h.meeting_point);
 
                         return (
-                        <div
+                        <details
                           id={`hosted-hangout-card-${h.id}`}
                           key={h.id}
-                          className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm transition-all hover:shadow-md sm:p-6"
+                          className="group rounded-3xl border border-gray-100 bg-white p-5 shadow-sm transition-all hover:shadow-md sm:p-6"
                         >
-                          <div className="space-y-5">
-                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                          <summary className="list-none cursor-pointer outline-none [&::-webkit-details-marker]:hidden">
+                            <div className="flex flex-col gap-4 border-b border-gray-50 pb-3 sm:flex-row sm:items-start sm:justify-between">
                               <div className="space-y-2">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className={`text-[10px] font-black uppercase tracking-[0.22em] px-2.5 py-1 rounded-full border ${
@@ -1755,12 +1786,16 @@ const AppContent: React.FC = () => {
                                 <div>
                                   <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Posted Plan</p>
                                   <h3 className="mt-1 max-w-2xl text-sm font-extrabold leading-snug text-slate-900 sm:text-[1rem]">
-                                    I want to <span className="text-rose-500">{h.intention}</span>
+                                    <span className="text-slate-900">{splitHangoutIntentParts(h.intention).lead}</span>{" "}
+                                    <span className="text-rose-500">{splitHangoutIntentParts(h.intention).detail}</span>
                                   </h3>
+                                  <p className="mt-1 text-[10px] font-semibold text-slate-400">
+                                    Expand to manage applicants, meeting point, edits, and cancellation.
+                                  </p>
                                 </div>
                               </div>
 
-                              <div className="flex flex-wrap gap-x-5 gap-y-2 sm:min-w-[220px] sm:justify-end">
+                              <div className="flex flex-wrap items-start gap-x-5 gap-y-2 sm:min-w-[240px] sm:justify-end">
                                 <div className="text-left sm:text-right">
                                   <span className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Posted</span>
                                   <span className="mt-1 block text-[11px] font-bold text-slate-700">
@@ -1773,8 +1808,14 @@ const AppContent: React.FC = () => {
                                     {new Date(h.event_datetime).toLocaleDateString([], { month: "short", day: "numeric" })}
                                   </span>
                                 </div>
+                                <span className="mt-1 inline-flex h-8 w-8 items-center justify-center rounded-2xl border border-slate-100 bg-slate-50 text-slate-400 transition-transform group-open:rotate-180">
+                                  <ChevronDown className="h-4 w-4" />
+                                </span>
                               </div>
                             </div>
+                          </summary>
+
+                          <div className="mt-4 space-y-5">
 
                             {isMeetingPointCorrupted && (
                               <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3">
@@ -1869,7 +1910,7 @@ const AppContent: React.FC = () => {
                               <ApplicantList hangoutId={h.id} />
                             </div>
                           </div>
-                        </div>
+                        </details>
                       )})}
                     </div>
                   )}
@@ -1919,13 +1960,13 @@ const AppContent: React.FC = () => {
                         const isMeetingPointCorrupted = isLockedMeetingPointPlaceholder(hangoutItem.meeting_point);
 
                         return (
-                          <div
+                          <details
                             id={`requested-hangout-card-${hangoutItem.id}`}
                             key={app.id}
-                            className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm transition-all hover:shadow-md sm:p-6"
+                            className="group rounded-3xl border border-gray-100 bg-white p-5 shadow-sm transition-all hover:shadow-md sm:p-6"
                           >
-                            <div className="flex flex-col gap-5 text-xs">
-                              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                            <summary className="list-none cursor-pointer outline-none [&::-webkit-details-marker]:hidden">
+                              <div className="flex flex-col gap-4 border-b border-gray-50 pb-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div className="space-y-2">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <span className={`text-[9px] font-black uppercase tracking-[0.22em] px-2.5 py-1 rounded-full border ${
@@ -1948,18 +1989,30 @@ const AppContent: React.FC = () => {
                                   <div>
                                     <span className="block text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Requested Plan</span>
                                     <h3 className="mt-1 max-w-2xl text-sm font-extrabold leading-snug text-slate-900 sm:text-[1rem]">
-                                      Requested to join <span className="text-rose-500">I want to {hangoutItem.intention}</span>
+                                      Requested to join <span className="text-slate-900">{splitHangoutIntentParts(hangoutItem.intention).lead}</span>{" "}
+                                      <span className="text-rose-500">{splitHangoutIntentParts(hangoutItem.intention).detail}</span>
                                     </h3>
+                                    <p className="mt-1 text-[10px] font-semibold text-slate-400">
+                                      Expand to view host, schedule, meeting-point status, and request actions.
+                                    </p>
                                   </div>
                                 </div>
 
-                                <div className="text-left sm:text-right">
-                                  <span className="block text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Requested</span>
-                                  <span className="mt-1 block text-[11px] font-bold text-slate-700">
-                                    {new Date(app.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
+                                <div className="flex items-start gap-x-5 gap-y-2 sm:min-w-[170px] sm:justify-end">
+                                  <div className="text-left sm:text-right">
+                                    <span className="block text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Requested</span>
+                                    <span className="mt-1 block text-[11px] font-bold text-slate-700">
+                                      {new Date(app.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
+                                    </span>
+                                  </div>
+                                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-2xl border border-slate-100 bg-slate-50 text-slate-400 transition-transform group-open:rotate-180">
+                                    <ChevronDown className="h-4 w-4" />
                                   </span>
                                 </div>
                               </div>
+                            </summary>
+
+                            <div className="mt-4 flex flex-col gap-5 text-xs">
 
                               <div className="border-t border-slate-100 pt-4">
                                 <div className="flex flex-wrap items-center gap-2 pb-3">
@@ -2078,8 +2131,8 @@ const AppContent: React.FC = () => {
                                 </button>
                               </div>
                             )}
-                          </div>
-                          </div>
+                            </div>
+                          </details>
                         );
                       })}
                     </div>
@@ -2777,7 +2830,12 @@ const AppContent: React.FC = () => {
               className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl relative space-y-6"
             >
               <button
-                onClick={() => setShowLoginModal(false)}
+                onClick={() => {
+                  setShowLoginModal(false);
+                  setMagicLinkSent(false);
+                  setOtpCode("");
+                  setMicrosoftOnlyAuthEmail(null);
+                }}
                 className="absolute top-5 right-5 text-gray-400 hover:text-gray-700 hover:bg-slate-100 p-1.5 rounded-full transition-colors cursor-pointer"
                 title="Close modal"
               >
@@ -2847,6 +2905,8 @@ const AppContent: React.FC = () => {
                       onClick={() => {
                         setMagicLinkSent(false);
                         setShowLoginModal(false);
+                        setOtpCode("");
+                        setMicrosoftOnlyAuthEmail(null);
                       }}
                       className="text-xs text-slate-400 hover:text-slate-600 transition-colors cursor-pointer px-4 py-2 rounded-lg font-medium"
                     >
@@ -2857,28 +2917,30 @@ const AppContent: React.FC = () => {
               ) : (
                 <div className="space-y-4">
                   {/* Mode Selector Tabs */}
-                  <div className="flex bg-slate-100 p-1 rounded-xl">
-                    <button
-                      id="login-tab-otp"
-                      type="button"
-                      onClick={() => setLoginMode("otp")}
-                      className={`flex-1 text-[11px] font-bold py-2 rounded-lg transition-all cursor-pointer ${
-                        loginMode === "otp" ? "bg-white text-rose-500 shadow-sm" : "text-gray-500 hover:text-gray-700"
-                      }`}
-                    >
-                      Authenticate with OTP
-                    </button>
-                    <button
-                      id="login-tab-password"
-                      type="button"
-                      onClick={() => setLoginMode("password")}
-                      className={`flex-1 text-[11px] font-bold py-2 rounded-lg transition-all cursor-pointer ${
-                        loginMode === "password" ? "bg-white text-rose-500 shadow-sm" : "text-gray-500 hover:text-gray-700"
-                      }`}
-                    >
-                      Sign In with Password
-                    </button>
-                  </div>
+                  {!isMicrosoftOnlyAuth && (
+                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                      <button
+                        id="login-tab-otp"
+                        type="button"
+                        onClick={() => setLoginMode("otp")}
+                        className={`flex-1 text-[11px] font-bold py-2 rounded-lg transition-all cursor-pointer ${
+                          loginMode === "otp" ? "bg-white text-rose-500 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                        }`}
+                      >
+                        Authenticate with OTP
+                      </button>
+                      <button
+                        id="login-tab-password"
+                        type="button"
+                        onClick={() => setLoginMode("password")}
+                        className={`flex-1 text-[11px] font-bold py-2 rounded-lg transition-all cursor-pointer ${
+                          loginMode === "password" ? "bg-white text-rose-500 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                        }`}
+                      >
+                        Sign In with Password
+                      </button>
+                    </div>
+                  )}
 
                   <form onSubmit={handleLoginSubmit} className="space-y-4 pt-2">
                     <div className="space-y-1.5">
@@ -2897,6 +2959,37 @@ const AppContent: React.FC = () => {
                         Please sign in with your university email only. Personal email addresses are not supported.
                       </p>
                     </div>
+
+                    {isMicrosoftOnlyAuth && (
+                      <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-3 text-[11px] leading-relaxed text-amber-900">
+                        The verification code limit has been reached for this email today. Please continue with Microsoft sign-in first. If you already set a password before, you can still use it below.
+                      </div>
+                    )}
+
+                    {isMicrosoftOnlyAuth && (
+                      <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 animate-in fade-in duration-150">
+                        <div className="space-y-1 text-center">
+                          <p className="text-xs font-black text-slate-900">Continue with Microsoft</p>
+                          <p className="text-[11px] leading-relaxed text-slate-600">
+                            New registrations must use Microsoft when the daily verification code limit has been reached.
+                          </p>
+                        </div>
+
+                        <button
+                          id="login-microsoft-btn"
+                          type="button"
+                          onClick={handleMicrosoftLogin}
+                          disabled={isMicrosoftLoading}
+                          className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 px-6 rounded-2xl text-xs sm:text-sm transition-colors duration-150 shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                        >
+                          {isMicrosoftLoading ? "Redirecting to Microsoft..." : "Continue with Microsoft"}
+                        </button>
+
+                        <p className="text-[11px] text-slate-500 leading-relaxed text-center">
+                          Password sign-in stays available below if you already set one earlier.
+                        </p>
+                      </div>
+                    )}
 
                     {loginMode === "password" && (
                       <div className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
@@ -2934,46 +3027,71 @@ const AppContent: React.FC = () => {
 
                     {/* Removed simulateExpired checkbox option */}
 
-                    <button
-                      id="login-submit-btn"
-                      type="submit"
-                      disabled={isLoginLoading}
-                      className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 px-6 rounded-2xl text-xs sm:text-sm transition-colors duration-150 shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-                    >
-                      {isLoginLoading ? (
-                        <>
-                          <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                          </svg>
-                          Processing...
-                        </>
-                      ) : (
-                        loginMode === "password" ? "Sign In with Password" : "Send Verification OTP"
-                      )}
-                    </button>
-
-                    <div className="pt-1 space-y-3">
-                      <div className="flex items-center gap-3">
-                        <div className="h-px flex-1 bg-slate-200" />
-                        <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">or</span>
-                        <div className="h-px flex-1 bg-slate-200" />
-                      </div>
-
+                    {loginMode !== "password" && !isMicrosoftOnlyAuth && (
                       <button
-                        id="login-microsoft-btn"
-                        type="button"
-                        onClick={handleMicrosoftLogin}
-                        disabled={isMicrosoftLoading}
-                        className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 px-6 rounded-2xl text-xs sm:text-sm transition-colors duration-150 shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                        id="login-submit-btn"
+                        type="submit"
+                        disabled={isLoginLoading}
+                        className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 px-6 rounded-2xl text-xs sm:text-sm transition-colors duration-150 shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
                       >
-                        {isMicrosoftLoading ? "Redirecting to Microsoft..." : "Continue with Microsoft"}
+                        {isLoginLoading ? (
+                          <>
+                            <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            Processing...
+                          </>
+                        ) : (
+                          loginMode === "password" ? "Sign In with Password" : "Send Verification OTP"
+                        )}
                       </button>
+                    )}
 
-                      <p className="text-[11px] text-slate-500 leading-relaxed text-center">
-                        Use Microsoft sign-in for normal login or first-time registration. If the OTP daily email limit is reached, existing users can use Password or Microsoft, while new users must use Microsoft.
-                      </p>
-                    </div>
+                    {loginMode === "password" && (
+                      <button
+                        id="login-submit-btn"
+                        type="submit"
+                        disabled={isLoginLoading}
+                        className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 px-6 rounded-2xl text-xs sm:text-sm transition-colors duration-150 shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                      >
+                        {isLoginLoading ? (
+                          <>
+                            <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            Processing...
+                          </>
+                        ) : (
+                          "Sign In with Password"
+                        )}
+                      </button>
+                    )}
+
+                    {!isMicrosoftOnlyAuth && (
+                      <div className="pt-1 space-y-3">
+                        <div className="flex items-center gap-3">
+                          <div className="h-px flex-1 bg-slate-200" />
+                          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">or</span>
+                          <div className="h-px flex-1 bg-slate-200" />
+                        </div>
+
+                        <button
+                          id="login-microsoft-btn"
+                          type="button"
+                          onClick={handleMicrosoftLogin}
+                          disabled={isMicrosoftLoading}
+                          className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 px-6 rounded-2xl text-xs sm:text-sm transition-colors duration-150 shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                        >
+                          {isMicrosoftLoading ? "Redirecting to Microsoft..." : "Continue with Microsoft"}
+                        </button>
+
+                        <p className="text-[11px] text-slate-500 leading-relaxed text-center">
+                          Use Microsoft sign-in for normal login or first-time registration. If the OTP daily email limit is reached, existing users can use Password or Microsoft, while new users must use Microsoft.
+                        </p>
+                      </div>
+                    )}
                   </form>
                 </div>
               )}
@@ -3117,7 +3235,10 @@ const AppContent: React.FC = () => {
 
               <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100">
                 <p className="text-[10px] uppercase tracking-wide text-slate-400 font-bold">Title</p>
-                <p className="text-sm font-extrabold text-slate-800">I want to {editingHangout.intention}</p>
+                <p className="text-sm font-extrabold text-slate-800">
+                  <span className="text-slate-900">{splitHangoutIntentParts(editingHangout.intention).lead}</span>{" "}
+                  <span className="text-rose-500">{splitHangoutIntentParts(editingHangout.intention).detail}</span>
+                </p>
               </div>
 
               <form onSubmit={handleEditHangoutSubmit} className="space-y-4">

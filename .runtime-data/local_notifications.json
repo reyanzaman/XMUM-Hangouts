@@ -1,5 +1,40 @@
 [
   {
+    "id": "notif_xuuyndsnt",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "type": "hangout_like",
+    "payload": {
+      "hangout_id": "hangout_61stot4ql",
+      "custom_text": "leen liked your hangout plan!",
+      "hangout_title": "study together!..."
+    },
+    "is_read": true,
+    "created_at": "2026-07-03T07:17:35.360Z"
+  },
+  {
+    "id": "notif_1jcrtk5vo",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "type": "hangout_like",
+    "payload": {
+      "hangout_id": "hangout_odi2os3nw",
+      "custom_text": "leen liked your hangout plan!",
+      "hangout_title": "play board game..."
+    },
+    "is_read": true,
+    "created_at": "2026-07-03T07:17:30.409Z"
+  },
+  {
+    "id": "notif_cron_c_4be2d611",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "type": "upcoming_hangout_reminder",
+    "payload": {
+      "hangout_id": "hangout_61stot4ql",
+      "custom_text": "🕒 Upcoming Hangout Reminder! Your hangout \"I want to study together!...\" begins in less than 2 hours."
+    },
+    "is_read": true,
+    "created_at": "2026-07-03T06:05:00.150Z"
+  },
+  {
     "id": "notif_fc3zabyzb",
     "user_id": "62af49a3-b92d-4253-a8e5-8d560f86e7ef",
     "type": "application_rejected",
