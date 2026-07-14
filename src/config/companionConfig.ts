@@ -107,6 +107,16 @@ export type CompanionMilestone = {
   accessory?: CompanionAccessory;
 };
 
+export type CompanionActivityMetric = "hosted" | "joined" | "liked" | "commented";
+
+export type CompanionActivityStats = Record<CompanionActivityMetric, number>;
+
+export type CompanionActivityUnlock = {
+  metric: CompanionActivityMetric;
+  target: number;
+  label: string;
+};
+
 export type CompanionTierState = {
   id: string;
   count: number;
@@ -122,13 +132,19 @@ export type CompanionTierState = {
   ambientLines: string[];
   ringClass: string;
   glowClass: string;
+  activityUnlock?: CompanionActivityUnlock;
 };
 
 export const companionBaseStateOption = {
   id: "base-sprout",
   count: 0,
   name: "Original Sprout",
-  summary: "The classic fluffy helper with the tiny green sprout and no extra decorations."
+  summary: "The classic fluffy helper with the tiny green sprout and no extra decorations.",
+  ambientLines: [
+    "My little sprout is standing tall today.",
+    "Original fluff, original tiny paws, original cozy duty.",
+    "I keep things simple: one sprout and plenty of kindness."
+  ]
 } as const;
 
 export const companionDialogue = {
@@ -336,41 +352,45 @@ export const companionDialogue = {
   profanity:
     "That was a bad word. I am angry and sad. Please speak nicely.",
   maxed:
-    "You have reached 1000 pets. My ultimate state is permanent now, and you can choose any unlocked form from your profile.",
+    "You reached 2000 pets. Every classic and special companion state is yours now.",
   genericMilestone:
     "Purrrr. {count} total pettings from {name}. You are very sweet.",
   dragReturn: [
-    "Wheee. I made it back to my little post.",
-    "Safe landing complete. Back to cozy duty.",
-    "That was a fun ride. I am home again.",
-    "Returned to base. Tail still steady.",
-    "I drifted right back into position. Very elegant.",
-    "Back to my cozy spot. I like it here.",
-    "A neat little glide and I am home again.",
-    "I floated back nicely. That felt much better.",
-    "Settled back into place with excellent whisker control.",
-    "Home again. Everything feels properly arranged now.",
-    "I have returned to my tiny station of comfort and supervision.",
-    "That was a lot of motion for such a small soft creature.",
-    "Back in place. Dignity mostly preserved."
+    "Ooh, a new lookout spot. I can work with this.",
+    "Tiny relocation complete. My fluff stayed organized.",
+    "This angle makes my whiskers look very professional.",
+    "Wheee. Please set me down softly right here.",
+    "A fresh little corner for a fresh little companion.",
+    "I have been carefully redecorated by hand.",
+    "New spot accepted. Cozy inspection begins now.",
+    "That was a gentle flight for one round passenger.",
+    "My paws have landed and my dignity is intact.",
+    "I can supervise the page nicely from here."
   ],
   dragReturnAngry: [
-    "Hmph. I returned, but I am watching you closely now.",
-    "That was too rough. I am back, and I am officially grumpy.",
-    "I made it home, but my whiskers are offended.",
-    "Back to my post. Please remember I am not luggage.",
-    "I returned safely. Let us keep the paws-to-ground rule next time.",
-    "Home again. I am still pouting, but at least I landed neatly."
+    "Hmph. Even a fluffy traveler needs a quiet landing.",
+    "My paws are down, but my tiny pout remains.",
+    "Please let my whiskers settle before another flight.",
+    "I am staying here while my fluff recovers.",
+    "This spot is fine. The repeated air travel was not."
+  ],
+  dragGettingDizzy: [
+    "Easy there. My tiny compass is getting confused.",
+    "One more flight and my whiskers may need a rest.",
+    "I am very portable, but also very round and dizzy.",
+    "My paws would like a short no-flying break.",
+    "Gentle landing, please. My fluff is still spinning."
   ],
   dragTooMuch: [
-    "Hey. That is too much dragging. Red-hot grumpy mode activated.",
-    "My paws have filed a complaint and my ears are overheating.",
-    "Too many tuggy flights in a row. I am entering a sizzling pout now.",
-    "I am a campus companion, not a yo-yo. Red-hot grumpy mode activated."
+    "Too many tiny flights. I need a fluffy little timeout now.",
+    "My paws have requested a calm landing and a serious pout.",
+    "I am round, lovable, and officially too dizzy to travel.",
+    "The whisker airline is closed for a short rest.",
+    "Please park this fluffy passenger while I cool down."
   ]
 };
 
-const companionLineMemory = new WeakMap<string[], string>();
+const companionLineMemory = new WeakMap<readonly string[], string>();
 let lastPickedCompanionLine = "";
 
 export const companionTabResponses: Record<string, { text: string; mood: CompanionMood }> = {
@@ -953,7 +973,7 @@ export const companionTierStates: CompanionTierState[] = [
     id: "ultimate-heartkeeper",
     count: 1000,
     name: "Ultimate Heartkeeper",
-    summary: "The permanent final form with a radiant heartcore, blazing aura, and a truly legendary finish.",
+    summary: "The final classic form, with a radiant heartcore, blazing aura, and a legendary finish.",
     unlockLine: "1000 pets reached, {name}. Ultimate Heartkeeper state unlocked forever.",
     particles: 140,
     reaction: "milestone-ultimate",
@@ -968,6 +988,234 @@ export const companionTierStates: CompanionTierState[] = [
     ],
     ringClass: "ring-4 ring-pink-500 ring-offset-2 bg-pink-50/80 shadow-[0_0_48px_rgba(236,72,153,0.34)] scale-[1.14]",
     glowClass: "inset-[-10px] bg-gradient-to-r from-pink-500 via-purple-500 via-teal-400 via-yellow-400 to-pink-500 scale-[1.24] opacity-100 animate-pulse"
+  },
+  {
+    id: "moon-mochi-bun",
+    count: 1100,
+    name: "Moon Mochi Bun",
+    summary: "A moonlit bunny-mochi silhouette with floppy ears, a velvet cape, and floating star charms.",
+    unlockLine: "1100 pets reached, {name}. Special state Moon Mochi Bun unlocked.",
+    particles: 146,
+    reaction: "milestone-ultimate",
+    pose: "bounce",
+    mood: "sleepy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["My moon ears are listening for kind little wishes.", "Mochi mode feels rounder than the moon.", "My star charms are keeping quiet company."],
+    ringClass: "ring-4 ring-violet-300 ring-offset-2 bg-indigo-50/85 shadow-[0_0_48px_rgba(167,139,250,0.38)] scale-[1.14]",
+    glowClass: "inset-[-10px] bg-gradient-to-r from-indigo-300 via-violet-300 to-pink-200 scale-[1.22] opacity-90 animate-pulse"
+  },
+  {
+    id: "strawberry-puff",
+    count: 1200,
+    name: "Strawberry Puff",
+    summary: "A strawberry-shaped puff with a leafy bonnet, seed-speckled coat, and berry ribbon cape.",
+    unlockLine: "1200 pets reached, {name}. Special state Strawberry Puff unlocked.",
+    particles: 152,
+    reaction: "milestone-rainbow",
+    pose: "wiggle",
+    mood: "happy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["My berry bonnet is sitting perfectly today.", "Strawberry Puff is sweet but very responsible.", "I smell like an imaginary little picnic."],
+    ringClass: "ring-4 ring-rose-400 ring-offset-2 bg-rose-50/85 shadow-[0_0_50px_rgba(251,113,133,0.4)] scale-[1.14]",
+    glowClass: "inset-[-10px] bg-gradient-to-r from-rose-400 via-pink-300 to-lime-200 scale-[1.22] opacity-92 animate-pulse"
+  },
+  {
+    id: "cloud-lamb",
+    count: 1300,
+    name: "Cloud Lamb",
+    summary: "A scalloped cloud-lamb body with curled golden horns, a sky scarf, and tiny rain charms.",
+    unlockLine: "1300 pets reached, {name}. Special state Cloud Lamb unlocked.",
+    particles: 158,
+    reaction: "milestone-ultimate",
+    pose: "fly",
+    mood: "sleepy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["My cloud wool is extra soft today.", "The tiny rain charms only make happy weather.", "Cloud Lamb patrol is floating gently."],
+    ringClass: "ring-4 ring-sky-300 ring-offset-2 bg-sky-50/90 shadow-[0_0_52px_rgba(125,211,252,0.42)] scale-[1.15]",
+    glowClass: "inset-[-11px] bg-gradient-to-r from-sky-300 via-white to-amber-100 scale-[1.23] opacity-94 animate-pulse"
+  },
+  {
+    id: "honey-bumble-bear",
+    count: 1400,
+    name: "Honey Bumble Bear",
+    summary: "A honey-bear shape in a striped bee coat, petal wings, and a tiny golden honey satchel.",
+    unlockLine: "1400 pets reached, {name}. Special state Honey Bumble Bear unlocked.",
+    particles: 164,
+    reaction: "milestone-gold",
+    pose: "shimmy",
+    mood: "bouncy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["My honey satchel is full of warm thoughts.", "These little wings buzz very politely.", "Bumble Bear duty is sweet and serious."],
+    ringClass: "ring-4 ring-amber-400 ring-offset-2 bg-amber-50/90 shadow-[0_0_54px_rgba(251,191,36,0.44)] scale-[1.15]",
+    glowClass: "inset-[-11px] bg-gradient-to-r from-amber-400 via-yellow-200 to-orange-200 scale-[1.24] opacity-95 animate-pulse"
+  },
+  {
+    id: "sakura-kitsune",
+    count: 1500,
+    name: "Sakura Kitsune",
+    summary: "A round fox spirit with three plush tails, a blossom kimono, and drifting petal sleeves.",
+    unlockLine: "1500 pets reached, {name}. Special state Sakura Kitsune unlocked.",
+    particles: 170,
+    reaction: "milestone-rainbow",
+    pose: "curtsy",
+    mood: "happy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["My three tails are trying to bow together.", "The blossom sleeves make every step softer.", "Sakura Kitsune brought a quiet spring breeze."],
+    ringClass: "ring-2 ring-pink-300 ring-offset-2 bg-pink-50/80 shadow-[0_0_24px_rgba(244,114,182,0.24)] scale-[1.11]",
+    glowClass: "inset-[-7px] bg-gradient-to-r from-pink-300/65 via-rose-100/55 to-fuchsia-100/45 scale-[1.15] opacity-65"
+  },
+  {
+    id: "pearl-tide-otter",
+    count: 1600,
+    name: "Pearl Tide Otter",
+    summary: "A smooth ocean-otter form with a shell crown, pearl capelet, and a floating bubble tail.",
+    unlockLine: "1600 pets reached, {name}. Special state Pearl Tide Otter unlocked.",
+    particles: 176,
+    reaction: "milestone-ultimate",
+    pose: "orbit",
+    mood: "excited",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["My pearl capelet is ready for a tiny voyage.", "The bubble tail keeps trying to float away.", "Tide Otter mode feels calm and shiny."],
+    ringClass: "ring-4 ring-cyan-400 ring-offset-2 bg-cyan-50/90 shadow-[0_0_58px_rgba(34,211,238,0.46)] scale-[1.16]",
+    glowClass: "inset-[-12px] bg-gradient-to-r from-cyan-400 via-blue-200 to-teal-200 scale-[1.25] opacity-96 animate-pulse"
+  },
+  {
+    id: "starlight-owl",
+    count: 1700,
+    name: "Starlight Owl",
+    summary: "A round owl constellation with a feathered night robe, crescent collar, and lantern stars.",
+    unlockLine: "1700 pets reached, {name}. Special state Starlight Owl unlocked.",
+    particles: 182,
+    reaction: "milestone-ultimate",
+    pose: "study",
+    mood: "sleepy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["My lantern stars are reading over my shoulder.", "Starlight Owl sees one very cozy future.", "The night robe is warm and full of constellations."],
+    ringClass: "ring-4 ring-indigo-400 ring-offset-2 bg-indigo-50/90 shadow-[0_0_60px_rgba(99,102,241,0.48)] scale-[1.16]",
+    glowClass: "inset-[-12px] bg-gradient-to-r from-indigo-500 via-violet-300 to-yellow-200 scale-[1.26] opacity-97 animate-pulse"
+  },
+  {
+    id: "royal-red-panda",
+    count: 1800,
+    name: "Royal Red Panda",
+    summary: "A russet red-panda form with a striped plume tail, velvet royal coat, and leaf-gem crown.",
+    unlockLine: "1800 pets reached, {name}. Special state Royal Red Panda unlocked.",
+    particles: 188,
+    reaction: "milestone-gold",
+    pose: "walk",
+    mood: "happy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["My royal tail has excellent balance.", "The leaf gem says kindness comes first.", "This coat makes every tiny walk feel grand."],
+    ringClass: "ring-4 ring-orange-500 ring-offset-2 bg-orange-50/90 shadow-[0_0_62px_rgba(249,115,22,0.48)] scale-[1.16]",
+    glowClass: "inset-[-12px] bg-gradient-to-r from-orange-500 via-red-300 to-emerald-200 scale-[1.26] opacity-97 animate-pulse"
+  },
+  {
+    id: "dream-dragon",
+    count: 1900,
+    name: "Dream Dragon",
+    summary: "A mint plush dragon with cloud horns, quilted star pajamas, and tiny aurora wings.",
+    unlockLine: "1900 pets reached, {name}. Special state Dream Dragon unlocked.",
+    particles: 194,
+    reaction: "milestone-ultimate",
+    pose: "fly",
+    mood: "bouncy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["My cloud horns caught a very soft dream.", "The aurora wings only flap when hopes are cozy.", "Dream Dragon pajamas are battle-ready for naps."],
+    ringClass: "ring-4 ring-emerald-400 ring-offset-2 bg-emerald-50/90 shadow-[0_0_64px_rgba(52,211,153,0.5)] scale-[1.17]",
+    glowClass: "inset-[-13px] bg-gradient-to-r from-emerald-400 via-cyan-300 to-violet-300 scale-[1.27] opacity-98 animate-pulse"
+  },
+  {
+    id: "eternal-heart-cosmos",
+    count: 2000,
+    name: "Eternal Heart Cosmos",
+    summary: "The supreme plush guardian: a heart-shaped cosmic silhouette, four aurora wings, a living crown, and orbiting heart stars.",
+    unlockLine: "2000 pets reached, {name}. Eternal Heart Cosmos, the supreme special state, is yours.",
+    particles: 220,
+    reaction: "milestone-ultimate",
+    pose: "orbit",
+    mood: "excited",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["Every little heart star found its way home.", "This form holds two thousand gentle headpats.", "Eternal Heart Cosmos is shining just for you."],
+    ringClass: "ring-4 ring-fuchsia-500 ring-offset-2 bg-white/90 shadow-[0_0_72px_rgba(236,72,153,0.58)] scale-[1.2]",
+    glowClass: "inset-[-15px] bg-gradient-to-r from-pink-500 via-violet-500 via-cyan-300 via-amber-300 to-pink-500 scale-[1.32] opacity-100 animate-pulse"
+  },
+  {
+    id: "campus-capybara",
+    count: 2100,
+    name: "Campus Capybara",
+    summary: "A mellow cocoa capybara with a tiny campus satchel, citrus beret, and an unhurried little waddle.",
+    unlockLine: "Five hosted hangouts unlocked Campus Capybara.",
+    particles: 120,
+    reaction: "milestone-gold",
+    pose: "walk",
+    mood: "sleepy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["I host at capybara speed: calmly and kindly.", "My little satchel is full of good plans.", "Five hangouts deserve one very relaxed waddle."],
+    ringClass: "ring-4 ring-amber-400 ring-offset-2 bg-orange-50/90 shadow-[0_0_55px_rgba(245,158,11,0.42)] scale-[1.14]",
+    glowClass: "inset-[-11px] bg-gradient-to-r from-amber-400 via-orange-200 to-lime-200 scale-[1.24] opacity-95 animate-pulse",
+    activityUnlock: { metric: "hosted", target: 5, label: "Post 5 Hangouts" }
+  },
+  {
+    id: "ribbon-swan",
+    count: 2200,
+    name: "Ribbon Swan",
+    summary: "A pearl-white swan with a blush ribbon, silver crownlet, and graceful heart-shaped wings.",
+    unlockLine: "Five joined hangouts unlocked Ribbon Swan.",
+    particles: 130,
+    reaction: "milestone-rainbow",
+    pose: "curtsy",
+    mood: "happy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["Five lovely gatherings taught me this curtsy.", "My ribbon floats when new friends gather.", "A graceful hello can begin a whole friendship."],
+    ringClass: "ring-4 ring-pink-300 ring-offset-2 bg-pink-50/90 shadow-[0_0_58px_rgba(244,114,182,0.4)] scale-[1.15]",
+    glowClass: "inset-[-12px] bg-gradient-to-r from-sky-200 via-white to-pink-300 scale-[1.25] opacity-96 animate-pulse",
+    activityUnlock: { metric: "joined", target: 5, label: "Join 5 Hangouts" }
+  },
+  {
+    id: "bamboo-panda",
+    count: 2300,
+    name: "Bamboo Panda",
+    summary: "A round black-and-cream panda in a jade hoodie with a bamboo pin and bouncing heart leaves.",
+    unlockLine: "Ten different liked hangouts unlocked Bamboo Panda.",
+    particles: 140,
+    reaction: "milestone-rainbow",
+    pose: "bounce",
+    mood: "bouncy",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["Ten little likes made my bamboo leaves dance.", "I approve this hangout with both paws.", "My hoodie has a very serious snack pocket."],
+    ringClass: "ring-4 ring-emerald-400 ring-offset-2 bg-emerald-50/90 shadow-[0_0_58px_rgba(52,211,153,0.44)] scale-[1.15]",
+    glowClass: "inset-[-12px] bg-gradient-to-r from-emerald-400 via-lime-200 to-slate-300 scale-[1.25] opacity-96 animate-pulse",
+    activityUnlock: { metric: "liked", target: 10, label: "Like 10 different Hangouts" }
+  },
+  {
+    id: "story-grizzly",
+    count: 2400,
+    name: "Story Grizzly",
+    summary: "A fluffy cinnamon grizzly with a berry scarf, acorn notebook, and animated conversation fireflies.",
+    unlockLine: "Comments on ten different hangouts unlocked Story Grizzly.",
+    particles: 150,
+    reaction: "milestone-gold",
+    pose: "shimmy",
+    mood: "excited",
+    accessory: "none",
+    traits: [],
+    ambientLines: ["Ten conversations gave my notebook happy pages.", "I brought a warm thought and a fluffy scarf.", "Good comments make the fireflies glow brighter."],
+    ringClass: "ring-4 ring-orange-400 ring-offset-2 bg-amber-50/90 shadow-[0_0_60px_rgba(251,146,60,0.46)] scale-[1.16]",
+    glowClass: "inset-[-12px] bg-gradient-to-r from-orange-500 via-amber-200 to-rose-300 scale-[1.26] opacity-97 animate-pulse",
+    activityUnlock: { metric: "commented", target: 10, label: "Comment on 10 different Hangouts" }
   }
 ];
 
@@ -983,6 +1231,11 @@ export const companionRandomActions: CompanionAction[] = [
   { text: "Doing an elegant stretch.", pose: "stretch", mood: "excited", accessory: "none", speechChance: 0.08 },
   { text: "Grooming my fluffy marshmallow ears.", pose: "wiggle", mood: "happy", accessory: "none", speechChance: 0.08 },
   { text: "Keeping watch with you, {name}.", pose: "stretch", mood: "happy", accessory: "none", speechChance: 0.08 },
+  { text: "A tiny donation can keep our cozy corner growing. ♥", pose: "snuggle", mood: "happy", accessory: "none", speechChance: 0.07 },
+  { text: "If this place helps, a little donation means a lot. ♥", pose: "curtsy", mood: "happy", accessory: "none", speechChance: 0.07 },
+  { text: "Donations help me guard this student-made space. ♥", pose: "wiggle", mood: "bouncy", accessory: "none", speechChance: 0.07 },
+  { text: "A small donation gives this fluffy project a boost. ♥", pose: "bounce", mood: "excited", accessory: "none", speechChance: 0.07 },
+  { text: "No pressure. Your support and kindness both count. ♥", pose: "rest", mood: "happy", accessory: "none", speechChance: 0.07 },
   { text: "I am smoothing my fur and pretending to be very dignified.", pose: "rest", mood: "happy", accessory: "none", speechChance: 0.07 },
   { text: "Tiny paws tucked in. I am supervising from a cozy angle.", pose: "rest", mood: "sleepy", accessory: "none", speechChance: 0.07 },
   { text: "I spotted a nice little corner and inspected it carefully.", pose: "peek", mood: "happy", accessory: "none", speechChance: 0.07 },
@@ -1106,7 +1359,7 @@ export const companionRareActions: CompanionAction[] = [
   }
 ];
 
-export const companionPetMilestones: CompanionMilestone[] = companionTierStates.map(state => ({
+export const companionPetMilestones: CompanionMilestone[] = companionTierStates.filter(state => !state.activityUnlock).map(state => ({
   count: state.count,
   message: state.unlockLine,
   particles: state.particles,
@@ -1115,7 +1368,7 @@ export const companionPetMilestones: CompanionMilestone[] = companionTierStates.
   accessory: state.accessory === "none" ? undefined : state.accessory
 }));
 
-export const companionMilestoneCounts = companionTierStates.map(state => state.count);
+export const companionMilestoneCounts = companionTierStates.filter(state => !state.activityUnlock).map(state => state.count);
 
 export const companionAnimations = {
   resting: {
@@ -1322,7 +1575,7 @@ export const companionTravelAnimations: Record<CompanionTravel, any> = {
     transition: { duration: 4.2, ease: "easeInOut" }
   },
   "peek-up": {
-    x: [0, -18, 8, 0],
+    x: [0, -18, -6, 0],
     y: [0, -92, -70, 0],
     rotate: [0, 8, -6, 0],
     transition: { duration: 4.0, ease: "easeInOut" }
@@ -1340,14 +1593,16 @@ export const companionTravelAnimations: Record<CompanionTravel, any> = {
     transition: { duration: 5.2, ease: "easeInOut" }
   },
   "stroll-right": {
-    x: [0, 42, 80, 52, 0],
+    // The companion is anchored to the right edge, so a negative x value
+    // moves it visibly across the page without extending the viewport.
+    x: [0, -42, -80, -52, 0],
     y: [0, -3, -8, -2, 0],
     rotate: [0, 3, -2, 2, 0],
     transition: { duration: 5.1, ease: "easeInOut" }
   }
 };
 
-export function pickCompanionLine(lines: string[]): string {
+export function pickCompanionLine(lines: readonly string[]): string {
   if (lines.length === 0) {
     return "";
   }
@@ -1386,7 +1641,22 @@ export function getCompanionMilestone(count: number): CompanionMilestone | undef
 }
 
 export function getUnlockedCompanionState(count: number): CompanionTierState | undefined {
-  return [...companionTierStates].reverse().find(state => count >= state.count);
+  return [...companionTierStates].reverse().find(state => !state.activityUnlock && count >= state.count);
+}
+
+export function isCompanionStateUnlocked(
+  state: CompanionTierState,
+  petCount: number,
+  activityStats: CompanionActivityStats,
+  isAdmin = false
+): boolean {
+  if (isAdmin) return true;
+  if (!state.activityUnlock) return petCount >= state.count;
+  return activityStats[state.activityUnlock.metric] >= state.activityUnlock.target;
+}
+
+export function getCompanionStateRequirement(state: CompanionTierState): string {
+  return state.activityUnlock?.label || `${state.count} pets`;
 }
 
 export function getCompanionStateById(stateId: string | null | undefined): CompanionTierState | undefined {

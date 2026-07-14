@@ -82,8 +82,8 @@
     "is_demo_profile": false,
     "birthdate": "2000-05-03",
     "password_hash": "f393bc7b287ab2bccb2e6cf81db8917aaafe8c78f242124f9f75ebda6cc4290a",
-    "companion_pet_count": 1002,
-    "companion_selected_state_id": "leaf-bud"
+    "companion_pet_count": 1101,
+    "companion_selected_state_id": "sakura-kitsune"
   },
   {
     "id": "user_odir44fcp",
@@ -91,7 +91,7 @@
     "student_id": "dsc2509096",
     "name": "Sehar",
     "name_last_changed_at": "2026-07-02T16:46:44.590Z",
-    "country": "Malaysia",
+    "country": "India",
     "country_last_changed_at": null,
     "languages": [
       "English"
@@ -99,7 +99,7 @@
     "age": 20,
     "program": "Data Science",
     "year_of_study": "Year 1",
-    "gender": "Male",
+    "gender": "Female",
     "student_type": "degree",
     "about_me": "Hey there! I am new here on XMUM Hangouts.",
     "avatar_id": "panda",
@@ -121,7 +121,7 @@
     "student_id": "pcs2509001",
     "name": "pcs2509001",
     "name_last_changed_at": null,
-    "country": "Malaysia",
+    "country": "Pakistan",
     "country_last_changed_at": null,
     "languages": [
       "English"
@@ -151,7 +151,7 @@
     "student_id": "cst2509016",
     "name": "cst2509016",
     "name_last_changed_at": null,
-    "country": "Malaysia",
+    "country": "China",
     "country_last_changed_at": null,
     "languages": [
       "English"
@@ -179,9 +179,9 @@
     "id": "user_5r9s5tgjn",
     "email": "mbt2509027@xmu.edu.my",
     "student_id": "mbt2509027",
-    "name": "mbt2509027",
+    "name": "leen",
     "name_last_changed_at": null,
-    "country": "Malaysia",
+    "country": "Indonesia",
     "country_last_changed_at": null,
     "languages": [
       "English"
@@ -189,7 +189,7 @@
     "age": 18,
     "program": "Accounting",
     "year_of_study": "Year 1",
-    "gender": "Male",
+    "gender": "Female",
     "student_type": "degree",
     "about_me": "Hey there! I am new here on XMUM Hangouts.",
     "avatar_id": "panda",
@@ -203,6 +203,37 @@
     "companion_pet_count": 0,
     "companion_selected_state_id": null,
     "password_hash": "9533beb886039361a83076b476b396b21ac6121bb94657e1b74cb31662afc6c1",
+    "is_demo_profile": false
+  },
+  {
+    "id": "user_u8lmcm8vz",
+    "email": "mcs2409001@xmu.edu.my",
+    "student_id": "mcs2409001",
+    "name": "mcs2409001",
+    "name_last_changed_at": null,
+    "country": "Malaysia",
+    "country_last_changed_at": null,
+    "languages": [
+      "English",
+      "Bengali"
+    ],
+    "age": 25,
+    "program": "Computer Science and Technology",
+    "year_of_study": "Year 2",
+    "gender": "Male",
+    "student_type": "postgraduate",
+    "about_me": "Hey there! I am new here on XMUM Hangouts.",
+    "avatar_id": "owl",
+    "is_profile_complete": true,
+    "hide_details": false,
+    "is_admin": false,
+    "is_blocked_globally": false,
+    "flag_status": "none",
+    "appeal_count": 0,
+    "birthdate": "2001-03-25",
+    "companion_pet_count": 6,
+    "companion_selected_state_id": null,
+    "password_hash": "a48ad6cc1f5865e9ee05019870f515f60eb802ce330afa3ac0defba141825af4",
     "is_demo_profile": false
   }
 ]

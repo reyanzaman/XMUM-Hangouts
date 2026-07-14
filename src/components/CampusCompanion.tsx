@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useApp } from "../context/AppContext";
 import { Heart } from "lucide-react";
+import { SpecialCompanionForms } from "./SpecialCompanionForms";
 import { resolveStoredCompanionState, writeStoredCompanionState, type StoredCompanionState } from "../lib/companionState";
 import {
   companionAnimations,
@@ -26,6 +27,7 @@ import {
   getCompanionStateById,
   getCompanionMilestone,
   getUnlockedCompanionState,
+  isCompanionStateUnlocked,
   pickCompanionLine,
   type CompanionAccessory,
   type CompanionAction,
@@ -33,7 +35,8 @@ import {
   type CompanionPose,
   type CompanionReaction,
   type CompanionTrait,
-  type CompanionTravel
+  type CompanionTravel,
+  type CompanionActivityStats
 } from "../config/companionConfig";
 
 interface CampusCompanionProps {
@@ -44,6 +47,9 @@ const companionStateUpdateEvent = "xmum-companion-state-updated";
 const companionAngerSourceStorageKey = "xmum_companion_anger_source";
 const normalAngerPetsRequired = 5;
 const redHotAngerPetsRequired = 9;
+const companionReturnMinimumMinutes = 2;
+const companionReturnMaximumMinutes = 6;
+const getRandomDragAngerThreshold = () => 8 + Math.floor(Math.random() * 6);
 
 type CompanionAngerSource = "none" | "profanity" | "drag";
 type DragReturnStyle =
@@ -99,6 +105,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     messages,
     comments,
     applications,
+    likes,
     viewedProfile,
     syncCompanionProgress
   } = useApp();
@@ -127,6 +134,12 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const lastCompanionMessageRef = useRef<string>(bubbleText);
   const draggedRef = useRef<boolean>(false);
   const dragHistoryRef = useRef<number[]>([]);
+  const dragAngerThresholdRef = useRef(getRandomDragAngerThreshold());
+  const companionReturnTimerRef = useRef<number | null>(null);
+  const companionOffsetRef = useRef({ x: 0, y: 0 });
+  const [companionOffset, setCompanionOffset] = useState({ x: 0, y: 0 });
+  const [isBubbleBelow, setIsBubbleBelow] = useState(false);
+  const [isCompanionNearLeft, setIsCompanionNearLeft] = useState(false);
   const [showBubble, setShowBubble] = useState<boolean>(true);
 
   const processQueue = () => {
@@ -351,13 +364,27 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   });
 
   const unlockedTierState = getUnlockedCompanionState(petCount);
-  const isOriginalStateSelected = petCount >= 1000 && selectedStateId === companionBaseStateOption.id;
+  const companionActivityStats: CompanionActivityStats = {
+    hosted: new Set(hangouts.filter(hangout => hangout.creator_id === currentUser?.id).map(hangout => hangout.id)).size,
+    joined: new Set(applications.filter(application => application.applicant_id === currentUser?.id && application.status === "accepted").map(application => application.hangout_id)).size,
+    liked: new Set(likes.filter(like => like.user_id === currentUser?.id).map(like => like.hangout_id)).size,
+    commented: new Set(comments.filter(comment => comment.user_id === currentUser?.id).map(comment => comment.hangout_id)).size
+  };
+  const canChooseCompanionState = Boolean(currentUser?.is_admin) || petCount >= 1000 || companionTierStates.some(state =>
+    isCompanionStateUnlocked(state, petCount, companionActivityStats, Boolean(currentUser?.is_admin))
+  );
+  const isOriginalStateSelected = canChooseCompanionState && selectedStateId === companionBaseStateOption.id;
+  const selectedTierState = getCompanionStateById(selectedStateId);
+  const selectedTierStateIsUnlocked = Boolean(selectedTierState && isCompanionStateUnlocked(
+    selectedTierState,
+    petCount,
+    companionActivityStats,
+    Boolean(currentUser?.is_admin)
+  ));
   const activeTierState =
     isOriginalStateSelected
       ? undefined
-      : petCount >= 1000
-      ? getCompanionStateById(selectedStateId) || unlockedTierState
-      : unlockedTierState;
+      : (selectedTierStateIsUnlocked ? selectedTierState : undefined) || unlockedTierState;
   const activeTraits = new Set<CompanionTrait>(activeTierState?.traits || []);
 
   if (accessory !== "none") {
@@ -367,6 +394,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const hasTrait = (trait: CompanionTrait) => activeTraits.has(trait);
   const activeRingClass = activeTierState?.ringClass || "";
   const activeGlowClass = activeTierState?.glowClass || "";
+  const activeSpecialStateId = activeTierState && activeTierState.count > 1000 ? activeTierState.id : null;
+  const activeDialogueLines = activeTierState?.ambientLines || companionBaseStateOption.ambientLines;
   const isRedHotAngry = isCompanionAngry && angerSource === "drag";
 
   // Periodic subtle cute random companion movement triggers and rare screen hops.
@@ -375,15 +404,14 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
     const triggerRandomMovement = () => {
       const stateAmbientAction: CompanionAction | null =
-        activeTierState && activeTierState.ambientLines.length > 0
+        activeDialogueLines.length > 0
           ? {
-              text: pickCompanionLine(activeTierState.ambientLines),
-              pose: activeTierState.pose,
-              mood: activeTierState.mood,
-              accessory: activeTierState.accessory,
-              speechChance: 0.08,
-              durationMs: 4600,
-              minPetCount: activeTierState.count
+              text: pickCompanionLine(activeDialogueLines),
+              pose: activeTierState?.pose || "wiggle",
+              mood: activeTierState?.mood || "happy",
+              accessory: activeTierState?.accessory || "none",
+              speechChance: 1,
+              durationMs: 4600
             }
           : null;
       const petHintAction: CompanionAction | null =
@@ -411,7 +439,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         return reachedMin && underMax && tabMatch;
       });
       const actionsToUse = eligibleActions.length > 0 ? eligibleActions : baseActions;
-      const action = actionsToUse[Math.floor(Math.random() * actionsToUse.length)];
+      const action = stateAmbientAction && !isCompanionAngry && Math.random() < 0.34
+        ? stateAmbientAction
+        : actionsToUse[Math.floor(Math.random() * actionsToUse.length)];
 
       setCompanionPose(action.pose);
       setMood(action.mood);
@@ -534,12 +564,16 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       }
       if (detail.selectedStateId !== undefined) {
         setSelectedStateId(detail.selectedStateId || null);
+        const selectedState = getCompanionStateById(detail.selectedStateId);
+        const selectedLines = selectedState?.ambientLines || companionBaseStateOption.ambientLines;
+        setBubbleText(formatCompanionLine(pickCompanionLine(selectedLines), { name: fName }));
+        setShowBubble(true);
       }
     };
 
     window.addEventListener(companionStateUpdateEvent, handleCompanionStateUpdated);
     return () => window.removeEventListener(companionStateUpdateEvent, handleCompanionStateUpdated);
-  }, []);
+  }, [fName]);
 
   useEffect(() => {
     const resolvedState = resolveStoredCompanionState(currentUser?.email, currentUser || undefined);
@@ -891,8 +925,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
     const motions: Record<DragReturnStyle, DragReturnMotion> = {
       "steady-bounce": {
-        x: 0,
-        y: 0,
+        x: safeX,
+        y: safeY,
         rotate: [-4, 3, 0],
         scale: [1, 0.985, 1.01, 1],
         transition: {
@@ -903,8 +937,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         }
       },
       "orbit-swoop": {
-        x: 0,
-        y: 0,
+        x: safeX,
+        y: safeY,
         rotate: [8, -6, 2, 0],
         scale: [1, 1.02, 0.995, 1.01, 1],
         transition: {
@@ -915,8 +949,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         }
       },
       "feather-float": {
-        x: 0,
-        y: 0,
+        x: safeX,
+        y: safeY,
         rotate: [-7, 4, 0],
         scaleY: [1, 0.98, 1.015, 1],
         scaleX: [1, 1.02, 0.995, 1],
@@ -929,8 +963,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         }
       },
       "grumpy-wobble": {
-        x: 0,
-        y: 0,
+        x: safeX,
+        y: safeY,
         rotate: [-10, 7, -3, 0],
         scale: [1, 0.985, 1.01, 0.995, 1],
         transition: {
@@ -941,8 +975,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         }
       },
       "grumpy-stomp": {
-        x: 0,
-        y: 0,
+        x: safeX,
+        y: safeY,
         rotate: [-6, 4, 0],
         scaleY: [1, 0.92, 1.06, 0.99, 1],
         scaleX: [1, 1.04, 0.97, 1.01, 1],
@@ -955,8 +989,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         }
       },
       "hot-streak": {
-        x: 0,
-        y: 0,
+        x: safeX,
+        y: safeY,
         rotate: [12, -8, 2, 0],
         scaleY: [1, 0.9, 1.08, 0.98, 1],
         scaleX: [1, 1.08, 0.95, 1.02, 1],
@@ -972,6 +1006,52 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
     return motions[style];
   };
+
+  const clearCompanionReturnTimer = () => {
+    if (companionReturnTimerRef.current !== null) {
+      window.clearTimeout(companionReturnTimerRef.current);
+      companionReturnTimerRef.current = null;
+    }
+  };
+
+  const updateCompanionEdgeState = (offsetX: number, offsetY: number) => {
+    const restingBottom = currentUser ? 96 : 24;
+    const estimatedCompanionTop = window.innerHeight - restingBottom - 72 + offsetY;
+    const restingRight = window.innerWidth >= 768 ? 24 : 16;
+    const estimatedCompanionLeft = window.innerWidth - restingRight - 72 + offsetX;
+    setIsBubbleBelow(estimatedCompanionTop < 150);
+    setIsCompanionNearLeft(estimatedCompanionLeft < (window.innerWidth >= 768 ? 170 : 120));
+  };
+
+  const scheduleCompanionReturn = () => {
+    clearCompanionReturnTimer();
+    const minuteRange = companionReturnMaximumMinutes - companionReturnMinimumMinutes + 1;
+    const delayMinutes = companionReturnMinimumMinutes + Math.floor(Math.random() * minuteRange);
+    companionReturnTimerRef.current = window.setTimeout(() => {
+      companionOffsetRef.current = { x: 0, y: 0 };
+      setCompanionOffset({ x: 0, y: 0 });
+      setIsBubbleBelow(false);
+      setIsCompanionNearLeft(false);
+      setDragReturnMotion({
+        x: 0,
+        y: 0,
+        rotate: 0,
+        scale: 1,
+        scaleX: 1,
+        scaleY: 1,
+        transition: { type: "spring", stiffness: 150, damping: 20 }
+      });
+      companionReturnTimerRef.current = null;
+    }, delayMinutes * 60 * 1000);
+  };
+
+  useEffect(() => () => clearCompanionReturnTimer(), []);
+
+  useEffect(() => {
+    const handleResize = () => updateCompanionEdgeState(companionOffsetRef.current.x, companionOffsetRef.current.y);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [currentUser]);
 
   const triggerDragAnger = () => {
     const angerTimestamp = new Date().toISOString();
@@ -1079,6 +1159,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     } else if (shouldHint) {
       milestoneMessage = pickCompanionLine(companionDialogue.petHint);
       particlesToSpawn = 5;
+    } else if (activeDialogueLines.length > 0 && Math.random() < 0.55) {
+      milestoneMessage = formatCompanionLine(pickCompanionLine(activeDialogueLines), { name: fName });
+      particlesToSpawn = 4;
     } else {
       milestoneMessage = formatCompanionLine(pickCompanionLine(companionDialogue.pet), { name: fName });
       particlesToSpawn = 4;
@@ -1090,9 +1173,21 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     try {
       const isMilestone = companionMilestoneCounts.includes(nextCount) || isExtendedMilestone;
       const existingState = resolveStoredCompanionState(currentUser?.email, currentUser || undefined);
+      const newlyUnlockedState = getUnlockedCompanionState(nextCount);
+      const existingSelectedState = getCompanionStateById(existingState.selectedStateId);
+      const existingSelectionIsUnlocked = Boolean(existingSelectedState && isCompanionStateUnlocked(
+        existingSelectedState,
+        nextCount,
+        companionActivityStats,
+        Boolean(currentUser?.is_admin)
+      ));
       const newSelectedStateId =
         nextCount >= 1000
-          ? existingState.selectedStateId || companionTierStates[companionTierStates.length - 1]?.id || null
+          ? milestone && newlyUnlockedState?.count === nextCount
+            ? newlyUnlockedState.id
+            : existingState.selectedStateId === companionBaseStateOption.id || existingSelectionIsUnlocked
+              ? existingState.selectedStateId || null
+              : newlyUnlockedState?.id || null
           : existingState.selectedStateId || null;
       saveCompanionState({
         petCount: nextCount,
@@ -1330,53 +1425,89 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     );
   };
 
+  const mapTravelAxisInward = (value: number | number[] | undefined, maximum: number) => {
+    if (Array.isArray(value)) {
+      return value.map(point => Math.min(maximum, Math.abs(Number(point) || 0) * 0.45));
+    }
+    return Math.min(maximum, Math.abs(Number(value) || 0) * 0.45);
+  };
+  const baseTravelAnimation = companionTravelAnimations[travelMode];
+  const edgeSafeTravelAnimation =
+    travelMode === "home"
+      ? { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
+      : {
+          scale: 1,
+          opacity: 1,
+          ...baseTravelAnimation,
+          ...(isCompanionNearLeft ? { x: mapTravelAxisInward(baseTravelAnimation.x, 42) } : {}),
+          ...(isBubbleBelow ? { y: mapTravelAxisInward(baseTravelAnimation.y, 36) } : {})
+        };
+  const bubbleHorizontalShift = isCompanionNearLeft ? (window.innerWidth >= 768 ? 137 : 86) : 0;
+
   return (
     <motion.div 
       ref={containerRef}
       initial={{ scale: 0, opacity: 0, y: 150, rotate: -25 }}
-      animate={
-        travelMode === "home"
-          ? { scale: 1, opacity: 1, y: 0, rotate: 0 }
-          : { scale: 1, opacity: 1, ...companionTravelAnimations[travelMode] }
-      }
+      animate={edgeSafeTravelAnimation}
       transition={{ 
         type: "spring", 
         stiffness: 280, 
         damping: 18, 
         delay: 0.8
       }}
-      className={`fixed ${currentUser ? "bottom-21 right-2 md:bottom-4 md:right-4" : "bottom-4 right-2 md:bottom-4 md:right-4"} z-40 flex flex-col items-end pointer-events-none font-sans select-none`}
+      className={`fixed ${currentUser ? "bottom-24 right-4 md:bottom-6 md:right-6" : "bottom-6 right-4 md:right-6"} z-40 flex max-w-[calc(100vw-1rem)] flex-col items-end pointer-events-none font-sans select-none`}
     >
       {/* Dynamic Bubble text */}
-      <AnimatePresence>
-        {showBubble && (
-          <motion.div
+      <motion.div
+        animate={{ x: companionOffset.x + bubbleHorizontalShift, y: companionOffset.y }}
+        transition={{ type: "spring", stiffness: 180, damping: 24 }}
+        className={`relative z-[90] ${isBubbleBelow ? "order-2 mt-2" : "order-1 mb-2"}`}
+      >
+        <AnimatePresence>
+          {showBubble && (
+            <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.92 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.82, filter: "blur(1px)" }}
             transition={{ duration: 0.28, ease: "easeOut" }}
-            className="mb-2 bg-white/98 text-slate-800 text-[10px] md:text-[11px] font-bold p-2.5 md:p-3 rounded-2xl border border-slate-100 shadow-xl max-w-[150px] md:max-w-[205px] text-right pointer-events-auto leading-relaxed relative flex flex-col items-end gap-1 border-rose-50 z-[80]"
+            className={`bg-white/98 text-slate-800 text-[10px] md:text-[11px] font-bold p-2.5 md:p-3 rounded-2xl border border-slate-100 shadow-xl max-w-[150px] md:max-w-[205px] pointer-events-auto leading-relaxed relative z-[90] flex flex-col gap-1 border-rose-50 ${
+              isCompanionNearLeft ? "items-start text-left" : "items-end text-right"
+            }`}
             id="companion-speech-bubble"
           >
             {/* Tiny bubble point arrow */}
-            <div className="absolute bottom-[-5px] right-4 md:right-6 w-2.5 h-2.5 bg-white border-r border-b border-rose-50/50 rotate-45" />
+            <div className={`absolute w-2.5 h-2.5 bg-white rotate-45 ${isCompanionNearLeft ? "left-4 md:left-6" : "right-4 md:right-6"} ${
+              isBubbleBelow
+                ? "top-[-5px] border-l border-t border-rose-50/50"
+                : "bottom-[-5px] border-r border-b border-rose-50/50"
+            }`} />
+            {activeTierState && (
+              <span className="self-stretch pb-1 text-[9px] font-black uppercase tracking-wide text-rose-500">
+                {activeTierState.name}
+              </span>
+            )}
             <p className="whitespace-pre-line text-slate-755 leading-normal">{bubbleText}</p>
             {petCount > 0 && (
               <span className="text-[9px] text-rose-500 font-extrabold flex items-center gap-1 mt-0.5">
                 <Heart className="w-2.5 h-2.5 fill-rose-500 animate-pulse" /> pet x{petCount}
-                {activeTierState && <span className="text-slate-500 font-bold">• {activeTierState.name}</span>}
               </span>
             )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
 
       {/* Floating Animated Ultra Cute Round Fluffy Kitty Mascot */}
       <motion.div
-        className="pointer-events-auto relative"
+        className={`pointer-events-auto relative z-10 ${isBubbleBelow ? "order-1" : "order-2"}`}
         drag
-        dragSnapToOrigin
-        dragElastic={0.08}
+        dragConstraints={{
+          left: -Math.max(0, window.innerWidth - 104),
+          right: 0,
+          top: -Math.max(0, window.innerHeight - (currentUser ? 200 : 128)),
+          bottom: 0
+        }}
+        dragElastic={0.02}
         dragMomentum={false}
         dragTransition={{ bounceStiffness: 560, bounceDamping: 28, power: 0.08, timeConstant: 120 }}
         animate={dragReturnMotion}
@@ -1386,10 +1517,13 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         }}
         onDragStart={() => {
           draggedRef.current = true;
+          setShowBubble(false);
+          clearCompanionReturnTimer();
+          setTravelMode("home");
           setIsDragReturning(false);
           setDragReturnMotion({
-            x: 0,
-            y: 0,
+            x: companionOffsetRef.current.x,
+            y: companionOffsetRef.current.y,
             rotate: 0,
             scale: 1,
             scaleX: 1,
@@ -1402,14 +1536,22 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         onDragEnd={(_, info) => {
           draggedRef.current = true;
           const movedFarEnough = Math.abs(info.offset.x) > 12 || Math.abs(info.offset.y) > 12;
+          const nextOffset = {
+            x: companionOffsetRef.current.x + info.offset.x,
+            y: companionOffsetRef.current.y + info.offset.y
+          };
+          companionOffsetRef.current = nextOffset;
+          setCompanionOffset(nextOffset);
+          updateCompanionEdgeState(nextOffset.x, nextOffset.y);
           const now = Date.now();
-          const recentDrags = [...dragHistoryRef.current.filter(timestamp => now - timestamp < 22000)];
+          const recentDrags = [...dragHistoryRef.current.filter(timestamp => now - timestamp < 45000)];
           if (movedFarEnough) {
             recentDrags.push(now);
           }
           dragHistoryRef.current = recentDrags;
 
-          const triggeredDragAnger = movedFarEnough && recentDrags.length >= 5;
+          const currentAngerThreshold = dragAngerThresholdRef.current;
+          const triggeredDragAnger = movedFarEnough && recentDrags.length >= currentAngerThreshold;
           const selectedReturnStyle = triggeredDragAnger || isCompanionAngry
             ? (["grumpy-wobble", "grumpy-stomp", "hot-streak"] as DragReturnStyle[])[
                 Math.floor(Math.random() * 3)
@@ -1420,26 +1562,33 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
           setDragReturnStyle(selectedReturnStyle);
           setIsDragReturning(true);
-          setDragReturnMotion(buildDragReturnMotion(selectedReturnStyle, info.offset.x, info.offset.y));
+          setDragReturnMotion(buildDragReturnMotion(selectedReturnStyle, nextOffset.x, nextOffset.y));
           setReactionType(triggeredDragAnger || isCompanionAngry ? "error" : "subtle");
           setMood(triggeredDragAnger || isCompanionAngry ? "sleepy" : (activeTierState?.mood || "happy"));
 
           if (movedFarEnough && triggeredDragAnger) {
+            dragHistoryRef.current = [];
+            dragAngerThresholdRef.current = getRandomDragAngerThreshold();
             triggerDragAnger();
           } else if (movedFarEnough) {
             setBubbleText(
               pickCompanionLine(
-                isCompanionAngry ? companionDialogue.dragReturnAngry : companionDialogue.dragReturn
+                isCompanionAngry
+                  ? companionDialogue.dragReturnAngry
+                  : recentDrags.length >= currentAngerThreshold - 2
+                    ? companionDialogue.dragGettingDizzy
+                    : companionDialogue.dragReturn
               )
             );
             setShowBubble(true);
           }
+          scheduleCompanionReturn();
           window.setTimeout(() => {
             draggedRef.current = false;
             setIsDragReturning(false);
             setDragReturnMotion({
-              x: 0,
-              y: 0,
+              x: companionOffsetRef.current.x,
+              y: companionOffsetRef.current.y,
               rotate: 0,
               scale: 1,
               scaleX: 1,
@@ -1524,13 +1673,18 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
         {/* Outer ambient glow */}
         {(isRedHotAngry || isCompanionAngry || activeGlowClass) && (
-          <div className={`absolute rounded-full blur-md transition-all duration-300 ${
+          <div
+            className={`absolute rounded-full blur-sm transition-all duration-300 ${
             isRedHotAngry
               ? "inset-[-8px] bg-gradient-to-r from-red-700 via-orange-500 to-yellow-400 scale-110 opacity-95 animate-pulse"
               : isCompanionAngry
               ? "inset-[-5px] bg-gradient-to-r from-slate-300 via-rose-200 to-pink-200 scale-105 opacity-85"
               : activeGlowClass
-          }`} />
+            }`}
+            style={!isCompanionAngry ? {
+              opacity: activeTierState?.id === "sakura-kitsune" ? 0.38 : activeSpecialStateId ? 0.6 : 0.54
+            } : undefined}
+          />
         )}
 
         <div className="relative w-14 h-14 md:w-17 md:h-17 flex items-center justify-center">
@@ -1540,6 +1694,10 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             fill="none"
             className="w-full h-full drop-shadow-[0_2.5px_4.5px_rgba(244,63,94,0.3)] select-none"
           >
+            {activeSpecialStateId ? (
+              <SpecialCompanionForms stateId={activeSpecialStateId} />
+            ) : (
+              <g id="classic-companion-form">
             {isCompanionAngry && !isRedHotAngry && (
               <g id="stormy-sulk-aura">
                 <motion.path
@@ -2398,6 +2556,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
                   <line x1="60" y1="86.5" x2="74" y2="86.5" stroke="#78716c" strokeWidth="1" strokeLinecap="round" />
                   <line x1="56" y1="89" x2="70" y2="89" stroke="#78716c" strokeWidth="1" strokeLinecap="round" />
                 </motion.g>
+              </g>
+            )}
               </g>
             )}
           </svg>

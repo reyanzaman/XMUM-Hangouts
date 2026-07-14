@@ -7,8 +7,17 @@ import React, { useEffect, useState } from "react";
 import { useApp } from "../context/AppContext";
 import { ProfileCard } from "./ProfileCard";
 import { AvatarPicker } from "./AvatarPicker";
+import { CompanionStateIcon } from "./CompanionStateIcon";
 import { COUNTRIES, XMUM_PROGRAMS, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
-import { companionBaseStateOption, companionTierStates, getCompanionStateById, getUnlockedCompanionState } from "../config/companionConfig";
+import {
+  companionBaseStateOption,
+  companionTierStates,
+  getCompanionStateById,
+  getCompanionStateRequirement,
+  getUnlockedCompanionState,
+  isCompanionStateUnlocked,
+  type CompanionActivityStats
+} from "../config/companionConfig";
 import { resolveStoredCompanionState, writeStoredCompanionState } from "../lib/companionState";
 import { ProfilePageSkeleton } from "./LoadingSkeletons";
 import { 
@@ -29,6 +38,7 @@ import {
   Lock,
   Heart,
   HelpCircle,
+  ChevronDown,
   LogOut
 } from "lucide-react";
 
@@ -36,6 +46,10 @@ export const StudentProfilePage: React.FC = () => {
   const { 
     currentUser, 
     isAuthInitializing,
+    hangouts,
+    applications,
+    likes,
+    comments,
     updateProfile, 
     profiles, 
     switchUser, 
@@ -98,6 +112,7 @@ export const StudentProfilePage: React.FC = () => {
   const [deleteAccountConfirmationInput, setDeleteAccountConfirmationInput] = useState("");
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [showPasswordResetPanel, setShowPasswordResetPanel] = useState(false);
+  const [isCompanionProgressOpen, setIsCompanionProgressOpen] = useState(false);
   const [companionProgress, setCompanionProgress] = useState(
     () => resolveStoredCompanionState(currentUser.email, currentUser)
   );
@@ -107,21 +122,35 @@ export const StudentProfilePage: React.FC = () => {
   const deleteAccountConfirmationMatches =
     deleteAccountConfirmationInput.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
   const companionPetCount = Math.max(0, Number(companionProgress.petCount || 0));
-  const companionUnlockProgress = Math.min(100, companionPetCount === 0 ? 0 : Math.max(4, (companionPetCount / 1000) * 100));
+  const companionActivityStats: CompanionActivityStats = {
+    hosted: new Set(hangouts.filter(hangout => hangout.creator_id === currentUser.id).map(hangout => hangout.id)).size,
+    joined: new Set(applications.filter(application => application.applicant_id === currentUser.id && application.status === "accepted").map(application => application.hangout_id)).size,
+    liked: new Set(likes.filter(like => like.user_id === currentUser.id).map(like => like.hangout_id)).size,
+    commented: new Set(comments.filter(comment => comment.user_id === currentUser.id).map(comment => comment.hangout_id)).size
+  };
+  const stateIsUnlocked = (state: ReturnType<typeof getCompanionStateById>) =>
+    Boolean(state && isCompanionStateUnlocked(state, companionPetCount, companionActivityStats, currentUser.is_admin));
+  const companionUnlockProgress = Math.min(100, companionPetCount === 0 ? 0 : Math.max(4, (companionPetCount / 2000) * 100));
   const availableCountries = COUNTRIES.includes(profileCountry) ? COUNTRIES : [profileCountry, ...COUNTRIES];
   const companionUnlockedState = getUnlockedCompanionState(companionPetCount);
+  const canChooseCompanionState = currentUser.is_admin || companionPetCount >= 1000 || companionTierStates.some(state => stateIsUnlocked(state));
   const companionSelectedState =
-    companionPetCount >= 1000
+    canChooseCompanionState
       ? (() => {
           const selectedStateId =
             typeof companionProgress.selectedStateId === "string" ? companionProgress.selectedStateId : null;
           if (selectedStateId === companionBaseStateOption.id) {
             return companionBaseStateOption;
           }
-          return getCompanionStateById(selectedStateId) || companionUnlockedState;
+          const selectedState = getCompanionStateById(selectedStateId);
+          return stateIsUnlocked(selectedState) ? selectedState : companionUnlockedState;
         })()
       : companionUnlockedState;
-  const canChooseCompanionState = companionPetCount >= 1000;
+
+  useEffect(() => {
+    // Each mobile profile visit starts with the progress details folded.
+    setIsCompanionProgressOpen(false);
+  }, [currentUser.id]);
 
   useEffect(() => {
     const syncCompanionProgress = (event?: Event) => {
@@ -202,8 +231,8 @@ export const StudentProfilePage: React.FC = () => {
       setIsSaving(false);
       return;
     }
-    if (profilePassword.trim() && profilePassword.trim().length < 6) {
-      showToast("Security password must be at least 6 characters.", "error");
+    if (profilePassword.trim() && profilePassword.trim().length < 8) {
+      showToast("Security password must be at least 8 characters.", "error");
       setIsSaving(false);
       return;
     }
@@ -265,11 +294,17 @@ export const StudentProfilePage: React.FC = () => {
       return;
     }
 
+    const requestedState = getCompanionStateById(stateId);
+    if (requestedState && !stateIsUnlocked(requestedState)) {
+      showToast(`${getCompanionStateRequirement(requestedState)} to unlock ${requestedState.name}.`, "info");
+      return;
+    }
+
     try {
       const nextState = writeStoredCompanionState(currentUser.email, {
         ...companionProgress,
         petCount: companionPetCount,
-        isPermanent: true,
+        isPermanent: currentUser.is_admin || companionPetCount >= 1000,
         selectedStateId: stateId
       });
       setCompanionProgress(nextState);
@@ -478,63 +513,95 @@ export const StudentProfilePage: React.FC = () => {
             </button>
           </div>
 
-          <div className="bg-white border border-gray-100 p-5 rounded-3xl shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-gray-50 pb-3">
+          <div className="bg-white border border-gray-100 p-5 rounded-3xl shadow-sm">
+            <button
+              type="button"
+              onClick={() => setIsCompanionProgressOpen(open => !open)}
+              aria-expanded={isCompanionProgressOpen}
+              aria-controls="companion-progress-details"
+              className={`flex w-full items-center justify-between text-left transition-all sm:pointer-events-none ${
+                isCompanionProgressOpen
+                  ? "mb-4 border-b border-gray-50 pb-3"
+                  : "-m-2 w-[calc(100%+1rem)] rounded-2xl border border-rose-100 bg-gradient-to-r from-rose-50 via-white to-amber-50 p-3 shadow-[0_6px_20px_rgba(244,63,94,0.10)]"
+              } sm:m-0 sm:mb-4 sm:w-full sm:rounded-none sm:border-x-0 sm:border-t-0 sm:border-b sm:border-gray-50 sm:bg-none sm:p-0 sm:pb-3 sm:shadow-none`}
+            >
               <div className="flex items-center gap-2">
-                <Heart className="w-5 h-5 text-rose-500" />
-                <h3 className="font-bold text-slate-850 text-sm">Companion Progress</h3>
+                <span className={`${isCompanionProgressOpen ? "" : "rounded-xl bg-white p-1.5 shadow-sm ring-1 ring-rose-100"} sm:p-0 sm:shadow-none sm:ring-0`}>
+                  <Heart className="w-5 h-5 fill-rose-100 text-rose-500" />
+                </span>
+                <div>
+                  <h3 className="font-bold text-slate-850 text-sm">Companion Progress</h3>
+                  {!isCompanionProgressOpen && (
+                    <span className="mt-0.5 flex items-center gap-1 text-[9px] font-bold text-rose-500 sm:hidden">
+                      <Sparkles className="h-2.5 w-2.5" /> Tap to see your forms
+                    </span>
+                  )}
+                </div>
               </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">
-                {companionPetCount} pets
-              </span>
-            </div>
-
-            <div className="space-y-2">
-              <div className="h-2 rounded-full bg-rose-100 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-rose-400 via-orange-300 to-amber-300 transition-all duration-500"
-                  style={{ width: `${companionUnlockProgress}%` }}
-                />
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">
+                  {companionPetCount} pets
+                </span>
+                <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform sm:hidden ${isCompanionProgressOpen ? "rotate-180" : ""}`} />
               </div>
-              <p className="text-[11px] text-slate-500 leading-relaxed">
-                {companionSelectedState
-                  ? `${companionSelectedState.name}: ${companionSelectedState.summary}`
-                  : "Headpat the companion to unlock forms at 5, 10, 20, 30, 40, 50, then every 50 pets up to 1000."}
-              </p>
-            </div>
+            </button>
 
-            {canChooseCompanionState ? (
+            <div id="companion-progress-details" className={`${isCompanionProgressOpen ? "block" : "hidden"} space-y-4 sm:block`}>
+              <div className="space-y-2">
+                <div className="h-2 rounded-full bg-rose-100 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-rose-400 via-orange-300 to-amber-300 transition-all duration-500"
+                    style={{ width: `${companionUnlockProgress}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  {companionSelectedState
+                    ? `${companionSelectedState.name}: ${companionSelectedState.summary}`
+                    : "Headpat the companion to unlock forms at 5, 10, 20, 30, 40, 50, then every 50 pets up to 1000."}
+                </p>
+                <p className="rounded-xl bg-amber-50 px-3 py-2 text-[10px] font-bold leading-relaxed text-amber-800">
+                  Classic forms unlock with pets. Special activity forms unlock by hosting, joining, liking, and commenting on different hangouts.
+                </p>
+              </div>
+
               <div className="space-y-3">
-                <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3 text-[11px] text-rose-800 leading-relaxed">
-                  Ultimate mode is permanent now. You can choose any unlocked companion form below, including the original sprout look.
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {[companionBaseStateOption, ...companionTierStates].map(state => {
-                    const active = companionSelectedState?.id === state.id;
-                    return (
-                      <button
-                        key={state.id}
-                        type="button"
-                        onClick={() => handleSelectCompanionState(state.id)}
-                        className={`text-left rounded-2xl border p-3 transition-colors cursor-pointer ${
-                          active
-                            ? "border-rose-300 bg-rose-50 text-rose-900"
-                            : "border-slate-200 bg-white hover:border-rose-200 hover:bg-rose-50/50 text-slate-700"
-                        }`}
-                      >
-                        <span className="text-[11px] font-black block">{state.name}</span>
-                        <span className="text-[10px] block mt-1 opacity-75">{state.summary}</span>
-                        <span className="text-[10px] font-bold block mt-2">{state.count} pets</span>
-                      </button>
-                    );
-                  })}
+                <div className="grid grid-cols-3 gap-x-2 gap-y-4 sm:grid-cols-4 lg:grid-cols-5">
+                    {[companionBaseStateOption, ...companionTierStates].map(state => {
+                      const active = companionSelectedState?.id === state.id;
+                      const tierState = getCompanionStateById(state.id);
+                      const unlocked = state.id === companionBaseStateOption.id || stateIsUnlocked(tierState);
+                      const requirement = tierState ? getCompanionStateRequirement(tierState) : "Always available";
+                      return (
+                        <button
+                          key={state.id}
+                          type="button"
+                          onClick={() => handleSelectCompanionState(state.id)}
+                          disabled={!unlocked}
+                          className={`group relative flex min-w-0 flex-col items-center rounded-2xl p-1.5 text-center transition-all cursor-pointer ${
+                            active
+                              ? "bg-rose-50 text-rose-900 ring-2 ring-rose-300"
+                              : !unlocked
+                                ? "cursor-not-allowed text-slate-400 opacity-55"
+                              : "text-slate-700 hover:bg-rose-50/60 hover:text-rose-800"
+                          }`}
+                          aria-label={`${state.name}, ${requirement}${unlocked ? "" : ", locked"}`}
+                        >
+                          <span className={`relative mb-1.5 block h-14 w-14 rounded-full bg-white p-0.5 shadow-[0_3px_10px_rgba(244,63,94,0.10)] ring-1 ring-rose-100/80 transition-transform group-hover:scale-105 sm:h-16 sm:w-16 ${active ? "scale-105" : ""}`}>
+                            <CompanionStateIcon stateId={state.id} special={Boolean(tierState && (tierState.count > 1000 || tierState.activityUnlock))} />
+                            {!unlocked && (
+                              <span className="absolute inset-0 flex items-center justify-center rounded-full bg-white/45">
+                                <Lock className="h-4 w-4 text-slate-500" />
+                              </span>
+                            )}
+                          </span>
+                          <span className="line-clamp-2 text-[9px] font-black leading-tight sm:text-[10px]">{state.name}</span>
+                          <span className="mt-1 text-[8px] font-bold leading-tight text-slate-400 sm:text-[9px]">{requirement}</span>
+                        </button>
+                      );
+                    })}
                 </div>
               </div>
-            ) : (
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 text-[11px] text-slate-600 leading-relaxed">
-                Reach 1000 total pets to permanently unlock the companion wardrobe and choose any form from the 10-to-1000 milestone ladder here.
-              </div>
-            )}
+            </div>
           </div>
 
           <div className="bg-white border border-rose-100 p-5 rounded-3xl shadow-sm space-y-4">

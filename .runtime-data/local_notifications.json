@@ -1,12 +1,35 @@
 [
   {
+    "id": "notif_schedule_expired_ovppwtt12",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "type": "admin_message",
+    "payload": {
+      "hangout_id": "hangout_odi2os3nw",
+      "custom_text": "Your hangout \"play board games together!\" has expired.",
+      "reminder_stage": "expired"
+    },
+    "is_read": true,
+    "created_at": "2026-07-04T06:08:01.946Z"
+  },
+  {
+    "id": "notif_cron_c_0846c506",
+    "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
+    "type": "upcoming_hangout_reminder",
+    "payload": {
+      "hangout_id": "hangout_odi2os3nw",
+      "custom_text": "🕒 Upcoming Hangout Reminder! Your hangout \"I want to play board game...\" begins in less than 2 hours."
+    },
+    "is_read": true,
+    "created_at": "2026-07-04T04:05:00.144Z"
+  },
+  {
     "id": "notif_schedule_started_647rqorpu",
     "user_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
     "type": "upcoming_hangout_reminder",
     "payload": {
       "hangout_id": "hangout_61stot4ql",
-      "reminder_stage": "started",
-      "custom_text": "Your hangout \"study together!\" is starting now."
+      "custom_text": "Your hangout \"study together!\" is starting now.",
+      "reminder_stage": "started"
     },
     "is_read": true,
     "created_at": "2026-07-03T12:02:19.630Z"
@@ -17,8 +40,8 @@
     "type": "admin_message",
     "payload": {
       "hangout_id": "hangout_61stot4ql",
-      "reminder_stage": "expired",
-      "custom_text": "Your hangout \"study together!\" has now ended and moved to past plans."
+      "custom_text": "Your hangout \"study together!\" has now ended and moved to past plans.",
+      "reminder_stage": "expired"
     },
     "is_read": true,
     "created_at": "2026-07-03T12:02:19.630Z"

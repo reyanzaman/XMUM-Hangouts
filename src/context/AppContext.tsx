@@ -23,6 +23,7 @@ import { XMUM_PROGRAMS } from "../config/xmum-config";
 import { matchesPrimaryAdminEmail } from "../lib/admin";
 import type { StoredCompanionState } from "../lib/companionState";
 import { supabase } from "../lib/supabase";
+import { getAuthenticatedHeaders } from "../lib/authHeaders";
 import { encryptMessage, decryptMessage } from "../lib/encryption";
 import { hashPassword, matchesStoredPassword } from "../lib/security";
 import {
@@ -434,10 +435,6 @@ const getProfileSelectColumns = () => {
   if (profileColumnSupport.companion_selected_state_id) {
     baseColumns.push("companion_selected_state_id");
   }
-  if (profileColumnSupport.password_hash) {
-    baseColumns.push("password_hash");
-  }
-
   return baseColumns.join(",");
 };
 
@@ -805,7 +802,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const res = await fetch(path, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify(payload)
       });
 
@@ -820,7 +817,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const fetchLocalCollection = async <T,>(path: string, payloadKey: string): Promise<T[]> => {
     try {
-      const res = await fetch(path);
+      const res = await fetch(path, { headers: await getAuthenticatedHeaders(false) });
       const json = await res.json();
       const payload = json?.[payloadKey];
       return Array.isArray(payload) ? (payload as T[]) : [];
@@ -887,9 +884,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         console.warn("Password credential sync failed:", payload.error || response.statusText);
+        return false;
       }
+      return true;
     } catch (error) {
       console.warn("Password credential sync request failed:", error);
+      return false;
     }
   };
 
@@ -1032,7 +1032,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         avatar_id: "panda",
         is_profile_complete: false,
         hide_details: false,
-        is_admin: isPrimaryAdmin || normalizedEmail.startsWith("admin"),
+        is_admin: isPrimaryAdmin,
         is_blocked_globally: false,
         flag_status: "none",
         appeal_count: 0
@@ -1313,18 +1313,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           console.error("Auto hash verification attempt skipped:", uhError);
         }
 
-        console.log("Loading primary tables from Supabase...");
+        console.log("Loading primary tables from the application server...");
         
         // --- 1. Profiles ---
-        let { data: dbProfiles, error: errProfiles } = await supabase.from("xmum_profiles").select(getProfileSelectColumns());
-        if (
-          errProfiles &&
-          isMissingOptionalProfileColumnError(errProfiles)
-        ) {
-          markUnsupportedProfileColumns(errProfiles);
-          ({ data: dbProfiles, error: errProfiles } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()));
-        }
-        if (errProfiles) throw errProfiles;
+        let dbProfiles = await fetchLocalCollection<Profile>("/api/profiles", "profiles");
         
         if ((!dbProfiles || dbProfiles.length === 0) && demoDataEnabled) {
           const seedProfiles: Profile[] = [
@@ -1482,25 +1474,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           dbNotifsRaw
         ] = await Promise.all([
           fetchLocalCollection<Hangout>("/api/hangouts", "hangouts"),
-          fetchHangoutsCollection(),
+          Promise.resolve([] as Hangout[]),
           fetchLocalCollection<HangoutApplication>("/api/applications", "applications"),
-          fetchSupabaseCollection<HangoutApplication>("xmum_applications"),
+          Promise.resolve([] as HangoutApplication[]),
           fetchLocalCollection<Chat>("/api/chats", "chats"),
-          fetchSupabaseCollection<Chat>("xmum_chats"),
+          Promise.resolve([] as Chat[]),
           fetchLocalCollection<Message>("/api/messages", "messages"),
-          fetchSupabaseCollection<Message>("xmum_messages"),
+          Promise.resolve([] as Message[]),
           fetchLocalCollection<HangoutLike>("/api/likes", "likes"),
-          fetchSupabaseCollection<HangoutLike>("xmum_likes"),
+          Promise.resolve([] as HangoutLike[]),
           fetchLocalCollection<HangoutComment>("/api/comments", "comments"),
-          fetchSupabaseCollection<HangoutComment>("xmum_comments"),
+          Promise.resolve([] as HangoutComment[]),
           fetchLocalCollection<Report>("/api/reports", "reports"),
-          fetchSupabaseCollection<Report>("xmum_reports"),
+          Promise.resolve([] as Report[]),
           fetchLocalCollection<ReportAppeal>("/api/appeals", "appeals"),
-          fetchSupabaseCollection<ReportAppeal>("xmum_appeals"),
+          Promise.resolve([] as ReportAppeal[]),
           fetchLocalCollection<Block>("/api/blocks", "blocks"),
-          fetchSupabaseCollection<Block>("xmum_blocks"),
+          Promise.resolve([] as Block[]),
           fetchLocalCollection<AppNotification>("/api/notifications", "notifications"),
-          fetchSupabaseCollection<AppNotification>("xmum_notifications")
+          Promise.resolve([] as AppNotification[])
         ]);
 
         const browserLocalHangouts = getStoredHangoutsSnapshot();
@@ -1926,7 +1918,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch("/api/profiles/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({ profiles: canonicalRows, profile_remote_fields: remoteFields })
       });
     } catch (syncErr) {
@@ -2013,7 +2005,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         const response = await fetch("/api/hangouts/sync", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await getAuthenticatedHeaders(),
           body: JSON.stringify({ hangouts: items })
         });
         if (!response.ok) {
@@ -2034,7 +2026,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const response = await fetch("/api/hangouts/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({ hangouts: normalizedData })
       });
       if (!response.ok) {
@@ -2061,7 +2053,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch("/api/applications/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({ applications: normalizedData })
       });
     } catch (syncErr) {
@@ -2088,7 +2080,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch("/api/likes/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({ likes: data })
       });
     } catch (syncErr) {
@@ -2115,7 +2107,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch("/api/comments/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({ comments: data })
       });
     } catch (syncErr) {
@@ -2151,7 +2143,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch("/api/reports/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({ reports: data })
       });
     } catch (syncErr) {
@@ -2178,7 +2170,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch("/api/appeals/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({ appeals: data })
       });
     } catch (syncErr) {
@@ -2205,7 +2197,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch("/api/chats/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({ chats: data })
       });
     } catch (syncErr) {
@@ -2235,7 +2227,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch("/api/messages/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({ messages: encryptedAll })
       });
     } catch (syncErr) {
@@ -2268,7 +2260,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch("/api/blocks/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({
           blocks: sanitizedData,
           removed_block_ids: removedBlockIds
@@ -2302,6 +2294,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       new Map(data.map(notification => [notification.id, notification])).values()
     ).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     const prev = notificationsRef.current;
+    const newNotificationIds = uniqueData
+      .filter(item => !item.is_read && !prev.some(previous => previous.id === item.id))
+      .map(item => item.id);
     notificationsRef.current = uniqueData;
     setNotifications(uniqueData);
     localStorage.setItem("xmum_notifications", JSON.stringify(uniqueData));
@@ -2309,7 +2304,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch("/api/notifications/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({ notifications: uniqueData })
       });
     } catch (syncErr) {
@@ -2326,6 +2321,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } catch (e) {
       console.error("Notifications sync exception:", e);
+    }
+
+    if (newNotificationIds.length > 0) {
+      try {
+        const response = await fetch("/api/push/dispatch", {
+          method: "POST",
+          headers: await getAuthenticatedHeaders(),
+          body: JSON.stringify({ notification_ids: newNotificationIds })
+        });
+        if (!response.ok && response.status !== 503) {
+          console.warn("Push notification dispatch was not accepted by the server.");
+        }
+      } catch (error) {
+        console.warn("Push notification dispatch is temporarily unavailable:", error);
+      }
     }
   };
 
@@ -2677,7 +2687,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           avatar_id: "panda",
           is_profile_complete: false,
           hide_details: false,
-          is_admin: isPrimaryAdmin || formattedEmail.startsWith("admin"),
+          is_admin: isPrimaryAdmin,
           is_blocked_globally: false,
           flag_status: "none",
           appeal_count: 0
@@ -2838,6 +2848,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const signOutSimulated = async () => {
+    try {
+      if (window.isSecureContext && "serviceWorker" in navigator) {
+        const registration = await navigator.serviceWorker.ready;
+        if (!registration.pushManager) throw new Error("Push Manager is unavailable.");
+        const subscription = await registration.pushManager.getSubscription();
+        if (subscription) {
+          await fetch("/api/push/unsubscribe", {
+            method: "POST",
+            headers: await getAuthenticatedHeaders(),
+            body: JSON.stringify({ endpoint: subscription.endpoint })
+          });
+          await subscription.unsubscribe();
+        }
+      }
+    } catch (error) {
+      console.warn("This device's push subscription could not be cleared during sign-out:", error);
+    }
     try {
       await supabase.auth.signOut();
     } catch (e) {
@@ -3036,8 +3063,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (typeof update.password === "string") {
       const trimmedPassword = update.password.trim();
       if (trimmedPassword.length > 0) {
-        update.password_hash = hashPassword(currentUser.email, trimmedPassword);
         void syncPasswordCredential(trimmedPassword);
+        update.password_hash = "configured";
       }
       delete update.password;
     }
@@ -3870,9 +3897,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     saveMessages([...messages, newMsg]);
-
-    // Send silent unread notif updates
-    // In low-fidelity/high-fidelity client side we just trigger updates
+    const chatNotification: AppNotification = {
+      id: "notif_chat_" + Math.random().toString(36).substring(2, 11),
+      user_id: otherUserId,
+      type: "chat_message",
+      payload: {
+        chat_id: chatId,
+        actor_user_id: currentUser.id,
+        actor_name: currentUser.name,
+        custom_text: `${currentUser.name} sent you a new chat message.`
+      },
+      is_read: false,
+      created_at: new Date().toISOString()
+    };
+    saveNotifications([chatNotification, ...notifications]);
   };
 
   const markChatAsRead = (chatId: string) => {
@@ -4041,7 +4079,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const res = await fetch("/api/bug-report", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthenticatedHeaders(),
         body: JSON.stringify({
           reporter: {
             id: currentUser.id,

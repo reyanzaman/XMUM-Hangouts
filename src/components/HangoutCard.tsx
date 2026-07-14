@@ -194,7 +194,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
 
   const myLikes = likes.filter(l => l.hangout_id === hangout.id);
   const likerProfiles = Array.from(
-    new Map(
+    new Map<string, Profile>(
       myLikes
         .map(like => {
           const profile = profiles.find(item => item.id === like.user_id);

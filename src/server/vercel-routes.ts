@@ -2,7 +2,7 @@ import { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 import { collapseProfilesByEmail, normalizeProfileEmail, pickCanonicalProfile } from "../lib/profiles.js";
-import { hashPassword, matchesStoredPassword } from "../lib/security.js";
+import { hashPassword, isModernPasswordHash, matchesStoredPassword } from "../lib/security.js";
 import type {
   AppNotification,
   Block,
@@ -15,6 +15,14 @@ import type {
   ReportAppeal
 } from "../types.js";
 import { deleteOtpRecord, getOtpRecord, OtpStorageConfigurationError, saveOtpRecord } from "./otp-store.js";
+import {
+  dispatchPushNotifications,
+  getVapidPublicKey,
+  isPushConfigured,
+  processScheduledReminders,
+  removePushSubscription,
+  savePushSubscription
+} from "./push-service.js";
 
 const ADMIN_ACCOUNT_EMAIL = normalizeProfileEmail(process.env.ADMIN_ACCOUNT_EMAIL || "");
 const SYSTEM_DELETED_USER_ID = "deleted_user";
@@ -32,6 +40,14 @@ const supabaseAdmin = supabaseServiceRoleKey
 
 const isProduction = process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
 const backendProfileClient = supabaseAdmin || supabase;
+
+const sanitizeProfileForClient = <T extends Record<string, any>>(profile: T) => {
+  const { password, ...safeProfile } = profile;
+  return {
+    ...safeProfile,
+    password_hash: profile.password_hash ? "configured" : null
+  };
+};
 
 function escapeSupabaseLikePattern(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
@@ -419,7 +435,7 @@ function resolveAppUrl(req: VercelRequest) {
   return getConfiguredAppOrigin() || getRequestOrigin(req);
 }
 
-function setCors(req: VercelRequest, res: VercelResponse, methods = "GET,OPTIONS,PATCH,DELETE,POST,PUT", headers = "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version") {
+function setCors(req: VercelRequest, res: VercelResponse, methods = "GET,OPTIONS,PATCH,DELETE,POST,PUT", headers = "Authorization, X-Local-Auth, X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version") {
   const requestOrigin = getRequestOrigin(req);
   const configuredOrigin = getConfiguredAppOrigin();
   const originHeader = typeof req.headers.origin === "string" ? req.headers.origin : "";
@@ -431,6 +447,22 @@ function setCors(req: VercelRequest, res: VercelResponse, methods = "GET,OPTIONS
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", methods);
   res.setHeader("Access-Control-Allow-Headers", headers);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+}
+
+const passwordLoginAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function consumePasswordLoginAttempt(req: VercelRequest, email: string) {
+  const forwarded = typeof req.headers["x-forwarded-for"] === "string" ? req.headers["x-forwarded-for"].split(",")[0].trim() : "unknown";
+  const key = `${forwarded}:${email}`;
+  const now = Date.now();
+  const current = passwordLoginAttempts.get(key);
+  const next = !current || current.resetAt <= now ? { count: 1, resetAt: now + 15 * 60_000 } : { ...current, count: current.count + 1 };
+  passwordLoginAttempts.set(key, next);
+  return { allowed: next.count <= 8, key, retryAfterSeconds: Math.max(1, Math.ceil((next.resetAt - now) / 1000)) };
 }
 
 function getSingleQueryParam(value: string | string[] | undefined): string {
@@ -532,7 +564,7 @@ function generateLocalAuthToken(profile: { id: string; email: string }) {
   const payload = {
     profileId: profile.id,
     email: normalizeProfileEmail(profile.email),
-    exp: Date.now() + 1000 * 60 * 15
+    exp: Date.now() + 1000 * 60 * 60 * 24 * 7
   };
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = crypto.createHmac("sha256", getLocalAuthSecret()).update(encodedPayload).digest("base64url");
@@ -636,7 +668,12 @@ function verifyLocalAuthToken(token: string | undefined | null) {
 
   const [encodedPayload, providedSignature] = token.split(".");
   const expectedSignature = crypto.createHmac("sha256", getLocalAuthSecret()).update(encodedPayload).digest("base64url");
-  if (providedSignature !== expectedSignature) {
+  const providedSignatureBuffer = Buffer.from(providedSignature || "", "utf8");
+  const expectedSignatureBuffer = Buffer.from(expectedSignature, "utf8");
+  if (
+    providedSignatureBuffer.length !== expectedSignatureBuffer.length ||
+    !crypto.timingSafeEqual(providedSignatureBuffer, expectedSignatureBuffer)
+  ) {
     return null;
   }
 
@@ -653,6 +690,24 @@ function verifyLocalAuthToken(token: string | undefined | null) {
   } catch {
     return null;
   }
+}
+
+async function resolveRequestIdentity(req: VercelRequest) {
+  const authHeader = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
+  const accessToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  if (accessToken) {
+    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+    if (!error && user?.id && user.email) {
+      const email = normalizeProfileEmail(user.email);
+      const profile = await resolveBestProfileByEmail(email);
+      return { userId: profile?.id || user.id, email };
+    }
+  }
+
+  const localAuth = verifyLocalAuthToken(
+    typeof req.headers["x-local-auth"] === "string" ? req.headers["x-local-auth"] : undefined
+  );
+  return localAuth ? { userId: localAuth.profileId, email: localAuth.email } : null;
 }
 
 async function resolveBestProfileByEmail(email: string): Promise<Profile | null> {
@@ -853,11 +908,152 @@ async function deleteRowsByIds(table: string, ids: string[]) {
   }
 }
 
+async function filterAuthorizedSyncRows(
+  table: string,
+  rows: any[],
+  identity: { userId: string; email: string }
+) {
+  const profile = await resolveBestProfileByEmail(identity.email);
+  const isAdmin = Boolean(profile?.is_admin && isConfiguredAdminEmail(profile.email));
+  if (isAdmin) return rows;
+
+  if (table === "xmum_profiles") {
+    return rows.filter(row => row?.id === identity.userId || normalizeProfileEmail(row?.email || "") === identity.email).map(row => ({
+      ...row,
+      id: profile?.id || identity.userId,
+      email: identity.email,
+      is_admin: false,
+      is_blocked_globally: Boolean(profile?.is_blocked_globally),
+      flag_status: profile?.flag_status || "none",
+      appeal_count: Number(profile?.appeal_count || 0),
+      password_hash: profile?.password_hash || null
+    }));
+  }
+  if (table === "xmum_hangouts") return rows.filter(row => row?.creator_id === identity.userId);
+  if (table === "xmum_likes") return rows.filter(row => row?.user_id === identity.userId);
+  if (table === "xmum_comments") return rows.filter(row => row?.user_id === identity.userId);
+  if (table === "xmum_blocks") return rows.filter(row => row?.blocker_id === identity.userId);
+  if (table === "xmum_chats") return rows.filter(row => row?.user_a_id === identity.userId || row?.user_b_id === identity.userId);
+  if (table === "xmum_messages") {
+    const chatIds = Array.from(new Set(rows.map(row => row?.chat_id).filter(Boolean)));
+    const { data } = chatIds.length
+      ? await backendProfileClient.from("xmum_chats").select("id,user_a_id,user_b_id").in("id", chatIds)
+      : { data: [] as any[] };
+    const participantChatIds = new Set((data || []).filter((chat: any) => chat.user_a_id === identity.userId || chat.user_b_id === identity.userId).map((chat: any) => chat.id));
+    return rows.filter(row => row?.sender_id === identity.userId && participantChatIds.has(row?.chat_id));
+  }
+  if (table === "xmum_reports") {
+    const ownedRows = rows.filter(row => row?.reporter_id === identity.userId);
+    const ids = ownedRows.map(row => row?.id).filter(Boolean);
+    const { data } = ids.length
+      ? await backendProfileClient.from("xmum_reports").select("*").in("id", ids)
+      : { data: [] as any[] };
+    const existing = new Map((data || []).map((row: any) => [row.id, row]));
+    return ownedRows.map(row => existing.get(row.id) || ({ ...row, reporter_id: identity.userId, status: "pending", reviewed_at: null }));
+  }
+  if (table === "xmum_notifications") {
+    const actorGeneratedTypes = new Set(["hangout_like", "comment_reply", "new_application", "chat_message"]);
+    return rows.filter(row => row?.user_id === identity.userId || (
+      row?.payload?.actor_user_id === identity.userId && actorGeneratedTypes.has(row?.type)
+    ));
+  }
+  if (table === "xmum_applications") {
+    const hangoutIds = Array.from(new Set(rows.map(row => row?.hangout_id).filter(Boolean)));
+    const { data } = hangoutIds.length
+      ? await backendProfileClient.from("xmum_hangouts").select("id,creator_id").in("id", hangoutIds)
+      : { data: [] as any[] };
+    const hostedIds = new Set((data || []).filter((hangout: any) => hangout.creator_id === identity.userId).map((hangout: any) => hangout.id));
+    return rows.filter(row => {
+      if (hostedIds.has(row?.hangout_id)) return true;
+      return row?.applicant_id === identity.userId && (row?.status === "pending" || row?.status === "retracted");
+    });
+  }
+  if (table === "xmum_appeals") {
+    const reportIds = Array.from(new Set(rows.map(row => row?.report_id).filter(Boolean)));
+    const { data } = reportIds.length
+      ? await backendProfileClient.from("xmum_reports").select("id,reported_user_id").in("id", reportIds)
+      : { data: [] as any[] };
+    const ownedReportIds = new Set((data || []).filter((report: any) => report.reported_user_id === identity.userId).map((report: any) => report.id));
+    const ownedRows = rows.filter(row => ownedReportIds.has(row?.report_id));
+    const ids = ownedRows.map(row => row?.id).filter(Boolean);
+    const { data: existingRows } = ids.length
+      ? await backendProfileClient.from("xmum_appeals").select("*").in("id", ids)
+      : { data: [] as any[] };
+    const existing = new Map((existingRows || []).map((row: any) => [row.id, row]));
+    return ownedRows.map(row => existing.get(row.id) || ({ ...row, status: "pending", reviewed_at: null }));
+  }
+  return [];
+}
+
+async function filterReadableRows(table: string, rows: any[], identity: { userId: string; email: string } | null) {
+  const profile = identity ? await resolveBestProfileByEmail(identity.email) : null;
+  const isAdmin = Boolean(profile?.is_admin && isConfiguredAdminEmail(profile.email));
+  const userId = identity?.userId || "";
+
+  if (table === "xmum_profiles") {
+    return rows.map(row => {
+      const { password, password_hash, ...safeRow } = row || {};
+      if (isAdmin || row?.id === userId || !row?.hide_details) return safeRow;
+      return {
+        ...safeRow,
+        country: "Hidden",
+        languages: [],
+        age: 0,
+        birthdate: null,
+        program: "Hidden",
+        year_of_study: "Hidden",
+        gender: "Hidden",
+        student_type: "Not Specified"
+      };
+    });
+  }
+  if (table === "xmum_hangouts") {
+    let acceptedHangoutIds = new Set<string>();
+    if (userId) {
+      const { data } = await backendProfileClient.from("xmum_applications").select("hangout_id").eq("applicant_id", userId).eq("status", "accepted");
+      acceptedHangoutIds = new Set((data || []).map((item: any) => item.hangout_id));
+    }
+    return rows.map(row => isAdmin || row?.creator_id === userId || acceptedHangoutIds.has(row?.id)
+      ? row
+      : { ...row, meeting_point: "Apply and get accepted to unlock" });
+  }
+  if (table === "xmum_comments" || table === "xmum_likes") return rows;
+  if (!identity) return [];
+  if (isAdmin) return rows;
+  if (table === "xmum_blocks") return rows.filter(row => row?.blocker_id === userId || row?.blocked_id === userId);
+  if (table === "xmum_chats") return rows.filter(row => row?.user_a_id === userId || row?.user_b_id === userId);
+  if (table === "xmum_messages") {
+    const { data } = await backendProfileClient.from("xmum_chats").select("id,user_a_id,user_b_id");
+    const chatIds = new Set((data || []).filter((chat: any) => chat.user_a_id === userId || chat.user_b_id === userId).map((chat: any) => chat.id));
+    return rows.filter(row => chatIds.has(row?.chat_id));
+  }
+  if (table === "xmum_applications") {
+    const hangoutIds = Array.from(new Set(rows.map(row => row?.hangout_id).filter(Boolean)));
+    const { data } = hangoutIds.length
+      ? await backendProfileClient.from("xmum_hangouts").select("id,creator_id").in("id", hangoutIds)
+      : { data: [] as any[] };
+    const hostedIds = new Set((data || []).filter((hangout: any) => hangout.creator_id === userId).map((hangout: any) => hangout.id));
+    return rows.filter(row => row?.applicant_id === userId || hostedIds.has(row?.hangout_id));
+  }
+  if (table === "xmum_reports") return rows.filter(row => row?.reporter_id === userId || row?.reported_user_id === userId);
+  if (table === "xmum_appeals") {
+    const { data } = await backendProfileClient.from("xmum_reports").select("id").eq("reported_user_id", userId);
+    const reportIds = new Set((data || []).map((report: any) => report.id));
+    return rows.filter(row => reportIds.has(row?.report_id));
+  }
+  if (table === "xmum_notifications") return rows.filter(row => row?.user_id === userId);
+  return [];
+}
+
 async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config: SyncConfig) {
   const { payloadKey, table, transformRows, removedIdsKey } = config;
 
   if (req.method === "GET") {
-    return res.status(200).json({ [payloadKey]: [] });
+    if (!supabaseAdmin) return res.status(503).json({ error: "Server data connection is unavailable." });
+    const { data, error } = await supabaseAdmin.from(table).select("*");
+    if (error) return res.status(500).json({ error: `Failed to load ${payloadKey}.` });
+    const readableRows = await filterReadableRows(table, data || [], await resolveRequestIdentity(req));
+    return res.status(200).json({ [payloadKey]: readableRows });
   }
 
   if (req.method !== "POST") {
@@ -865,9 +1061,16 @@ async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config
   }
 
   try {
+    const identity = await resolveRequestIdentity(req);
+    if (!identity) {
+      return res.status(401).json({ error: "Please sign in again before syncing data." });
+    }
     const data = req.body?.[payloadKey];
     if (!Array.isArray(data)) {
       return res.status(400).json({ error: "Invalid payload: must be array." });
+    }
+    if (data.length > 2000) {
+      return res.status(413).json({ error: "Sync payload is too large." });
     }
 
     if (!supabaseAdmin) {
@@ -876,13 +1079,29 @@ async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config
       });
     }
 
-    const rawRows = transformRows ? await transformRows(data) : data;
-    const removedIds = Array.isArray(req.body?.[removedIdsKey || ""])
+    const identityProfile = await resolveBestProfileByEmail(identity.email);
+    const isAdmin = Boolean(identityProfile?.is_admin && isConfiguredAdminEmail(identityProfile.email));
+    const authorizedData = await filterAuthorizedSyncRows(table, data, identity);
+    const rawRows = transformRows ? await transformRows(authorizedData) : authorizedData;
+    let removedIds = Array.isArray(req.body?.[removedIdsKey || ""])
       ? req.body[removedIdsKey || ""].filter((id: unknown) => typeof id === "string" && id.trim().length > 0)
       : [];
+    if (!isAdmin && removedIds.length > 0) {
+      if (table === "xmum_blocks") {
+        const { data: removableRows } = await backendProfileClient.from(table).select("id,blocker_id").in("id", removedIds);
+        const allowedIds = new Set((removableRows || []).filter((row: any) => row.blocker_id === identity.userId).map((row: any) => row.id));
+        removedIds = removedIds.filter((id: string) => allowedIds.has(id));
+      } else {
+        removedIds = [];
+      }
+    }
     const profileRemoteFields =
       table === "xmum_profiles" && Array.isArray(req.body?.profile_remote_fields)
-        ? req.body.profile_remote_fields.filter((field: unknown) => typeof field === "string" && field.trim().length > 0)
+        ? req.body.profile_remote_fields.filter((field: unknown) => typeof field === "string" && [
+            "name", "name_last_changed_at", "country", "country_last_changed_at", "languages", "age", "birthdate",
+            "program", "year_of_study", "gender", "gender_last_changed_at", "student_type", "about_me", "avatar_id",
+            "is_profile_complete", "hide_details", "companion_pet_count", "companion_selected_state_id"
+          ].includes(field.trim()))
         : [];
     const rows = table === "xmum_profiles" ? await prepareProfileRowsForSupabase(rawRows as Profile[], supabaseAdmin, profileRemoteFields) : rawRows;
     if (rows.length > 0) {
@@ -1237,7 +1456,7 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
       avatar_id: "panda",
       is_profile_complete: false,
       hide_details: false,
-      is_admin: isConfiguredAdminEmail(formattedEmail) || formattedEmail.startsWith("admin"),
+      is_admin: isConfiguredAdminEmail(formattedEmail),
       is_blocked_globally: false,
       flag_status: "none",
       appeal_count: 0
@@ -1254,7 +1473,7 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
       success: true,
       message: "Identity verified! (Validated fallback session)",
       is_fallback: true,
-      profile,
+      profile: sanitizeProfileForClient(profile),
       local_auth_token: generateLocalAuthToken(profile),
       session: {
         access_token: "resilient_fallback_session_token",
@@ -1272,7 +1491,7 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
     success: true,
     message: "Identity verified! Authorizing app session.",
     is_fallback: false,
-    profile,
+    profile: sanitizeProfileForClient(profile),
     local_auth_token: generateLocalAuthToken(profile),
     session: {
       access_token: authResponse.data.session.access_token,
@@ -1290,6 +1509,11 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
   }
 
   const formattedEmail = normalizeProfileEmail(email);
+  const attempt = consumePasswordLoginAttempt(req, formattedEmail);
+  if (!attempt.allowed) {
+    res.setHeader("Retry-After", String(attempt.retryAfterSeconds));
+    return res.status(429).json({ error: "Too many login attempts. Please wait a few minutes and try again." });
+  }
   let profile = await resolveBestProfileByEmail(formattedEmail);
 
   if (!profile) {
@@ -1323,7 +1547,7 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
       avatar_id: "panda",
       is_profile_complete: false,
       hide_details: false,
-      is_admin: isConfiguredAdminEmail(formattedEmail) || formattedEmail.startsWith("admin"),
+      is_admin: isConfiguredAdminEmail(formattedEmail),
       is_blocked_globally: false,
       flag_status: "none",
       appeal_count: 0,
@@ -1355,7 +1579,7 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
     await mirrorProfileToAuthUser(profile, password);
   }
 
-  if (appPasswordMatches && !profile.password_hash) {
+  if (appPasswordMatches && !isModernPasswordHash(profile.password_hash)) {
     profile.password_hash = hashPassword(formattedEmail, password);
     delete (profile as any).password;
     await upsertProfileWithFallback(profile, ["password_hash"]);
@@ -1376,11 +1600,12 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
   }
 
   if (authResponse.error || !authResponse.data?.session) {
+    passwordLoginAttempts.delete(attempt.key);
     return res.status(200).json({
       success: true,
       message: "Logged in successfully (Resilient fallback profile session)!",
       is_fallback: true,
-      profile,
+      profile: sanitizeProfileForClient(profile),
       local_auth_token: generateLocalAuthToken(profile),
       session: {
         access_token: "resilient_fallback_session_token",
@@ -1394,11 +1619,12 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
     });
   }
 
+  passwordLoginAttempts.delete(attempt.key);
   return res.status(200).json({
     success: true,
     message: "Logged in successfully!",
     is_fallback: false,
-    profile,
+    profile: sanitizeProfileForClient(profile),
     local_auth_token: generateLocalAuthToken(profile),
     session: {
       access_token: authResponse.data.session.access_token,
@@ -1419,8 +1645,8 @@ async function handleSetPassword(req: VercelRequest, res: VercelResponse) {
   }
 
   const password = String(req.body?.password || "").trim();
-  if (password.length < 6) {
-    return res.status(400).json({ error: "Password must be at least 6 characters." });
+  if (password.length < 8) {
+    return res.status(400).json({ error: "Password must be at least 8 characters." });
   }
 
   const authHeader = req.headers.authorization || "";
@@ -1785,6 +2011,84 @@ export async function handleAuthRoute(req: VercelRequest, res: VercelResponse, a
       });
     }
     return res.status(500).json({ error: "Internal security gateway execution error." });
+  }
+}
+
+export async function handlePushRoute(req: VercelRequest, res: VercelResponse, action: string) {
+  setCors(req, res, "GET,OPTIONS,POST", "Content-Type, Authorization, X-Local-Auth");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  if (action === "public-key") {
+    if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+    const publicKey = getVapidPublicKey();
+    return publicKey
+      ? res.status(200).json({ publicKey })
+      : res.status(503).json({ error: "Push notifications are not configured yet." });
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: "Push notifications require the server database connection." });
+  }
+
+  if (action === "process-reminders") {
+    const authHeader = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
+    const cronSecret = (process.env.CRON_SECRET || "").trim();
+    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ error: "Invalid reminder scheduler credentials." });
+    }
+    try {
+      const result = await processScheduledReminders(supabaseAdmin);
+      return res.status(200).json({ success: true, ...result });
+    } catch (error) {
+      console.error("Scheduled reminder processing failed:", error);
+      return res.status(500).json({ error: "Scheduled reminders could not be processed." });
+    }
+  }
+
+  const identity = await resolveRequestIdentity(req);
+  if (!identity) {
+    return res.status(401).json({ error: "Please sign in again to manage notifications." });
+  }
+
+  try {
+    if (action === "subscribe") {
+      if (!isPushConfigured()) return res.status(503).json({ error: "Push notifications are not configured yet." });
+      await savePushSubscription(supabaseAdmin, identity, req.body?.subscription, req.headers["user-agent"] || "");
+      return res.status(200).json({ success: true });
+    }
+    if (action === "unsubscribe") {
+      const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint : "";
+      if (!endpoint) return res.status(400).json({ error: "A subscription endpoint is required." });
+      await removePushSubscription(supabaseAdmin, identity, endpoint);
+      return res.status(200).json({ success: true });
+    }
+    if (action === "dispatch") {
+      if (!isPushConfigured()) return res.status(503).json({ error: "Push notifications are not configured yet." });
+      const requestedIds = Array.isArray(req.body?.notification_ids)
+        ? req.body.notification_ids.filter((id: unknown) => typeof id === "string")
+        : [];
+      const profile = await resolveBestProfileByEmail(identity.email);
+      const isAdmin = Boolean(profile?.is_admin && isConfiguredAdminEmail(profile.email));
+      const { data: requestedNotifications, error } = requestedIds.length
+        ? await supabaseAdmin.from("xmum_notifications").select("id,user_id,payload").in("id", requestedIds.slice(0, 50))
+        : { data: [], error: null };
+      if (error) throw error;
+      const notificationIds = (requestedNotifications || [])
+        .filter((notification: any) => isAdmin || notification.user_id === identity.userId || notification.payload?.actor_user_id === identity.userId)
+        .map((notification: any) => notification.id);
+      const result = await dispatchPushNotifications(supabaseAdmin, notificationIds);
+      return res.status(200).json({ success: true, ...result });
+    }
+    return res.status(404).json({ error: "Route not found" });
+  } catch (error) {
+    console.error(`Push route ${action} failed:`, error);
+    return res.status(500).json({ error: "We couldn't complete the notification request." });
   }
 }
 

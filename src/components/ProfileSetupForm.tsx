@@ -88,11 +88,11 @@ export const ProfileSetupForm: React.FC = () => {
       return;
     }
     if (!hasExistingPassword && !password.trim()) {
-      setErrorText("For security, you must set an account password (minimum 6 characters) to login in future.");
+      setErrorText("For security, you must set an account password (minimum 8 characters) to login in future.");
       return;
     }
-    if (password.trim() && password.length < 6) {
-      setErrorText("For security, your password must be at least 6 characters.");
+    if (password.trim() && password.length < 8) {
+      setErrorText("For security, your password must be at least 8 characters.");
       return;
     }
     if (password.trim() && password.trim() !== passwordConfirm.trim()) {

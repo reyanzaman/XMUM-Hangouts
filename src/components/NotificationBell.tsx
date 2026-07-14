@@ -141,14 +141,14 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ onOpenNotifi
       <button
         id="notification-bell-btn"
         onClick={handleToggle}
-        className="relative rounded-2xl border border-transparent bg-white/70 p-2 text-gray-600 shadow-sm transition-all duration-200 hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600 hover:shadow focus:outline-none"
+        className="relative rounded-xl sm:rounded-2xl border border-transparent bg-white/70 p-1.5 sm:p-2 text-gray-600 shadow-sm transition-all duration-200 hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600 hover:shadow focus:outline-none"
         title="Notifications"
       >
-        <Bell className="w-6 h-6" />
+        <Bell className="w-5 h-5 sm:w-6 sm:h-6" />
         {unreadCount > 0 && (
           <span
             id="notif-count-badge"
-            className="absolute -right-1 -top-1 flex min-w-5 items-center justify-center gap-0.5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white ring-2 ring-white shadow-[0_10px_22px_rgba(244,63,94,0.35)]"
+            className="absolute -right-1 -top-1 flex min-w-4 sm:min-w-5 items-center justify-center gap-0.5 rounded-full bg-rose-500 px-1 sm:px-1.5 py-0.5 text-[8px] sm:text-[10px] font-bold text-white ring-2 ring-white shadow-[0_10px_22px_rgba(244,63,94,0.35)]"
           >
             {unreadCount < 10 && <Dot className="-ml-1 h-3 w-3" />}
             {unreadCount}
@@ -164,7 +164,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ onOpenNotifi
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: -10 }}
             transition={{ duration: 0.15, ease: "easeOut" }}
-            className="absolute right-[-54px] xs:right-[-20px] sm:right-0 z-50 mt-2 w-[calc(100vw-24px)] max-w-[360px] overflow-hidden rounded-[1.75rem] border border-rose-100/70 bg-white/95 shadow-[0_24px_70px_rgba(15,23,42,0.14)] ring-1 ring-black/5 backdrop-blur-sm sm:right-0 sm:w-[24rem] sm:max-w-none"
+            className="fixed left-3 right-3 top-14 z-50 w-auto max-w-none overflow-hidden rounded-[1.75rem] border border-rose-100/70 bg-white/95 shadow-[0_24px_70px_rgba(15,23,42,0.14)] ring-1 ring-black/5 backdrop-blur-sm sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[24rem]"
           >
             <div className="border-b border-rose-100/70 bg-[radial-gradient(circle_at_top_left,_rgba(251,113,133,0.14),_transparent_55%),linear-gradient(180deg,_rgba(255,255,255,1),_rgba(255,241,242,0.75))] px-4 py-3.5">
               <div className="flex items-start justify-between gap-3">

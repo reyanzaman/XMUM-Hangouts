@@ -2,6 +2,7 @@ import { VercelRequest, VercelResponse } from "@vercel/node";
 import {
   handleAccountRoute,
   handleAuthRoute,
+  handlePushRoute,
   handleResourceRootRoute,
   handleResourceSyncRoute
 } from "../src/server/vercel-routes.js";
@@ -19,6 +20,10 @@ export default async (req: VercelRequest, res: VercelResponse) => {
 
   if (group === "account") {
     return handleAccountRoute(req, res, action);
+  }
+
+  if (group === "push") {
+    return handlePushRoute(req, res, action);
   }
 
   if (group === "sync") {

@@ -5,8 +5,16 @@ import dotenv from "dotenv";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
-import { hashPassword, matchesStoredPassword } from "./src/lib/security";
+import { hashPassword, isModernPasswordHash, matchesStoredPassword } from "./src/lib/security";
 import { collapseProfilesByEmail, normalizeProfileEmail, pickCanonicalProfile } from "./src/lib/profiles";
+import {
+  dispatchPushNotifications,
+  getVapidPublicKey,
+  isPushConfigured,
+  processScheduledReminders,
+  removePushSubscription,
+  savePushSubscription
+} from "./src/server/push-service";
 
 // Load environment variables
 dotenv.config();
@@ -22,6 +30,14 @@ const supabaseAdmin = supabaseServiceRoleKey
     })
   : null;
 const backendProfileClient = supabaseAdmin || supabase;
+
+const sanitizeProfileForClient = <T extends Record<string, any>>(profile: T) => {
+  const { password, ...safeProfile } = profile;
+  return {
+    ...safeProfile,
+    password_hash: profile.password_hash ? "configured" : null
+  };
+};
 
 const PORT = 3000;
 const ADMIN_ACCOUNT_EMAIL = normalizeProfileEmail(process.env.ADMIN_ACCOUNT_EMAIL || "");
@@ -97,7 +113,7 @@ function setCors(
   req: express.Request,
   res: express.Response,
   methods = "GET,OPTIONS,PATCH,DELETE,POST,PUT",
-  headers = "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
+  headers = "Authorization, X-Local-Auth, X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
 ) {
   const requestOrigin = getRequestOrigin(req);
   const configuredOrigin = getConfiguredAppOrigin();
@@ -110,6 +126,21 @@ function setCors(
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", methods);
   res.setHeader("Access-Control-Allow-Headers", headers);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+}
+
+const passwordLoginAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function consumePasswordLoginAttempt(req: express.Request, email: string) {
+  const key = `${req.ip || "unknown"}:${email}`;
+  const now = Date.now();
+  const current = passwordLoginAttempts.get(key);
+  const next = !current || current.resetAt <= now ? { count: 1, resetAt: now + 15 * 60_000 } : { ...current, count: current.count + 1 };
+  passwordLoginAttempts.set(key, next);
+  return { allowed: next.count <= 8, key, retryAfterSeconds: Math.max(1, Math.ceil((next.resetAt - now) / 1000)) };
 }
 
 function readDataFile(fileName: string): any[] {
@@ -818,6 +849,24 @@ async function resolveBestProfileByEmail(email: string): Promise<any | null> {
   return mergeProfileWithAuthMetadata(profile, authUser);
 }
 
+async function resolveExpressRequestIdentity(req: express.Request) {
+  const authHeader = req.headers.authorization || "";
+  const accessToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  if (accessToken) {
+    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+    if (!error && user?.id && user.email) {
+      const email = normalizeProfileEmail(user.email);
+      const profile = await resolveBestProfileByEmail(email);
+      return { userId: profile?.id || user.id, email };
+    }
+  }
+
+  const localAuth = verifyLocalAuthToken(
+    typeof req.headers["x-local-auth"] === "string" ? req.headers["x-local-auth"] : undefined
+  );
+  return localAuth ? { userId: localAuth.profileId, email: localAuth.email } : null;
+}
+
 function upsertLocalProfiles(profilesToUpsert: any[]) {
   const current = getLocalProfiles();
   const updated = [...current];
@@ -847,7 +896,7 @@ function generateLocalAuthToken(profile: { id: string; email: string }) {
   const payload = {
     profileId: profile.id,
     email: normalizeProfileEmail(profile.email),
-    exp: Date.now() + 1000 * 60 * 15
+    exp: Date.now() + 1000 * 60 * 60 * 24 * 7
   };
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = crypto.createHmac("sha256", getLocalAuthSecret()).update(encodedPayload).digest("base64url");
@@ -859,7 +908,12 @@ function verifyLocalAuthToken(token: string | undefined | null) {
 
   const [encodedPayload, providedSignature] = token.split(".");
   const expectedSignature = crypto.createHmac("sha256", getLocalAuthSecret()).update(encodedPayload).digest("base64url");
-  if (providedSignature !== expectedSignature) {
+  const providedSignatureBuffer = Buffer.from(providedSignature || "", "utf8");
+  const expectedSignatureBuffer = Buffer.from(expectedSignature, "utf8");
+  if (
+    providedSignatureBuffer.length !== expectedSignatureBuffer.length ||
+    !crypto.timingSafeEqual(providedSignatureBuffer, expectedSignatureBuffer)
+  ) {
     return null;
   }
 
@@ -896,9 +950,23 @@ const otpRequestTracker = new Map<string, number[]>();
 async function startServer() {
   const app = express();
   const isProduction = process.env.NODE_ENV === "production";
+  app.set("trust proxy", 1);
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (isProduction) {
+      res.setHeader(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+      );
+    }
+    next();
+  });
 
   // Middleware to parse json requests
-  app.use(express.json());
+  app.use(express.json({ limit: "1mb" }));
 
   // --- API Routes ---
 
@@ -1118,6 +1186,11 @@ async function startServer() {
       }
 
       const formattedEmail = normalizeProfileEmail(email);
+      const attempt = consumePasswordLoginAttempt(req, formattedEmail);
+      if (!attempt.allowed) {
+        res.setHeader("Retry-After", String(attempt.retryAfterSeconds));
+        return res.status(429).json({ error: "Too many login attempts. Please wait a few minutes and try again." });
+      }
 
       // Retrieve existing profile
       let profile = await resolveBestProfileByEmail(formattedEmail);
@@ -1153,7 +1226,7 @@ async function startServer() {
           avatar_id: "panda",
           is_profile_complete: false,
           hide_details: false,
-          is_admin: isConfiguredAdminEmail(formattedEmail) || formattedEmail.startsWith("admin"),
+          is_admin: isConfiguredAdminEmail(formattedEmail),
           is_blocked_globally: false,
           flag_status: "none",
           appeal_count: 0,
@@ -1188,7 +1261,7 @@ async function startServer() {
         await mirrorProfileToAuthUser(profile, password);
       }
 
-      if (appPasswordMatches && !profile.password_hash) {
+      if (appPasswordMatches && !isModernPasswordHash(profile.password_hash)) {
         profile.password_hash = hashPassword(formattedEmail, password);
         delete profile.password;
 
@@ -1213,12 +1286,13 @@ async function startServer() {
       }
 
       if (authResponse.error || !authResponse.data?.session) {
+        passwordLoginAttempts.delete(attempt.key);
         // Fallback with profile payload
         return res.status(200).json({
           success: true,
           message: "Logged in successfully (Resilient fallback profile session)!",
           is_fallback: true,
-          profile,
+          profile: sanitizeProfileForClient(profile),
           local_auth_token: generateLocalAuthToken(profile),
           session: {
             access_token: "resilient_fallback_session_token",
@@ -1232,11 +1306,12 @@ async function startServer() {
         });
       }
 
+      passwordLoginAttempts.delete(attempt.key);
       return res.status(200).json({
         success: true,
         message: "Logged in successfully!",
         is_fallback: false,
-        profile,
+        profile: sanitizeProfileForClient(profile),
         local_auth_token: generateLocalAuthToken(profile),
         session: {
           access_token: authResponse.data.session.access_token,
@@ -1259,8 +1334,8 @@ async function startServer() {
       }
 
       const password = String(req.body?.password || "").trim();
-      if (password.length < 6) {
-        return res.status(400).json({ error: "Password must be at least 6 characters." });
+      if (password.length < 8) {
+        return res.status(400).json({ error: "Password must be at least 8 characters." });
       }
 
       const authHeader = req.headers.authorization || "";
@@ -1476,7 +1551,7 @@ async function startServer() {
             avatar_id: "panda",
             is_profile_complete: false,
             hide_details: false,
-            is_admin: isConfiguredAdminEmail(formattedEmail) || formattedEmail.startsWith("admin"),
+            is_admin: isConfiguredAdminEmail(formattedEmail),
             is_blocked_globally: false,
             flag_status: "none",
             appeal_count: 0
@@ -1500,7 +1575,7 @@ async function startServer() {
           success: true,
           message: "Identity verified! (Validated fallback session)",
           is_fallback: true,
-          profile: profileErrorFallback,
+          profile: sanitizeProfileForClient(profileErrorFallback),
           local_auth_token: generateLocalAuthToken(profileErrorFallback),
           session: {
             access_token: "resilient_fallback_session_token",
@@ -1535,7 +1610,7 @@ async function startServer() {
           avatar_id: "panda",
           is_profile_complete: false,
           hide_details: false,
-          is_admin: isConfiguredAdminEmail(formattedEmail) || formattedEmail.startsWith("admin"),
+          is_admin: isConfiguredAdminEmail(formattedEmail),
           is_blocked_globally: false,
           flag_status: "none",
           appeal_count: 0
@@ -1557,7 +1632,7 @@ async function startServer() {
         success: true,
         message: "Identity verified! Authorizing app session.",
         is_fallback: false,
-        profile,
+        profile: sanitizeProfileForClient(profile),
         local_auth_token: generateLocalAuthToken(profile),
         session: {
           access_token: sessionData.session.access_token,
@@ -1636,33 +1711,117 @@ async function startServer() {
   }) => {
     const { getPath, postPath, payloadKey, fileName, table, localProfileMode, transformRows, removedIdsKey } = options;
 
-    app.get(getPath, (req, res) => {
+    app.get(getPath, async (req, res) => {
       setCors(req, res);
-      const payload = localProfileMode ? getLocalProfiles() : getLocalData(fileName);
+      const identity = await resolveExpressRequestIdentity(req);
+      const profile = identity ? await resolveBestProfileByEmail(identity.email) : null;
+      const isAdmin = Boolean(profile?.is_admin && isConfiguredAdminEmail(profile.email));
+      const userId = identity?.userId || "";
+      let payload = localProfileMode ? getLocalProfiles() : getLocalData(fileName);
+
+      if (table === "xmum_profiles") {
+        payload = payload.map((row: any) => {
+          const { password, password_hash, ...safeRow } = row;
+          if (isAdmin || row.id === userId || !row.hide_details) return safeRow;
+          return { ...safeRow, country: "Hidden", languages: [], age: 0, birthdate: null, program: "Hidden", year_of_study: "Hidden", gender: "Hidden", student_type: "Not Specified" };
+        });
+      } else if (table === "xmum_hangouts") {
+        const acceptedIds = new Set(getLocalData(LOCAL_APPLICATIONS_FILE).filter((item: any) => item.applicant_id === userId && item.status === "accepted").map((item: any) => item.hangout_id));
+        payload = payload.map((row: any) => isAdmin || row.creator_id === userId || acceptedIds.has(row.id) ? row : { ...row, meeting_point: "Apply and get accepted to unlock" });
+      } else if (table === "xmum_applications") {
+        const hostedIds = new Set(getLocalData(LOCAL_HANGOUTS_FILE).filter((item: any) => item.creator_id === userId).map((item: any) => item.id));
+        payload = isAdmin ? payload : payload.filter((row: any) => row.applicant_id === userId || hostedIds.has(row.hangout_id));
+      } else if (table === "xmum_chats") {
+        payload = isAdmin ? payload : payload.filter((row: any) => row.user_a_id === userId || row.user_b_id === userId);
+      } else if (table === "xmum_messages") {
+        const chatIds = new Set(getLocalData(LOCAL_CHATS_FILE).filter((row: any) => row.user_a_id === userId || row.user_b_id === userId).map((row: any) => row.id));
+        payload = isAdmin ? payload : payload.filter((row: any) => chatIds.has(row.chat_id));
+      } else if (table === "xmum_blocks") {
+        payload = isAdmin ? payload : payload.filter((row: any) => row.blocker_id === userId || row.blocked_id === userId);
+      } else if (table === "xmum_reports") {
+        payload = isAdmin ? payload : payload.filter((row: any) => row.reporter_id === userId || row.reported_user_id === userId);
+      } else if (table === "xmum_appeals") {
+        const reportIds = new Set(getLocalData(LOCAL_REPORTS_FILE).filter((row: any) => row.reported_user_id === userId).map((row: any) => row.id));
+        payload = isAdmin ? payload : payload.filter((row: any) => reportIds.has(row.report_id));
+      } else if (table === "xmum_notifications") {
+        payload = isAdmin ? payload : payload.filter((row: any) => row.user_id === userId);
+      }
       return res.status(200).json({ [payloadKey]: payload });
     });
 
     app.post(postPath, async (req, res) => {
       setCors(req, res);
       try {
+        const identity = await resolveExpressRequestIdentity(req);
+        if (!identity) {
+          return res.status(401).json({ error: "Please sign in again before syncing data." });
+        }
         const data = req.body?.[payloadKey];
         if (!Array.isArray(data)) {
           return res.status(400).json({ error: "Invalid payload: must be array." });
         }
+        if (data.length > 2000) {
+          return res.status(413).json({ error: "Sync payload is too large." });
+        }
 
-        const transformedData = transformRows ? await transformRows(data) : data;
-        const removedIds = Array.isArray(req.body?.[removedIdsKey || ""])
+        const profile = await resolveBestProfileByEmail(identity.email);
+        const isAdmin = Boolean(profile?.is_admin && isConfiguredAdminEmail(profile.email));
+        let authorizedData = data;
+        if (!isAdmin) {
+          if (table === "xmum_profiles") authorizedData = data.filter((row: any) => row.id === identity.userId || normalizeProfileEmail(row.email || "") === identity.email).map((row: any) => ({ ...row, id: profile?.id || identity.userId, email: identity.email, is_admin: false, is_blocked_globally: Boolean(profile?.is_blocked_globally), flag_status: profile?.flag_status || "none", appeal_count: Number(profile?.appeal_count || 0), password_hash: profile?.password_hash || null }));
+          else if (table === "xmum_hangouts") authorizedData = data.filter((row: any) => row.creator_id === identity.userId);
+          else if (table === "xmum_likes") authorizedData = data.filter((row: any) => row.user_id === identity.userId);
+          else if (table === "xmum_comments") authorizedData = data.filter((row: any) => row.user_id === identity.userId);
+          else if (table === "xmum_blocks") authorizedData = data.filter((row: any) => row.blocker_id === identity.userId);
+          else if (table === "xmum_chats") authorizedData = data.filter((row: any) => row.user_a_id === identity.userId || row.user_b_id === identity.userId);
+          else if (table === "xmum_messages") {
+            const chatIds = new Set(getLocalData(LOCAL_CHATS_FILE).filter((row: any) => row.user_a_id === identity.userId || row.user_b_id === identity.userId).map((row: any) => row.id));
+            authorizedData = data.filter((row: any) => row.sender_id === identity.userId && chatIds.has(row.chat_id));
+          } else if (table === "xmum_reports") {
+            const existing = new Map(getLocalData(LOCAL_REPORTS_FILE).map((row: any) => [row.id, row]));
+            authorizedData = data.filter((row: any) => row.reporter_id === identity.userId).map((row: any) => existing.get(row.id) || ({ ...row, status: "pending", reviewed_at: null }));
+          }
+          else if (table === "xmum_applications") {
+            const hostedIds = new Set(getLocalData(LOCAL_HANGOUTS_FILE).filter((row: any) => row.creator_id === identity.userId).map((row: any) => row.id));
+            authorizedData = data.filter((row: any) => hostedIds.has(row.hangout_id) || (row.applicant_id === identity.userId && (row.status === "pending" || row.status === "retracted")));
+          } else if (table === "xmum_appeals") {
+            const reportIds = new Set(getLocalData(LOCAL_REPORTS_FILE).filter((row: any) => row.reported_user_id === identity.userId).map((row: any) => row.id));
+            const existing = new Map(getLocalData(LOCAL_APPEALS_FILE).map((row: any) => [row.id, row]));
+            authorizedData = data.filter((row: any) => reportIds.has(row.report_id)).map((row: any) => existing.get(row.id) || ({ ...row, status: "pending", reviewed_at: null }));
+          } else if (table === "xmum_notifications") {
+            const actorGeneratedTypes = new Set(["hangout_like", "comment_reply", "new_application", "chat_message"]);
+            authorizedData = data.filter((row: any) => row.user_id === identity.userId || (row.payload?.actor_user_id === identity.userId && actorGeneratedTypes.has(row.type)));
+          }
+          else authorizedData = [];
+        }
+
+        const transformedData = transformRows ? await transformRows(authorizedData) : authorizedData;
+        let removedIds = Array.isArray(req.body?.[removedIdsKey || ""])
           ? req.body[removedIdsKey || ""].filter((id: unknown) => typeof id === "string" && id.trim().length > 0)
           : [];
+        if (!isAdmin && removedIds.length > 0) {
+          if (table === "xmum_blocks") {
+            const allowedIds = new Set(getLocalData(LOCAL_BLOCKS_FILE).filter((row: any) => row.blocker_id === identity.userId).map((row: any) => row.id));
+            removedIds = removedIds.filter((id: string) => allowedIds.has(id));
+          } else {
+            removedIds = [];
+          }
+        }
         const profileRemoteFields =
           table === "xmum_profiles" && Array.isArray(req.body?.profile_remote_fields)
-            ? req.body.profile_remote_fields.filter((field: unknown) => typeof field === "string" && field.trim().length > 0)
+            ? req.body.profile_remote_fields.filter((field: unknown) => typeof field === "string" && [
+                "name", "name_last_changed_at", "country", "country_last_changed_at", "languages", "age", "birthdate",
+                "program", "year_of_study", "gender", "gender_last_changed_at", "student_type", "about_me", "avatar_id",
+                "is_profile_complete", "hide_details", "companion_pet_count", "companion_selected_state_id"
+              ].includes(field.trim()))
             : [];
 
         if (localProfileMode) {
-          upsertLocalProfiles(data);
+          upsertLocalProfiles(authorizedData);
         } else {
-          saveLocalData(fileName, transformedData);
+          const existingRows = getLocalData(fileName);
+          const mergedRows = Array.from(new Map([...existingRows, ...transformedData].map((row: any) => [row.id, row])).values());
+          saveLocalData(fileName, mergedRows);
         }
 
         await upsertToSupabase(table, transformedData, profileRemoteFields);
@@ -1760,6 +1919,73 @@ async function startServer() {
     payloadKey: "notifications",
     fileName: LOCAL_NOTIFICATIONS_FILE,
     table: "xmum_notifications"
+  });
+
+  app.get("/api/push/public-key", (req, res) => {
+    setCors(req, res, "GET,OPTIONS", "Content-Type, Authorization, X-Local-Auth");
+    const publicKey = getVapidPublicKey();
+    return publicKey
+      ? res.status(200).json({ publicKey })
+      : res.status(503).json({ error: "Push notifications are not configured yet." });
+  });
+
+  app.post("/api/push/:action", async (req, res) => {
+    setCors(req, res, "POST,OPTIONS", "Content-Type, Authorization, X-Local-Auth");
+    if (!supabaseAdmin) {
+      return res.status(503).json({ error: "Push notifications require the server database connection." });
+    }
+    if (req.params.action === "process-reminders") {
+      const cronSecret = (process.env.CRON_SECRET || "").trim();
+      if (!cronSecret || req.headers.authorization !== `Bearer ${cronSecret}`) {
+        return res.status(401).json({ error: "Invalid reminder scheduler credentials." });
+      }
+      try {
+        const result = await processScheduledReminders(supabaseAdmin);
+        return res.status(200).json({ success: true, ...result });
+      } catch (error) {
+        console.error("Scheduled reminder processing failed:", error);
+        return res.status(500).json({ error: "Scheduled reminders could not be processed." });
+      }
+    }
+    const identity = await resolveExpressRequestIdentity(req);
+    if (!identity) {
+      return res.status(401).json({ error: "Please sign in again to manage notifications." });
+    }
+
+    try {
+      if (req.params.action === "subscribe") {
+        if (!isPushConfigured()) return res.status(503).json({ error: "Push notifications are not configured yet." });
+        await savePushSubscription(supabaseAdmin, identity, req.body?.subscription, req.headers["user-agent"] || "");
+        return res.status(200).json({ success: true });
+      }
+      if (req.params.action === "unsubscribe") {
+        const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint : "";
+        if (!endpoint) return res.status(400).json({ error: "A subscription endpoint is required." });
+        await removePushSubscription(supabaseAdmin, identity, endpoint);
+        return res.status(200).json({ success: true });
+      }
+      if (req.params.action === "dispatch") {
+        if (!isPushConfigured()) return res.status(503).json({ error: "Push notifications are not configured yet." });
+        const requestedIds = Array.isArray(req.body?.notification_ids)
+          ? req.body.notification_ids.filter((id: unknown) => typeof id === "string")
+          : [];
+        const profile = await resolveBestProfileByEmail(identity.email);
+        const isAdmin = Boolean(profile?.is_admin && isConfiguredAdminEmail(profile.email));
+        const { data: requestedNotifications, error } = requestedIds.length
+          ? await supabaseAdmin.from("xmum_notifications").select("id,user_id,payload").in("id", requestedIds.slice(0, 50))
+          : { data: [], error: null };
+        if (error) throw error;
+        const notificationIds = (requestedNotifications || [])
+          .filter((notification: any) => isAdmin || notification.user_id === identity.userId || notification.payload?.actor_user_id === identity.userId)
+          .map((notification: any) => notification.id);
+        const result = await dispatchPushNotifications(supabaseAdmin, notificationIds);
+        return res.status(200).json({ success: true, ...result });
+      }
+      return res.status(404).json({ error: "Route not found" });
+    } catch (error) {
+      console.error(`Push route ${req.params.action} failed:`, error);
+      return res.status(500).json({ error: "We couldn't complete the notification request." });
+    }
   });
 
   app.post("/api/account/delete", async (req, res) => {

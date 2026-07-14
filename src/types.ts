@@ -150,6 +150,7 @@ export type NotificationType =
   | "report_approved"
   | "report_appeal_result"
   | "new_report_admin"
+  | "chat_message"
   | "admin_message";
 
 export interface AppNotification {

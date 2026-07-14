@@ -33,7 +33,9 @@ import { ApplicantList } from "./components/ApplicantList";
 import { StudentProfilePage } from "./components/StudentProfilePage";
 import { Logo } from "./components/Logo";
 import { CampusCompanion } from "./components/CampusCompanion";
+import { GetAppPage } from "./components/GetAppPage";
 import { ChatWindowSkeleton, FeedSkeleton, PortalSkeleton } from "./components/LoadingSkeletons";
+import { usePwa } from "./hooks/usePwa";
 import {
   Sparkles,
   Search,
@@ -45,7 +47,6 @@ import {
   Bug,
   BadgeAlert,
   ShieldAlert,
-  ShieldCheck,
   Award,
   Eye,
   LogOut,
@@ -63,11 +64,29 @@ import {
   User,
   Compass,
   PencilLine,
-  Trash2
+  Trash2,
+  Download,
+  BellRing
 } from "lucide-react";
 
 const SYSTEM_DELETED_USER_ID = "deleted_user";
 const RECENT_HANGOUT_WINDOW_MONTHS = 2;
+const adminChooserPositionStorageKey = "xmum_admin_chooser_position";
+type FloatingPosition = { x: number; y: number };
+
+const getStoredAdminChooserPosition = (): FloatingPosition => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(adminChooserPositionStorageKey) || "null");
+    const x = Number(stored?.x);
+    const y = Number(stored?.y);
+    return {
+      x: Number.isFinite(x) ? Math.min(Math.max(0, x), Math.max(0, window.innerWidth - 164)) : 0,
+      y: Number.isFinite(y) ? Math.min(0, Math.max(-Math.max(0, window.innerHeight - 64), y)) : 0
+    };
+  } catch {
+    return { x: 0, y: 0 };
+  }
+};
 const LOCKED_MEETING_POINT_MARKERS = [
   "apply and get accepted to unlock",
   "visible after the host approves your request"
@@ -284,10 +303,13 @@ const AppContent: React.FC = () => {
     profiles,
     hangouts,
     applications,
+    likes,
+    comments,
     reports,
     appeals,
     chats,
     messages,
+    notifications,
     signInSimulated,
     signInWithPassword,
     signInWithMicrosoft,
@@ -315,6 +337,7 @@ const AppContent: React.FC = () => {
     viewedProfile,
     setViewedProfile
   } = useApp();
+  const pwa = usePwa(currentUser?.id);
 
   const hasPendingAuthRedirect = typeof window !== "undefined" && (() => {
     try {
@@ -343,7 +366,7 @@ const AppContent: React.FC = () => {
     !hasBootstrapData;
 
   // Navigation states
-  const [activeTab, setActiveTab] = useState<"feed" | "create" | "profile" | "my-plans" | "chats" | "admin" | "terms" | "privacy" | "safety" | "about" | "donation" | "bug-report">("feed");
+  const [activeTab, setActiveTab] = useState<"feed" | "create" | "profile" | "my-plans" | "chats" | "admin" | "terms" | "privacy" | "safety" | "about" | "donation" | "bug-report" | "get-app">("feed");
   const adminToolProfiles = Array.from(
     new Map<string, Profile>(
       [...ADMIN_TOOL_TEST_PROFILES, ...profiles].map(profile => [profile.id, profile])
@@ -351,6 +374,40 @@ const AppContent: React.FC = () => {
   );
   const [portalSubTab, setPortalSubTab] = useState<"hosted" | "requested">("hosted");
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showMobileInstallPrompt, setShowMobileInstallPrompt] = useState(false);
+  const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
+
+  useEffect(() => {
+    if (isAuthInitializing || !currentUser?.id || !pwa.mobile || pwa.isInstalled) return;
+    const promptKey = `xmum_app_install_prompt_seen_${currentUser.id}`;
+    try {
+      if (localStorage.getItem(promptKey) === "true") return;
+      localStorage.setItem(promptKey, "true");
+    } catch {
+      // If storage is restricted, still show the helpful prompt for this session.
+    }
+    const timer = window.setTimeout(() => setShowMobileInstallPrompt(true), 650);
+    return () => window.clearTimeout(timer);
+  }, [currentUser?.id, isAuthInitializing, pwa.isInstalled, pwa.mobile]);
+
+  useEffect(() => {
+    if (
+      isAuthInitializing ||
+      !currentUser?.id ||
+      pwa.pushState !== "prompt" ||
+      (pwa.mobile && !pwa.isInstalled)
+    ) return;
+
+    const promptKey = `xmum_push_prompt_seen_${currentUser.id}`;
+    try {
+      if (localStorage.getItem(promptKey) === "true") return;
+      localStorage.setItem(promptKey, "true");
+    } catch {
+      // The browser permission prompt itself still prevents repeated requests.
+    }
+    const timer = window.setTimeout(() => setShowNotificationPrompt(true), 900);
+    return () => window.clearTimeout(timer);
+  }, [currentUser?.id, isAuthInitializing, pwa.isInstalled, pwa.mobile, pwa.pushState]);
 
   // Filter and search feed states
   const [searchLocation, setSearchLocation] = useState("");
@@ -596,6 +653,10 @@ const AppContent: React.FC = () => {
   const [microsoftOnlyAuthEmail, setMicrosoftOnlyAuthEmail] = useState<string | null>(null);
   const [showPasswordResetHelp, setShowPasswordResetHelp] = useState(false);
   const [showNavLogoutConfirm, setShowNavLogoutConfirm] = useState(false);
+  const [adminAnalyticsRange, setAdminAnalyticsRange] = useState<"daily" | "weekly" | "monthly" | "yearly" | "lifetime">("monthly");
+  const [adminChooserPosition, setAdminChooserPosition] = useState<FloatingPosition>(getStoredAdminChooserPosition);
+  const adminChooserPositionRef = useRef(adminChooserPosition);
+  const adminChooserDraggedRef = useRef(false);
 
   const minimumCreateDateTime = getRoundedMinimumTime();
   const minimumCreateDate = formatDateInputValue(minimumCreateDateTime);
@@ -1143,9 +1204,38 @@ const AppContent: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    const notificationId = new URLSearchParams(window.location.search).get("push_notification_id");
+    if (!notificationId || !currentUser) return;
+    const notification = notifications.find(item => item.id === notificationId && item.user_id === currentUser.id);
+    if (!notification) return;
+
+    handleNotificationOpen(notification);
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("push_notification_id");
+    window.history.replaceState({}, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+  }, [currentUser?.id, notifications]);
+
   // Render main user content views
   const renderTabContent = () => {
     switch (activeTab) {
+      case "get-app":
+        return (
+          <GetAppPage
+            isSignedIn={Boolean(currentUser)}
+            isInstalled={pwa.isInstalled}
+            isIos={pwa.ios}
+            isAndroid={pwa.android}
+            canPromptInstall={pwa.canPromptInstall}
+            pushState={pwa.pushState}
+            notificationPermission={pwa.notificationPermission}
+            pushError={pwa.pushError}
+            onInstall={pwa.install}
+            onEnablePush={pwa.enablePush}
+            onDisablePush={pwa.disablePush}
+            onRequestLogin={() => setShowLoginModal(true)}
+          />
+        );
       case "profile":
         return <StudentProfilePage />;
       case "feed":
@@ -2295,6 +2385,142 @@ const AppContent: React.FC = () => {
         const showingAdminFallbackStats = statsProfiles.length === 0 && countableProfiles.length > 0;
         const pendingReportsList = reports.filter(r => r.status === "pending");
         const pendingAppealsList = appeals.filter(a => a.status === "pending");
+        const analyticsRangeStart = (() => {
+          if (adminAnalyticsRange === "daily") return nowTimestamp - (24 * 60 * 60 * 1000);
+          if (adminAnalyticsRange === "weekly") {
+            const start = new Date(nowTimestamp);
+            start.setHours(0, 0, 0, 0);
+            start.setDate(start.getDate() - 6);
+            return start.getTime();
+          }
+          if (adminAnalyticsRange === "monthly") return nowTimestamp - (30 * 24 * 60 * 60 * 1000);
+          if (adminAnalyticsRange === "yearly") return nowTimestamp - (365 * 24 * 60 * 60 * 1000);
+          return null;
+        })();
+        const isWithinAnalyticsRange = (createdAt: string) => {
+          const timestamp = new Date(createdAt).getTime();
+          return !Number.isNaN(timestamp) && (analyticsRangeStart === null || timestamp >= analyticsRangeStart);
+        };
+        const allRealHangouts = hangouts.filter(hangout => activityProfileIds.has(hangout.creator_id));
+        const realHangouts = allRealHangouts.filter(hangout => isWithinAnalyticsRange(hangout.created_at));
+        const allRealHangoutIds = new Set(allRealHangouts.map(hangout => hangout.id));
+        const realApplications = applications.filter(application =>
+          activityProfileIds.has(application.applicant_id) && allRealHangoutIds.has(application.hangout_id) && isWithinAnalyticsRange(application.created_at)
+        );
+        const realLikes = likes.filter(like => activityProfileIds.has(like.user_id) && allRealHangoutIds.has(like.hangout_id) && isWithinAnalyticsRange(like.created_at));
+        const realComments = comments.filter(comment => activityProfileIds.has(comment.user_id) && allRealHangoutIds.has(comment.hangout_id) && isWithinAnalyticsRange(comment.created_at));
+        const allAnalyticsTimestamps = [
+          ...allRealHangouts.map(item => new Date(item.created_at).getTime()),
+          ...applications.filter(item => activityProfileIds.has(item.applicant_id)).map(item => new Date(item.created_at).getTime()),
+          ...likes.filter(item => activityProfileIds.has(item.user_id)).map(item => new Date(item.created_at).getTime()),
+          ...comments.filter(item => activityProfileIds.has(item.user_id)).map(item => new Date(item.created_at).getTime())
+        ].filter(timestamp => !Number.isNaN(timestamp));
+        const earliestAnalyticsTimestamp = allAnalyticsTimestamps.length > 0 ? Math.min(...allAnalyticsTimestamps) : nowTimestamp;
+        const nowDate = new Date(nowTimestamp);
+        const activityBuckets = (() => {
+          if (adminAnalyticsRange === "daily") {
+            return Array.from({ length: 8 }, (_, index) => {
+              const end = nowTimestamp - ((7 - index) * 3 * 60 * 60 * 1000);
+              const start = end - (3 * 60 * 60 * 1000);
+              return {
+                label: new Date(start).toLocaleTimeString(undefined, { hour: "numeric" }),
+                start,
+                end: index === 7 ? nowTimestamp + 1 : end
+              };
+            });
+          }
+          if (adminAnalyticsRange === "weekly") {
+            return Array.from({ length: 7 }, (_, index) => {
+              const start = new Date(nowTimestamp);
+              start.setHours(0, 0, 0, 0);
+              start.setDate(start.getDate() - (6 - index));
+              const end = new Date(start);
+              end.setDate(end.getDate() + 1);
+              return {
+                label: start.toLocaleDateString(undefined, { weekday: "short" }),
+                start: start.getTime(),
+                end: index === 6 ? nowTimestamp + 1 : end.getTime()
+              };
+            });
+          }
+          if (adminAnalyticsRange === "monthly") {
+            return Array.from({ length: 6 }, (_, index) => {
+              const start = new Date(nowTimestamp);
+              start.setHours(0, 0, 0, 0);
+              start.setDate(start.getDate() - ((5 - index) * 5 + 4));
+              const end = new Date(start);
+              end.setDate(end.getDate() + 5);
+              return { label: start.toLocaleDateString(undefined, { month: "short", day: "numeric" }), start: start.getTime(), end: index === 5 ? nowTimestamp + 1 : end.getTime() };
+            });
+          }
+          if (adminAnalyticsRange === "yearly") {
+            return Array.from({ length: 12 }, (_, index) => {
+              const start = new Date(nowDate.getFullYear(), nowDate.getMonth() - (11 - index), 1);
+              const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+              return { label: start.toLocaleDateString(undefined, { month: "short" }), start: start.getTime(), end: end.getTime() };
+            });
+          }
+          const earliestDate = new Date(earliestAnalyticsTimestamp);
+          const monthSpan = (nowDate.getFullYear() - earliestDate.getFullYear()) * 12 + nowDate.getMonth() - earliestDate.getMonth() + 1;
+          if (monthSpan <= 12) {
+            return Array.from({ length: Math.max(1, monthSpan) }, (_, index) => {
+              const start = new Date(earliestDate.getFullYear(), earliestDate.getMonth() + index, 1);
+              const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+              return { label: start.toLocaleDateString(undefined, { month: "short" }), start: start.getTime(), end: end.getTime() };
+            });
+          }
+          const yearSpan = nowDate.getFullYear() - earliestDate.getFullYear() + 1;
+          return Array.from({ length: yearSpan }, (_, index) => {
+            const year = earliestDate.getFullYear() + index;
+            return { label: String(year), start: new Date(year, 0, 1).getTime(), end: new Date(year + 1, 0, 1).getTime() };
+          });
+        })();
+        const countInBucket = (createdAt: string, start: number, end: number) => {
+          const timestamp = new Date(createdAt).getTime();
+          return !Number.isNaN(timestamp) && timestamp >= start && timestamp < end;
+        };
+        const activityTrend = activityBuckets.map(bucket => {
+          return {
+            label: bucket.label,
+            posts: realHangouts.filter(item => countInBucket(item.created_at, bucket.start, bucket.end)).length,
+            joins: realApplications.filter(item => countInBucket(item.created_at, bucket.start, bucket.end)).length,
+            likes: realLikes.filter(item => countInBucket(item.created_at, bucket.start, bucket.end)).length,
+            comments: realComments.filter(item => countInBucket(item.created_at, bucket.start, bucket.end)).length
+          };
+        });
+        const maxDailyActivity = Math.max(1, ...activityTrend.map(day => day.posts + day.joins + day.likes + day.comments));
+        const hangoutsWithApplications = new Set(realApplications.map(application => application.hangout_id)).size;
+        const hangoutsWithAcceptedApplicants = new Set(
+          realApplications.filter(application => application.status === "accepted").map(application => application.hangout_id)
+        ).size;
+        const hangoutsWithComments = new Set(realComments.map(comment => comment.hangout_id)).size;
+        const funnelSteps = [
+          { label: "Published", value: realHangouts.length, color: "bg-indigo-500" },
+          { label: "Received requests", value: hangoutsWithApplications, color: "bg-sky-500" },
+          { label: "Accepted someone", value: hangoutsWithAcceptedApplicants, color: "bg-emerald-500" },
+          { label: "Started discussion", value: hangoutsWithComments, color: "bg-rose-400" }
+        ];
+        const funnelMaximum = Math.max(1, realHangouts.length);
+        const activeCommunityUserIds = new Set<string>();
+        realHangouts.forEach(item => activeCommunityUserIds.add(item.creator_id));
+        realApplications.forEach(item => activeCommunityUserIds.add(item.applicant_id));
+        realLikes.forEach(item => activeCommunityUserIds.add(item.user_id));
+        realComments.forEach(item => activeCommunityUserIds.add(item.user_id));
+        const pendingApplicationsCount = realApplications.filter(application => application.status === "pending").length;
+        const totalEngagementActions = realApplications.length + realLikes.length + realComments.length;
+        const engagementPerPost = realHangouts.length > 0 ? (totalEngagementActions / realHangouts.length).toFixed(1) : "0.0";
+        const analyticsReports = reports.filter(report => isWithinAnalyticsRange(report.created_at));
+        const resolvedReportsCount = analyticsReports.filter(report => report.status !== "pending").length;
+        const safetyResolutionRate = analyticsReports.length > 0 ? Math.round((resolvedReportsCount / analyticsReports.length) * 100) : 0;
+        const reportStatusCounts = {
+          pending: analyticsReports.filter(report => report.status === "pending").length,
+          approved: analyticsReports.filter(report => report.status === "approved").length,
+          rejected: analyticsReports.filter(report => report.status === "rejected").length
+        };
+        const reportTotal = Math.max(1, analyticsReports.length);
+        const pendingReportDegrees = (reportStatusCounts.pending / reportTotal) * 360;
+        const approvedReportDegrees = pendingReportDegrees + (reportStatusCounts.approved / reportTotal) * 360;
+        const analyticsPeriodLabel = adminAnalyticsRange === "daily" ? "Daily" : adminAnalyticsRange === "weekly" ? "Weekly" : adminAnalyticsRange === "monthly" ? "Monthly" : adminAnalyticsRange === "yearly" ? "Yearly" : "Lifetime";
 
         return (
           <div className="space-y-8 font-sans">
@@ -2317,39 +2543,76 @@ const AppContent: React.FC = () => {
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
                   <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Active Posts</span>
                   <strong className="text-xl text-gray-800 block mt-1">{totalActive}</strong>
+                  <span className="mt-1 block text-[8px] font-black uppercase tracking-widest text-slate-300">Current</span>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
                   <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Expired Posts</span>
                   <strong className="text-xl text-gray-800 block mt-1">{totalExpired}</strong>
+                  <span className="mt-1 block text-[8px] font-black uppercase tracking-widest text-slate-300">Lifetime</span>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
                   <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Total profiles</span>
                   <strong className="text-xl text-gray-800 block mt-1">{totalUsersCount}</strong>
+                  <span className="mt-1 block text-[8px] font-black uppercase tracking-widest text-slate-300">Lifetime</span>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
                   <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Test users</span>
                   <strong className="text-xl text-gray-800 block mt-1">{testUsersCount}</strong>
+                  <span className="mt-1 block text-[8px] font-black uppercase tracking-widest text-slate-300">Lifetime</span>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
                   <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">Highest Pets</span>
                   <strong className="text-xl text-gray-800 block mt-1">{highestCompanionPets}</strong>
+                  <span className="mt-1 block text-[8px] font-black uppercase tracking-widest text-slate-300">Lifetime</span>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center bg-rose-50/20">
                   <span className="text-xs text-rose-600 block uppercase tracking-wider font-semibold">Pending Reports</span>
                   <strong className="text-xl text-rose-700 block mt-1">{pendingReportsList.length}</strong>
+                  <span className="mt-1 block text-[8px] font-black uppercase tracking-widest text-rose-300">Current</span>
                 </div>
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center bg-amber-50/20">
                   <span className="text-xs text-amber-600 block uppercase tracking-wider font-semibold">Pending Appeals</span>
                   <strong className="text-xl text-amber-700 block mt-1">{pendingAppealsList.length}</strong>
+                  <span className="mt-1 block text-[8px] font-black uppercase tracking-widest text-amber-300">Current</span>
                 </div>
               </div>
             </div>
 
             {/* Real Usage Analytics section */}
             <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm space-y-5">
-              <h3 className="font-display font-extrabold text-sm sm:text-base text-gray-900 border-b border-gray-100 pb-3 flex items-center gap-2">
-                📈 Platform Activity & Usage Analytics
-              </h3>
+              <div className="flex flex-col gap-3 border-b border-gray-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="font-display font-extrabold text-sm sm:text-base text-gray-900 flex items-center gap-2">
+                    📈 Platform Activity & Usage Analytics
+                  </h3>
+                  <p className="mt-1 text-[9px] font-semibold text-slate-400">
+                    Period filters apply to activity metrics. Profile and companion statistics are marked as lifetime.
+                  </p>
+                </div>
+                <div className="inline-flex w-full rounded-xl bg-slate-100 p-1 sm:w-auto" aria-label="Analytics period">
+                  {([
+                    ["daily", "Daily"],
+                    ["weekly", "Weekly"],
+                    ["monthly", "Monthly"],
+                    ["yearly", "Yearly"],
+                    ["lifetime", "Lifetime"]
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setAdminAnalyticsRange(value)}
+                      aria-pressed={adminAnalyticsRange === value}
+                      className={`flex-1 rounded-lg px-3 py-1.5 text-[10px] font-black transition-all sm:flex-none ${
+                        adminAnalyticsRange === value
+                          ? "bg-white text-indigo-700 shadow-sm"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 
                 {/* Demographics Card */}
@@ -2364,7 +2627,10 @@ const AppContent: React.FC = () => {
                   return (
                     <div className="bg-slate-50 p-4.5 rounded-2xl border border-gray-100/60 flex flex-col justify-between">
                       <div>
-                        <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Student Demographics</h4>
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Student Demographics</h4>
+                          <span className="rounded-full bg-white px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-400 shadow-sm">Lifetime</span>
+                        </div>
                         <div className="space-y-3 mt-4">
                           <div>
                             <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
@@ -2395,7 +2661,10 @@ const AppContent: React.FC = () => {
 
                 <div className="bg-slate-50 p-4.5 rounded-2xl border border-gray-100/60 flex flex-col justify-between">
                   <div>
-                    <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Companion Activity</h4>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Companion Activity</h4>
+                      <span className="rounded-full bg-white px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-400 shadow-sm">Lifetime</span>
+                    </div>
                     <div className="space-y-2 mt-4 text-xs text-gray-600">
                       <div className="flex items-center justify-between gap-3">
                         <span>Total pets recorded</span>
@@ -2422,14 +2691,13 @@ const AppContent: React.FC = () => {
 
                 {/* Plan categories shares */}
                 {(() => {
-                  const categoriesCount = hangouts
-                    .filter(h => activityProfileIds.has(h.creator_id))
+                  const categoriesCount = realHangouts
                     .reduce((acc, h) => {
                       const category = deriveHangoutCategory(h);
                       acc[category] = (acc[category] || 0) + 1;
                       return acc;
                     }, {} as Record<string, number>);
-                  const sortedCategories = Object.entries(categoriesCount)
+                  const sortedCategories = (Object.entries(categoriesCount) as Array<[string, number]>)
                     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
                     .slice(0, 6);
 
@@ -2461,9 +2729,9 @@ const AppContent: React.FC = () => {
 
                 {/* Coordination Success rate card */}
                 {(() => {
-                  const totalApps = applications.filter(a => activityProfileIds.has(a.applicant_id)).length;
-                  const acceptedApps = applications.filter(a => activityProfileIds.has(a.applicant_id) && a.status === "accepted").length;
-                  const acceptanceRate = totalApps > 0 ? Math.round((acceptedApps / totalApps) * 100) : 100;
+                  const totalApps = realApplications.length;
+                  const acceptedApps = realApplications.filter(a => a.status === "accepted").length;
+                  const acceptanceRate = totalApps > 0 ? Math.round((acceptedApps / totalApps) * 100) : 0;
 
                   return (
                     <div className="bg-slate-50 p-4.5 rounded-2xl border border-gray-100/60 flex flex-col justify-between">
@@ -2486,6 +2754,187 @@ const AppContent: React.FC = () => {
                   );
                 })()}
 
+                {/* Join request outcomes */}
+                {(() => {
+                  const outcomeCounts = [
+                    { label: "Accepted", value: realApplications.filter(item => item.status === "accepted").length, color: "bg-emerald-500" },
+                    { label: "Pending", value: realApplications.filter(item => item.status === "pending").length, color: "bg-amber-400" },
+                    { label: "Rejected", value: realApplications.filter(item => item.status === "rejected").length, color: "bg-rose-400" },
+                    { label: "Retracted", value: realApplications.filter(item => item.status === "retracted").length, color: "bg-slate-400" }
+                  ];
+                  const outcomeTotal = Math.max(1, realApplications.length);
+                  return (
+                    <div className="bg-slate-50 p-4.5 rounded-2xl border border-gray-100/60 flex flex-col justify-between">
+                      <div>
+                        <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Join Request Outcomes</h4>
+                        <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-slate-200">
+                          {outcomeCounts.map(item => item.value > 0 && (
+                            <div key={item.label} className={item.color} style={{ width: `${(item.value / outcomeTotal) * 100}%` }} title={`${item.label}: ${item.value}`} />
+                          ))}
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          {outcomeCounts.map(item => (
+                            <div key={item.label} className="flex items-center justify-between rounded-lg bg-white px-2.5 py-2 text-[10px]">
+                              <span className="flex items-center gap-1.5 font-semibold text-slate-500"><span className={`h-2 w-2 rounded-full ${item.color}`} />{item.label}</span>
+                              <strong className="text-slate-800">{item.value}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-gray-400 mt-4 leading-normal">Shows whether hosts are keeping up with student requests during the selected period.</p>
+                    </div>
+                  );
+                })()}
+
+                {/* Conversation and appreciation */}
+                {(() => {
+                  const likedHangouts = new Set(realLikes.map(item => item.hangout_id)).size;
+                  const discussedHangouts = new Set(realComments.map(item => item.hangout_id)).size;
+                  const postTotal = Math.max(1, realHangouts.length);
+                  const likedShare = Math.round((likedHangouts / postTotal) * 100);
+                  const discussedShare = Math.round((discussedHangouts / postTotal) * 100);
+                  return (
+                    <div className="bg-slate-50 p-4.5 rounded-2xl border border-gray-100/60 flex flex-col justify-between">
+                      <div>
+                        <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Conversation & Appreciation</h4>
+                        <div className="mt-4 space-y-4">
+                          <div>
+                            <div className="mb-1 flex justify-between text-[10px] font-semibold text-slate-600"><span>Posts receiving likes</span><strong>{likedHangouts} ({likedShare}%)</strong></div>
+                            <div className="h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-rose-400" style={{ width: `${Math.min(100, likedShare)}%` }} /></div>
+                          </div>
+                          <div>
+                            <div className="mb-1 flex justify-between text-[10px] font-semibold text-slate-600"><span>Posts with discussion</span><strong>{discussedHangouts} ({discussedShare}%)</strong></div>
+                            <div className="h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-amber-400" style={{ width: `${Math.min(100, discussedShare)}%` }} /></div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-center">
+                            <div className="rounded-xl bg-white p-2"><strong className="block text-sm text-slate-800">{realLikes.length}</strong><span className="text-[9px] font-bold text-slate-400">Total likes</span></div>
+                            <div className="rounded-xl bg-white p-2"><strong className="block text-sm text-slate-800">{realComments.length}</strong><span className="text-[9px] font-bold text-slate-400">Comments</span></div>
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-gray-400 mt-4 leading-normal">Highlights how often published plans spark interest and useful conversation.</p>
+                    </div>
+                  );
+                })()}
+
+              </div>
+
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 border-t border-gray-100 pt-5">
+                {[
+                  { label: "Engaged students", value: activeCommunityUserIds.size, note: "Students with recorded activity" },
+                  { label: "Actions per post", value: engagementPerPost, note: "Requests, likes and comments" },
+                  { label: "Awaiting host reply", value: pendingApplicationsCount, note: "Pending join requests" },
+                  { label: "Reports resolved", value: `${safetyResolutionRate}%`, note: `${resolvedReportsCount} of ${analyticsReports.length} reviewed` }
+                ].map(metric => (
+                  <div key={metric.label} className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3.5">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">{metric.label}</p>
+                    <strong className="mt-1 block text-xl font-black text-slate-800">{metric.value}</strong>
+                    <p className="mt-1 text-[9px] font-semibold leading-relaxed text-slate-400">{metric.note}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 sm:p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">{analyticsPeriodLabel} Activity</h4>
+                      <p className="mt-1 text-[10px] font-semibold text-slate-400">Community actions grouped for the selected period</p>
+                    </div>
+                    <span className="rounded-full bg-white px-2 py-1 text-[9px] font-black text-slate-500 shadow-sm">{activityTrend.reduce((sum, day) => sum + day.posts + day.joins + day.likes + day.comments, 0)} actions</span>
+                  </div>
+                  <div className="mt-5 flex h-40 items-end gap-1.5 sm:gap-3" role="img" aria-label={`${analyticsPeriodLabel} stacked activity chart`}>
+                    {activityTrend.map(day => {
+                      const total = day.posts + day.joins + day.likes + day.comments;
+                      const segments = [
+                        { value: day.posts, color: "bg-indigo-500", label: "posts" },
+                        { value: day.joins, color: "bg-sky-400", label: "requests" },
+                        { value: day.likes, color: "bg-rose-400", label: "likes" },
+                        { value: day.comments, color: "bg-amber-400", label: "comments" }
+                      ];
+                      return (
+                        <div key={day.label} className="flex min-w-0 flex-1 flex-col items-center gap-2">
+                          <span className="text-[9px] font-black text-slate-500">{total}</span>
+                          <div className="flex h-28 w-full max-w-9 flex-col-reverse justify-start overflow-hidden rounded-t-lg bg-slate-200/70">
+                            {segments.map(segment => segment.value > 0 && (
+                              <div
+                                key={segment.label}
+                                title={`${segment.value} ${segment.label}`}
+                                className={`${segment.color} w-full transition-all`}
+                                style={{ height: `${Math.max(7, (segment.value / maxDailyActivity) * 100)}%` }}
+                              />
+                            ))}
+                          </div>
+                          <span className="text-[9px] font-bold text-slate-400">{day.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-4 flex flex-wrap justify-center gap-x-4 gap-y-2 text-[9px] font-bold text-slate-500">
+                    {[['bg-indigo-500','Posts'],['bg-sky-400','Requests'],['bg-rose-400','Likes'],['bg-amber-400','Comments']].map(([color, label]) => (
+                      <span key={label} className="flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${color}`} />{label}</span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 sm:p-5">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">Hangout Engagement Funnel</h4>
+                  <p className="mt-1 text-[10px] font-semibold text-slate-400">How published plans progress into coordination and conversation</p>
+                  <div className="mt-5 space-y-4">
+                    {funnelSteps.map(step => {
+                      const percentage = Math.round((step.value / funnelMaximum) * 100);
+                      return (
+                        <div key={step.label}>
+                          <div className="mb-1.5 flex items-center justify-between text-[10px] font-bold text-slate-600">
+                            <span>{step.label}</span>
+                            <span>{step.value} <span className="text-slate-400">({percentage}%)</span></span>
+                          </div>
+                          <div className="h-3 overflow-hidden rounded-full bg-slate-200/80">
+                            <div className={`h-full rounded-full ${step.color} transition-all duration-500`} style={{ width: `${Math.min(100, percentage)}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-5 rounded-xl bg-white p-3 text-[10px] font-semibold leading-relaxed text-slate-500">
+                    {realHangouts.length === 0
+                      ? "The funnel will populate as students publish and interact with hangouts."
+                      : `${hangoutsWithAcceptedApplicants} of ${realHangouts.length} published hangouts have accepted at least one participant.`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 sm:p-5">
+                <div className="grid gap-5 sm:grid-cols-[auto_1fr] sm:items-center">
+                  <div
+                    className="mx-auto flex h-28 w-28 items-center justify-center rounded-full"
+                    style={{ background: analyticsReports.length === 0 ? '#e2e8f0' : `conic-gradient(#f59e0b 0deg ${pendingReportDegrees}deg, #10b981 ${pendingReportDegrees}deg ${approvedReportDegrees}deg, #94a3b8 ${approvedReportDegrees}deg 360deg)` }}
+                    role="img"
+                    aria-label={`Report outcomes: ${reportStatusCounts.pending} pending, ${reportStatusCounts.approved} approved, ${reportStatusCounts.rejected} rejected`}
+                  >
+                    <div className="flex h-20 w-20 flex-col items-center justify-center rounded-full bg-white shadow-inner">
+                      <strong className="text-xl font-black text-slate-800">{analyticsReports.length}</strong>
+                      <span className="text-[9px] font-bold uppercase text-slate-400">Reports</span>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">Safety Review Outcomes</h4>
+                    <p className="mt-1 text-[10px] font-semibold text-slate-400">Moderation workload and completed decisions</p>
+                    <div className="mt-4 grid grid-cols-3 gap-2">
+                      {[
+                        { label: "Pending", value: reportStatusCounts.pending, color: "bg-amber-400" },
+                        { label: "Approved", value: reportStatusCounts.approved, color: "bg-emerald-500" },
+                        { label: "Rejected", value: reportStatusCounts.rejected, color: "bg-slate-400" }
+                      ].map(item => (
+                        <div key={item.label} className="rounded-xl bg-white p-2.5 text-center shadow-sm">
+                          <span className={`mx-auto mb-1.5 block h-2 w-2 rounded-full ${item.color}`} />
+                          <strong className="block text-sm font-black text-slate-800">{item.value}</strong>
+                          <span className="text-[8px] font-bold uppercase text-slate-400">{item.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -2634,21 +3083,20 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-850 font-sans flex flex-col justify-between">
+    <div className="min-h-screen w-full max-w-full overflow-x-clip bg-slate-50 text-slate-850 font-sans flex flex-col justify-between">
       {/* Navbar section with optimized vertical padding and responsive alignments */}
-      <header className="bg-white border-b border-gray-100/90 sticky top-0 z-40 shadow-sm/5">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-[22px] md:pt-[22px] pb-3 md:pb-5.5 flex items-center justify-between">
+      <header className="sticky top-0 z-40 w-full max-w-full bg-white border-b border-gray-100/90 shadow-sm/5">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5 sm:pt-[22px] sm:pb-5.5 flex items-center justify-between">
           
           {/* Logo on the left - cleaner and responsive */}
           <button
             id="nav-logo-btn"
             onClick={() => setActiveTab("feed")}
-            style={{ paddingBottom: "4px" }}
-            className="flex items-center gap-2.5 sm:gap-3 outline-none text-left hover:scale-[1.01] active:scale-95 transition-all duration-200 shrink-0"
+            className="flex items-center gap-2 pb-0 sm:gap-3 sm:pb-1 outline-none text-left hover:scale-[1.01] active:scale-95 transition-all duration-200 shrink-0"
           >
             {currentUser && <Logo size="sm" />}
             <div>
-              <span style={{ paddingTop: "5px" }} className="font-display font-black text-base sm:text-lg text-gray-950 tracking-tight block pt-1.25">XMUM Hangouts</span>
+              <span className="font-display font-black text-[15px] sm:text-lg text-gray-950 tracking-tight block sm:pt-1.25">XMUM Hangouts</span>
             </div>
           </button>
 
@@ -2717,7 +3165,7 @@ const AppContent: React.FC = () => {
               )}
 
               {/* User profile / Actions triggers on the right */}
-              <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
                 <NotificationBell onOpenNotification={handleNotificationOpen} />
                 <button
                   id="nav-profile-card-btn"
@@ -2815,13 +3263,55 @@ const AppContent: React.FC = () => {
 
       {/* Peer Switcher and Tester tools for admin only */}
       {currentUser?.is_admin && !showTesterTools && (
-        <button
-          onClick={() => setShowTesterTools(true)}
-          className="fixed bottom-3 left-3 bg-slate-900 border border-slate-850 text-rose-400 hover:text-rose-300 hover:bg-slate-800 hover:scale-[1.04] active:scale-95 text-[11px] font-black px-3.5 py-2 rounded-xl z-50 transition-all flex items-center gap-1.5 cursor-pointer shadow-lg pointer-events-auto"
+        <motion.button
+          drag
+          dragMomentum={false}
+          dragElastic={0.04}
+          dragConstraints={{
+            left: 0,
+            right: Math.max(0, window.innerWidth - 164),
+            top: -Math.max(0, window.innerHeight - 64),
+            bottom: 0
+          }}
+          animate={{ x: adminChooserPosition.x, y: adminChooserPosition.y }}
+          onPointerDown={() => {
+            adminChooserDraggedRef.current = false;
+          }}
+          onDragStart={() => {
+            adminChooserDraggedRef.current = true;
+          }}
+          onDragEnd={(_, info) => {
+            const nextPosition = {
+              x: Math.min(
+                Math.max(0, adminChooserPositionRef.current.x + info.offset.x),
+                Math.max(0, window.innerWidth - 164)
+              ),
+              y: Math.min(
+                0,
+                Math.max(-Math.max(0, window.innerHeight - 64), adminChooserPositionRef.current.y + info.offset.y)
+              )
+            };
+            adminChooserPositionRef.current = nextPosition;
+            setAdminChooserPosition(nextPosition);
+            try {
+              localStorage.setItem(adminChooserPositionStorageKey, JSON.stringify(nextPosition));
+            } catch {
+              // The chooser still remains movable for this session.
+            }
+          }}
+          onClick={() => {
+            if (adminChooserDraggedRef.current) {
+              adminChooserDraggedRef.current = false;
+              return;
+            }
+            setShowTesterTools(true);
+          }}
+          whileDrag={{ scale: 1.03 }}
+          className="fixed bottom-3 left-3 bg-slate-900 border border-slate-850 text-rose-400 hover:text-rose-300 hover:bg-slate-800 active:scale-95 text-[11px] font-black px-3.5 py-2 rounded-xl z-50 transition-colors flex items-center gap-1.5 cursor-grab active:cursor-grabbing shadow-lg pointer-events-auto touch-none"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse"></span>
           Admin Chooser ▾
-        </button>
+        </motion.button>
       )}
 
       {showTesterTools && currentUser?.is_admin && (
@@ -2880,28 +3370,152 @@ const AppContent: React.FC = () => {
         <p className="font-semibold text-slate-400 text-[10px] sm:text-xs">
           "Vibe coded by a fellow XMUM student 💛"
         </p>
-        <div className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1.5 text-slate-500 font-bold px-2 text-[10px] sm:text-xs">
+        <div className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-2 text-slate-500 font-bold px-2 text-[10px] sm:text-xs">
+          <button
+            id="footer-get-app-button"
+            onClick={() => { setActiveTab("get-app"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+            className="inline-flex items-center justify-center gap-1 text-slate-500 hover:text-rose-500 transition-colors cursor-pointer"
+            aria-label="Get the XMUM Hangouts app"
+          >
+            <Download className="h-3 w-3 shrink-0" />
+            Get App
+          </button>
+          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
           <button onClick={() => { setActiveTab("terms"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer">Terms</button>
-          <span className="text-slate-200 hidden sm:inline">•</span>
+          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
           <button onClick={() => { setActiveTab("privacy"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer">Privacy</button>
-          <span className="text-slate-200 hidden sm:inline">•</span>
+          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
           <button onClick={() => { setActiveTab("safety"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer">Safety</button>
-          <span className="text-slate-200 hidden sm:inline">•</span>
+          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
           <button onClick={() => { setActiveTab("about"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer">About</button>
-          <span className="text-slate-200 hidden sm:inline">•</span>
+          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
           <button
             onClick={() => { setActiveTab("bug-report"); window.scrollTo(0, 0); }}
             className="hover:text-rose-500 transition-colors cursor-pointer inline-flex items-center justify-center gap-1"
           >
             <Bug className="w-3 h-3 shrink-0" /> Report Bug
           </button>
-          <span className="text-slate-200 hidden sm:inline">•</span>
+          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
           <button onClick={() => { setActiveTab("donation"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer flex items-center justify-center gap-1 text-rose-500"><Heart className="w-3 h-3 fill-rose-500 text-rose-500 shrink-0" /> Donation</button>
         </div>
         <p className="max-w-xl sm:max-w-none mx-auto text-[9px] sm:text-[10px] leading-relaxed text-slate-450 font-mono px-4">
           Disclaimer: Independently run by students. Not affiliated with or endorsed by Xiamen University Malaysia (XMUM).
         </p>
       </footer>
+
+      <AnimatePresence>
+        {showMobileInstallPrompt && (
+          <motion.div
+            id="mobile-install-prompt-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/45 backdrop-blur-sm flex items-end sm:items-center justify-center z-[70] p-3 sm:p-4"
+            onClick={() => setShowMobileInstallPrompt(false)}
+          >
+            <motion.div
+              initial={{ y: 30, opacity: 0, scale: 0.98 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 24, opacity: 0, scale: 0.98 }}
+              onClick={event => event.stopPropagation()}
+              className="relative bg-white rounded-[2rem] p-5 sm:p-6 max-w-sm w-full shadow-2xl border border-rose-100 text-center"
+            >
+              <button
+                onClick={() => setShowMobileInstallPrompt(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-xl hover:bg-slate-50 cursor-pointer"
+                aria-label="Close install suggestion"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <div className="mx-auto mb-3 w-16 h-16 rounded-2xl bg-rose-50 flex items-center justify-center">
+                <AvatarSVG id="panda" size={52} />
+              </div>
+              <h2 className="text-lg font-black text-slate-900">Take Hangouts with you!</h2>
+              <p className="text-xs sm:text-sm text-slate-500 font-semibold leading-relaxed mt-2">
+                Add XMUM Hangouts to your Home Screen for faster access and optional push notifications.
+              </p>
+              <div className="grid gap-2 mt-5">
+                <button
+                  id="mobile-install-prompt-confirm"
+                  onClick={async () => {
+                    const result = await pwa.install();
+                    setShowMobileInstallPrompt(false);
+                    if (result !== "installed") {
+                      setActiveTab("get-app");
+                      window.scrollTo(0, 0);
+                    }
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 bg-rose-500 hover:bg-rose-600 text-white py-3 rounded-2xl text-sm font-black cursor-pointer transition-colors"
+                >
+                  <Download className="w-4 h-4" /> {pwa.ios ? "Show me how" : "Install the app"}
+                </button>
+                <button onClick={() => setShowMobileInstallPrompt(false)} className="w-full py-2 text-xs font-bold text-slate-400 hover:text-slate-600 cursor-pointer">
+                  Maybe later
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showNotificationPrompt && (
+          <motion.div
+            id="post-login-notification-prompt"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/45 backdrop-blur-sm flex items-end sm:items-center justify-center z-[70] p-3 sm:p-4"
+            onClick={() => setShowNotificationPrompt(false)}
+          >
+            <motion.div
+              initial={{ y: 28, opacity: 0, scale: 0.98 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 22, opacity: 0, scale: 0.98 }}
+              onClick={event => event.stopPropagation()}
+              className="relative w-full max-w-sm overflow-hidden rounded-[2rem] border border-amber-100 bg-white p-5 sm:p-6 text-center shadow-2xl"
+            >
+              <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-rose-500 to-amber-400" />
+              <button
+                onClick={() => setShowNotificationPrompt(false)}
+                className="absolute right-4 top-4 rounded-xl p-1.5 text-slate-400 hover:bg-slate-50 hover:text-slate-700 cursor-pointer"
+                aria-label="Close notification suggestion"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
+                <BellRing className="h-7 w-7" />
+              </div>
+              <h2 className="text-lg font-black text-slate-900">Stay in the loop?</h2>
+              <p className="mt-2 text-xs sm:text-sm font-semibold leading-relaxed text-slate-500">
+                Get helpful alerts for join requests, approvals, new chats, replies, and upcoming hangouts—even when this page is closed.
+              </p>
+              <div className="mt-5 grid gap-2">
+                <button
+                  id="post-login-enable-notifications"
+                  onClick={async () => {
+                    const enabled = await pwa.enablePush();
+                    setShowNotificationPrompt(false);
+                    if (!enabled) {
+                      setActiveTab("get-app");
+                      window.scrollTo(0, 0);
+                    }
+                  }}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-400 py-3 text-sm font-black text-amber-950 transition-colors hover:bg-amber-500 cursor-pointer"
+                >
+                  <BellRing className="h-4 w-4" /> Enable notifications
+                </button>
+                <button
+                  onClick={() => setShowNotificationPrompt(false)}
+                  className="w-full py-2 text-xs font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  Not now
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Safety appeal modal popup */}
       <AnimatePresence>
@@ -3529,7 +4143,7 @@ const AppContent: React.FC = () => {
 
       {/* Mobile Sticky Bottom Navigation Bar for flawless responsiveness */}
       {currentUser && currentUser.is_profile_complete && (
-        <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100/80 shadow-[0_-5px_15px_rgba(0,0,0,0.03)] px-4 py-1.5 flex justify-around items-center h-[72px] pb-2 md:hidden">
+        <nav className="fixed bottom-0 left-0 right-0 z-40 h-[72px] w-full max-w-full overflow-hidden bg-white border-t border-gray-100/80 shadow-[0_-5px_15px_rgba(0,0,0,0.03)] px-4 py-1.5 pb-2 flex justify-around items-center md:hidden">
           <button
             onClick={() => {
               setActiveTab("feed");
