@@ -19,6 +19,7 @@ import {
   type CompanionActivityStats
 } from "../config/companionConfig";
 import { normalizeCompanionMessageFrequency, resolveStoredCompanionState, writeStoredCompanionState } from "../lib/companionState";
+import type { PushState } from "../hooks/usePwa";
 import { ProfilePageSkeleton } from "./LoadingSkeletons";
 import { 
   User, 
@@ -42,10 +43,27 @@ import {
   LogOut,
   MessageCircle,
   Volume2,
-  VolumeX
+  BellRing,
+  Check
 } from "lucide-react";
 
-export const StudentProfilePage: React.FC = () => {
+type StudentProfilePageProps = {
+  pushState: PushState;
+  pushError: string;
+  isPushBusy: boolean;
+  notificationPermission: NotificationPermission;
+  onEnablePush: () => Promise<boolean>;
+  onDisablePush: () => Promise<boolean>;
+};
+
+export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
+  pushState,
+  pushError,
+  isPushBusy,
+  notificationPermission,
+  onEnablePush,
+  onDisablePush
+}) => {
   const { 
     currentUser, 
     isAuthInitializing,
@@ -127,15 +145,8 @@ export const StudentProfilePage: React.FC = () => {
   const companionPetCount = Math.max(0, Number(companionProgress.petCount || 0));
   const companionMessagesEnabled = companionProgress.messagesEnabled !== false;
   const companionMessageFrequency = normalizeCompanionMessageFrequency(companionProgress.messageFrequency);
-  const companionMessageFrequencyLabel = companionMessageFrequency <= 20
-    ? "Very quiet"
-    : companionMessageFrequency <= 40
-      ? "Reduced"
-      : companionMessageFrequency <= 60
-        ? "Balanced"
-        : companionMessageFrequency <= 80
-          ? "Social"
-          : "Full";
+  const companionMessageLevel = !companionMessagesEnabled ? 0 : companionMessageFrequency < 70 ? 1 : 2;
+  const companionMessageFrequencyLabel = companionMessageLevel === 0 ? "Off" : companionMessageLevel === 1 ? "Fewer" : "Full";
   const companionActivityStats: CompanionActivityStats = {
     hosted: new Set(hangouts.filter(hangout => hangout.creator_id === currentUser.id).map(hangout => hangout.id)).size,
     joined: new Set(applications.filter(application => application.applicant_id === currentUser.id && application.status === "accepted").map(application => application.hangout_id)).size,
@@ -497,6 +508,57 @@ export const StudentProfilePage: React.FC = () => {
             </p>
           </div>
 
+          {/* Device notification settings */}
+          <div className="bg-white border border-gray-100 p-5 rounded-3xl shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-50 pb-3">
+              <div className="flex items-center gap-2">
+                <BellRing className="h-5 w-5 text-amber-500" />
+                <h3 className="text-sm font-bold text-slate-850">Notifications</h3>
+              </div>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                pushState === "enabled" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
+              }`}>
+                {pushState === "enabled" ? "Enabled" : "Off"}
+              </span>
+            </div>
+
+            <p className="text-xs leading-relaxed text-gray-500">
+              Receive join requests, approvals, chat messages, replies and hangout reminders on this device.
+            </p>
+
+            {pushError && <p className="text-xs font-bold text-rose-600">{pushError}</p>}
+
+            {pushState === "enabled" ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 py-2.5 text-xs font-black text-emerald-700">
+                  <Check className="h-4 w-4" /> Notifications are enabled
+                </div>
+                <button
+                  type="button"
+                  disabled={isPushBusy}
+                  onClick={() => void onDisablePush()}
+                  className="w-full py-1.5 text-xs font-bold text-slate-400 hover:text-rose-500 disabled:cursor-wait disabled:opacity-50"
+                >
+                  {isPushBusy ? "Updating this device…" : "Turn off on this device"}
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={isPushBusy || ["checking", "insecure", "unavailable", "unsupported", "denied"].includes(pushState)}
+                onClick={() => void onEnablePush()}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-black text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400"
+              >
+                <BellRing className="h-4 w-4" />
+                {isPushBusy || pushState === "checking"
+                  ? "Checking this device…"
+                  : notificationPermission === "granted"
+                    ? "Reconnect notifications"
+                    : "Enable notifications"}
+              </button>
+            )}
+          </div>
+
           {/* Privacy Shielder settings */}
           <div className="bg-white border border-gray-100 p-5 rounded-3xl shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b border-gray-50 pb-3">
@@ -554,45 +616,32 @@ export const StudentProfilePage: React.FC = () => {
               Choose how often your companion speaks. You can still pet and move it when messages are off.
             </p>
 
-            <button
-              type="button"
-              onClick={() => updateCompanionMessagePreferences({
-                messagesEnabled: !companionMessagesEnabled,
-                messageFrequency: companionMessageFrequency
-              })}
-              className={`flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black transition-colors ${
-                companionMessagesEnabled
-                  ? "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                  : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              {companionMessagesEnabled ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-              {companionMessagesEnabled ? "Turn off companion messages" : "Turn on companion messages"}
-            </button>
-
-            <div className={`space-y-2 ${companionMessagesEnabled ? "" : "opacity-45"}`}>
+            <div className="space-y-2">
               <div className="flex items-center justify-between gap-3 text-[10px] font-bold text-slate-500">
-                <label htmlFor="companion-message-frequency">Message frequency</label>
+                <label htmlFor="companion-message-frequency">How often should your companion speak?</label>
                 <span>{companionMessageFrequencyLabel}</span>
               </div>
               <input
                 id="companion-message-frequency"
                 type="range"
-                min="20"
-                max="100"
-                step="20"
-                value={companionMessageFrequency}
-                disabled={!companionMessagesEnabled}
-                onChange={event => updateCompanionMessagePreferences({
-                  messagesEnabled: companionMessagesEnabled,
-                  messageFrequency: Number(event.target.value)
-                })}
-                className="h-2 w-full cursor-pointer accent-rose-500 disabled:cursor-not-allowed"
+                min="0"
+                max="2"
+                step="1"
+                value={companionMessageLevel}
+                onChange={event => {
+                  const level = Number(event.target.value);
+                  updateCompanionMessagePreferences({
+                    messagesEnabled: level > 0,
+                    messageFrequency: level === 1 ? 40 : 100
+                  });
+                }}
+                className="h-2 w-full cursor-pointer accent-rose-500"
                 aria-label="Companion message frequency"
               />
-              <div className="flex justify-between text-[9px] font-semibold text-slate-400">
+              <div className="grid grid-cols-3 text-center text-[9px] font-semibold text-slate-400">
+                <span className="text-left">Off</span>
                 <span>Fewer</span>
-                <span>More</span>
+                <span className="text-right">Full</span>
               </div>
             </div>
           </div>

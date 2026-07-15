@@ -72,6 +72,36 @@ import {
 const SYSTEM_DELETED_USER_ID = "deleted_user";
 const RECENT_HANGOUT_WINDOW_MONTHS = 2;
 const adminChooserPositionStorageKey = "xmum_admin_chooser_position";
+const onboardingSlides = [
+  {
+    title: "Find your campus circle",
+    text: "Browse, search and filter student hangouts, or post your own plan with clear eligibility and timing.",
+    icon: Compass,
+    tone: "from-rose-500 to-pink-400",
+    points: ["Discover plans that match you", "Create and manage hangouts", "See active and past activity"]
+  },
+  {
+    title: "Join and coordinate safely",
+    text: "Apply normally or anonymously. Hosts approve requests before private meeting details and participant chats unlock.",
+    icon: Users,
+    tone: "from-teal-500 to-cyan-400",
+    points: ["Controlled join approvals", "Protected meeting locations", "Built-in participant chat"]
+  },
+  {
+    title: "Never miss the plan",
+    text: "Use the website or install the PWA, enable notifications, and let your companion grow as you take part.",
+    icon: BellRing,
+    tone: "from-amber-500 to-orange-400",
+    points: ["Requests, replies and reminders", "Install without an app store", "Companion states and progress"]
+  },
+  {
+    title: "You stay in control",
+    text: "Tune profile privacy, companion messages and notifications. Block or report anything that feels unsafe.",
+    icon: ShieldAlert,
+    tone: "from-violet-500 to-indigo-400",
+    points: ["PII privacy shield", "Reporting and blocking tools", "Settings available in your profile"]
+  }
+] as const;
 type FloatingPosition = { x: number; y: number };
 
 const getStoredAdminChooserPosition = (): FloatingPosition => {
@@ -1230,6 +1260,7 @@ const AppContent: React.FC = () => {
             pushState={pwa.pushState}
             notificationPermission={pwa.notificationPermission}
             pushError={pwa.pushError}
+            isPushBusy={pwa.isPushBusy}
             onInstall={pwa.install}
             onEnablePush={pwa.enablePush}
             onDisablePush={pwa.disablePush}
@@ -1237,7 +1268,16 @@ const AppContent: React.FC = () => {
           />
         );
       case "profile":
-        return <StudentProfilePage />;
+        return (
+          <StudentProfilePage
+            pushState={pwa.pushState}
+            pushError={pwa.pushError}
+            isPushBusy={pwa.isPushBusy}
+            notificationPermission={pwa.notificationPermission}
+            onEnablePush={pwa.enablePush}
+            onDisablePush={pwa.disablePush}
+          />
+        );
       case "feed":
         if (showAppSkeletons) {
           return <FeedSkeleton />;
@@ -4074,10 +4114,40 @@ const AppContent: React.FC = () => {
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 15 }}
               transition={{ type: "spring", duration: 0.3 }}
-              className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-gray-100 relative space-y-5 text-center font-sans"
+              className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-3xl border border-rose-100 bg-white p-5 sm:p-6 text-center font-sans shadow-2xl space-y-5"
             >
               
-              {onboardingStep === 0 && (
+              <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br ${onboardingSlides[Math.min(onboardingStep, onboardingSlides.length - 1)].tone} text-white shadow-lg`}>
+                {React.createElement(onboardingSlides[Math.min(onboardingStep, onboardingSlides.length - 1)].icon, { className: "h-7 w-7" })}
+              </div>
+              <div className="space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-500">
+                  Quick tour {Math.min(onboardingStep + 1, onboardingSlides.length)} of {onboardingSlides.length}
+                </p>
+                <h3 className="text-xl font-black tracking-tight text-slate-900">
+                  {onboardingSlides[Math.min(onboardingStep, onboardingSlides.length - 1)].title}
+                </h3>
+                <p className="text-xs font-semibold leading-relaxed text-slate-500">
+                  {onboardingSlides[Math.min(onboardingStep, onboardingSlides.length - 1)].text}
+                </p>
+              </div>
+              <div className="space-y-2 text-left">
+                {onboardingSlides[Math.min(onboardingStep, onboardingSlides.length - 1)].points.map(point => (
+                  <div key={point} className="flex items-center gap-2.5 rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white text-rose-500 shadow-sm">
+                      <ChevronRight className="h-3 w-3" />
+                    </span>
+                    {point}
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-center gap-1.5" aria-label={`Tour step ${onboardingStep + 1} of ${onboardingSlides.length}`}>
+                {onboardingSlides.map((slide, index) => (
+                  <span key={slide.title} className={`h-1.5 rounded-full transition-all ${index === onboardingStep ? "w-6 bg-rose-500" : "w-1.5 bg-slate-200"}`} />
+                ))}
+              </div>
+
+              {false && onboardingStep === 0 && (
                 <>
                   <span className="text-4xl block">✨</span>
                   <h3 className="text-gray-900 font-extrabold text-lg">Welcome to XMUM Hangouts!</h3>
@@ -4087,7 +4157,7 @@ const AppContent: React.FC = () => {
                 </>
               )}
 
-              {onboardingStep === 1 && (
+              {false && onboardingStep === 1 && (
                 <>
                   <span className="text-4xl block">🛡️</span>
                   <h3 className="text-gray-900 font-extrabold text-lg">Safety Access Locks</h3>
@@ -4097,7 +4167,7 @@ const AppContent: React.FC = () => {
                 </>
               )}
 
-              {onboardingStep === 2 && (
+              {false && onboardingStep === 2 && (
                 <>
                   <span className="text-4xl block">🤐</span>
                   <h3 className="text-gray-900 font-extrabold text-lg">Anonymity & Flags</h3>
@@ -4108,13 +4178,22 @@ const AppContent: React.FC = () => {
               )}
 
               <div className="flex gap-2.5 pt-2">
-                {onboardingStep < 2 ? (
+                {onboardingStep > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setOnboardingStep(onboardingStep - 1)}
+                    className="rounded-xl bg-slate-100 px-4 py-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-200"
+                  >
+                    Back
+                  </button>
+                )}
+                {onboardingStep < onboardingSlides.length - 1 ? (
                   <button
                     id="onboarding-next-btn"
                     onClick={() => setOnboardingStep(onboardingStep + 1)}
                     className="flex-grow bg-rose-500 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-xl text-xs transition-colors flex items-center justify-center gap-1"
                   >
-                    Next Guide <ChevronRight className="w-3.5 h-3.5" />
+                    Next <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 ) : (
                   <button
@@ -4126,7 +4205,7 @@ const AppContent: React.FC = () => {
                     }}
                     className="flex-grow bg-teal-500 hover:bg-teal-600 text-white font-black py-2.5 px-4 rounded-xl text-xs transition-all duration-200 hover:scale-[1.02] active:scale-95 shadow-sm"
                   >
-                    Get Started!
+                    Start exploring
                   </button>
                 )}
               </div>

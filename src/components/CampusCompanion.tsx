@@ -559,6 +559,12 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
   // Connection events
   useEffect(() => {
+    if (!companionMessagesEnabledRef.current) {
+      queueRef.current = [];
+      setShowBubble(false);
+      setHasBubbleMessage(false);
+      return;
+    }
     if (currentUser) {
       const signedInLine =
         angerSource === "drag" && isCompanionAngry

@@ -32,7 +32,9 @@ export const usePwa = (userId?: string | null) => {
   const [isInstalled, setIsInstalled] = useState(() => isStandaloneDisplay());
   const [pushState, setPushState] = useState<PushState>('checking');
   const [pushError, setPushError] = useState('');
+  const [isPushBusy, setIsPushBusy] = useState(false);
   const automaticPushSetupRef = useRef<string | null>(null);
+  const pushEnablePromiseRef = useRef<Promise<boolean> | null>(null);
 
   const platform = useMemo(() => {
     const ua = navigator.userAgent.toLowerCase();
@@ -139,7 +141,10 @@ export const usePwa = (userId?: string | null) => {
     }
   }, [installPrompt]);
 
-  const enablePush = useCallback(async () => {
+  const enablePush = useCallback(() => {
+    if (pushEnablePromiseRef.current) return pushEnablePromiseRef.current;
+
+    const operation = (async () => {
     setPushError('');
     if (!userId) {
       setPushError('Please sign in before enabling notifications.');
@@ -226,13 +231,24 @@ export const usePwa = (userId?: string | null) => {
       }
       return false;
     }
+    })();
+
+    pushEnablePromiseRef.current = operation;
+    setIsPushBusy(true);
+    void operation.finally(() => {
+      if (pushEnablePromiseRef.current === operation) {
+        pushEnablePromiseRef.current = null;
+        setIsPushBusy(false);
+      }
+    });
+    return operation;
   }, [basePushApisSupported, platform.ios, userId]);
 
   // Browser permission and a working push subscription are separate. If Chrome
   // already has permission, repair a missing subscription after sign-in without
   // asking the user to grant that same permission again.
   useEffect(() => {
-    if (!userId || !['prompt', 'enabled'].includes(pushState) || Notification.permission !== 'granted') return;
+    if (!userId || pushState !== 'prompt' || Notification.permission !== 'granted') return;
     if (automaticPushSetupRef.current === userId) return;
     automaticPushSetupRef.current = userId;
     void enablePush();
@@ -283,6 +299,7 @@ export const usePwa = (userId?: string | null) => {
     notificationPermission: basePushApisSupported ? Notification.permission : 'default',
     pushState,
     pushError,
+    isPushBusy,
     enablePush,
     disablePush,
     refreshPushState

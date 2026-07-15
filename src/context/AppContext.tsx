@@ -2765,7 +2765,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       }
 
-      const { data: sessionData } = await supabase.auth.getSession();
+      // A signed-out login does not need a session lookup. Skipping it avoids an
+      // unnecessary auth-storage round trip, which is noticeably slower in PWAs.
+      const sessionData = currentUser ? (await supabase.auth.getSession()).data : { session: null };
       const currentSessionEmail = sessionData.session?.user?.email?.toLowerCase();
       const shouldLinkToCurrentUser =
         Boolean(currentSessionEmail) &&
@@ -2776,10 +2778,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const authOptions = {
         redirectTo,
         scopes: "email",
-        queryParams: normalizedEmailHint ? { login_hint: normalizedEmailHint } : undefined
+        queryParams: normalizedEmailHint ? { login_hint: normalizedEmailHint } : undefined,
+        skipBrowserRedirect: true
       };
 
       let authResponse: any;
+      markAuthRedirectPending();
       if (shouldLinkToCurrentUser) {
         authResponse = await supabase.auth.linkIdentity({
           provider: "azure",
@@ -2803,23 +2807,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { data, error } = authResponse as any;
 
       if (error) {
+        clearAuthRedirectPending();
         return { success: false, error: error.message || "Microsoft sign-in could not be started." };
       }
 
       if (data?.url) {
-        markAuthRedirectPending();
-        window.location.assign(data.url);
+        window.location.replace(data.url);
         return { success: true };
       }
 
       if (shouldLinkToCurrentUser) {
+        clearAuthRedirectPending();
         return { success: true };
       }
 
       if (!data?.url) {
+        clearAuthRedirectPending();
         return { success: false, error: "Microsoft sign-in link could not be created." };
       }
     } catch (e: any) {
+      clearAuthRedirectPending();
       console.error("Microsoft sign-in failed:", e);
       return { success: false, error: e.message || "Failed to start Microsoft sign-in." };
     }

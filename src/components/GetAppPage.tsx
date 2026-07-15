@@ -12,6 +12,7 @@ interface GetAppPageProps {
   pushState: PushState;
   notificationPermission: NotificationPermission;
   pushError: string;
+  isPushBusy: boolean;
   onInstall: () => Promise<'installed' | 'instructions' | 'dismissed'>;
   onEnablePush: () => Promise<boolean>;
   onDisablePush: () => Promise<boolean>;
@@ -36,6 +37,7 @@ export const GetAppPage: React.FC<GetAppPageProps> = ({
   pushState,
   notificationPermission,
   pushError,
+  isPushBusy,
   onInstall,
   onEnablePush,
   onDisablePush,
@@ -192,18 +194,18 @@ export const GetAppPage: React.FC<GetAppPageProps> = ({
               <div className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-50 border border-emerald-100 py-3 text-emerald-700 text-sm font-black">
                 <Check className="w-4 h-4" /> Notifications enabled
               </div>
-              <button onClick={() => void onDisablePush()} className="w-full text-xs font-bold text-slate-400 hover:text-rose-500 cursor-pointer">
-                Turn off on this device
+              <button disabled={isPushBusy} onClick={() => void onDisablePush()} className="w-full text-xs font-bold text-slate-400 hover:text-rose-500 cursor-pointer disabled:cursor-wait disabled:opacity-50">
+                {isPushBusy ? 'Updating this device…' : 'Turn off on this device'}
               </button>
             </div>
           ) : (
             <button
               id="enable-push-button"
               onClick={() => void onEnablePush()}
-              disabled={pushState === 'checking' || pushState === 'insecure' || pushState === 'unavailable' || pushState === 'unsupported' || pushState === 'denied'}
+              disabled={isPushBusy || pushState === 'checking' || pushState === 'insecure' || pushState === 'unavailable' || pushState === 'unsupported' || pushState === 'denied'}
               className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-2xl bg-amber-400 hover:bg-amber-500 disabled:bg-slate-200 disabled:text-slate-400 text-amber-950 text-sm font-black cursor-pointer disabled:cursor-not-allowed transition-colors"
             >
-              <BellRing className="w-4 h-4" /> {pushState === 'checking'
+              <BellRing className="w-4 h-4" /> {isPushBusy || pushState === 'checking'
                 ? 'Checking this device…'
                 : notificationPermission === 'granted'
                   ? 'Re-enable notifications'
