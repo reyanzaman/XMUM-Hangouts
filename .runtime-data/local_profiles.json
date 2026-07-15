@@ -81,8 +81,8 @@
     "appeal_count": 0,
     "is_demo_profile": false,
     "birthdate": "2000-05-03",
-    "password_hash": "f393bc7b287ab2bccb2e6cf81db8917aaafe8c78f242124f9f75ebda6cc4290a",
-    "companion_pet_count": 1101,
+    "password_hash": "pbkdf2-sha256$210000$3e276d5e7611ca44a6404da727705997$afd5e7107ff6ddd7e77f47da22330e8756b0fc9338722d142c6e313b45aead0b",
+    "companion_pet_count": 1102,
     "companion_selected_state_id": "sakura-kitsune"
   },
   {

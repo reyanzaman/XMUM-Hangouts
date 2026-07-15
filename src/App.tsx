@@ -34,6 +34,7 @@ import { StudentProfilePage } from "./components/StudentProfilePage";
 import { Logo } from "./components/Logo";
 import { CampusCompanion } from "./components/CampusCompanion";
 import { GetAppPage } from "./components/GetAppPage";
+import { CountryFlag } from "./components/CountryFlag";
 import { ChatWindowSkeleton, FeedSkeleton, PortalSkeleton } from "./components/LoadingSkeletons";
 import { usePwa } from "./hooks/usePwa";
 import {
@@ -103,18 +104,24 @@ const onboardingSlides = [
   }
 ] as const;
 type FloatingPosition = { x: number; y: number };
+const defaultAdminChooserPosition: FloatingPosition = { x: 0, y: 0 };
+
+const clampAdminChooserPosition = (position: FloatingPosition): FloatingPosition => ({
+  x: Math.min(Math.max(0, position.x), Math.max(0, window.innerWidth - 164)),
+  y: Math.min(0, Math.max(-Math.max(0, window.innerHeight - 64), position.y))
+});
 
 const getStoredAdminChooserPosition = (): FloatingPosition => {
   try {
     const stored = JSON.parse(localStorage.getItem(adminChooserPositionStorageKey) || "null");
     const x = Number(stored?.x);
     const y = Number(stored?.y);
-    return {
-      x: Number.isFinite(x) ? Math.min(Math.max(0, x), Math.max(0, window.innerWidth - 164)) : 0,
-      y: Number.isFinite(y) ? Math.min(0, Math.max(-Math.max(0, window.innerHeight - 64), y)) : 0
-    };
+    return clampAdminChooserPosition({
+      x: Number.isFinite(x) ? x : defaultAdminChooserPosition.x,
+      y: Number.isFinite(y) ? y : defaultAdminChooserPosition.y
+    });
   } catch {
-    return { x: 0, y: 0 };
+    return { ...defaultAdminChooserPosition };
   }
 };
 const LOCKED_MEETING_POINT_MARKERS = [
@@ -687,6 +694,31 @@ const AppContent: React.FC = () => {
   const [adminChooserPosition, setAdminChooserPosition] = useState<FloatingPosition>(getStoredAdminChooserPosition);
   const adminChooserPositionRef = useRef(adminChooserPosition);
   const adminChooserDraggedRef = useRef(false);
+
+  useEffect(() => {
+    adminChooserPositionRef.current = adminChooserPosition;
+    try {
+      localStorage.setItem(adminChooserPositionStorageKey, JSON.stringify(adminChooserPosition));
+    } catch {
+      // Keep the chooser usable for this session when storage is unavailable.
+    }
+  }, [adminChooserPosition]);
+
+  useEffect(() => {
+    const keepAdminChooserInView = () => {
+      const nextPosition = clampAdminChooserPosition(adminChooserPositionRef.current);
+      if (
+        nextPosition.x !== adminChooserPositionRef.current.x ||
+        nextPosition.y !== adminChooserPositionRef.current.y
+      ) {
+        adminChooserPositionRef.current = nextPosition;
+        setAdminChooserPosition(nextPosition);
+      }
+    };
+
+    window.addEventListener("resize", keepAdminChooserInView);
+    return () => window.removeEventListener("resize", keepAdminChooserInView);
+  }, []);
 
   const minimumCreateDateTime = getRoundedMinimumTime();
   const minimumCreateDate = formatDateInputValue(minimumCreateDateTime);
@@ -2237,7 +2269,8 @@ const AppContent: React.FC = () => {
                                 <div className="flex flex-wrap items-center gap-2 pb-3">
                                   <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Hosted by</span>
                                   {planner?.home_country && !(hangoutItem.is_anonymous && app.status !== "accepted" && !currentUser?.is_admin) && (
-                                    <span className="rounded-full border border-slate-100 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-100 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                                      <CountryFlag country={planner.home_country} className="h-3.5 w-3.5" />
                                       {planner.home_country}
                                     </span>
                                   )}

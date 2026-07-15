@@ -57,6 +57,7 @@ export const COUNTRIES = [
   "Singapore",
   "Thailand",
   "Vietnam",
+  "Philippines",
   "Nigeria",
   "Kenya",
   "Senegal",
@@ -76,7 +77,8 @@ export const LANGUAGES = [
   "Bengali",
   "French",
   "Russian",
-  "Hindi"
+  "Hindi",
+  "Filipino (Tagalog)"
 ];
 
 export const STUDY_YEARS = [

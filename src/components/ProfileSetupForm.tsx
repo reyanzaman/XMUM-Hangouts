@@ -7,6 +7,7 @@ import React, { useState } from "react";
 import { useApp } from "../context/AppContext";
 import { COUNTRIES, XMUM_PROGRAMS, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
 import { AvatarPicker } from "./AvatarPicker";
+import { CountryFlag } from "./CountryFlag";
 import { Plus, X, Heart, ShieldAlert, Calendar } from "lucide-react";
 
 export function calculateAge(birthdateStr: string): number {
@@ -194,12 +195,14 @@ export const ProfileSetupForm: React.FC = () => {
             <label className="block text-xs font-bold text-gray-500">
               Country / Place of Origin <span className="text-rose-500">*</span>
             </label>
+            <div className="relative">
+              <CountryFlag country={country} className="pointer-events-none absolute left-3 top-1/2 z-10 h-5 w-5 -translate-y-1/2" />
             <select
               id="setup-country-input"
               value={country}
               onChange={e => setCountry(e.target.value)}
               required
-              className="w-full bg-white border border-gray-200 focus:border-rose-400 focus:ring-1 focus:ring-rose-400 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-gray-700 outline-none transition-colors"
+              className="w-full bg-white border border-gray-200 focus:border-rose-400 focus:ring-1 focus:ring-rose-400 rounded-xl pl-11 pr-4 py-2.5 text-xs sm:text-sm text-gray-700 outline-none transition-colors"
             >
               {availableCountries.map(option => (
                 <option key={option} value={option}>
@@ -207,6 +210,7 @@ export const ProfileSetupForm: React.FC = () => {
                 </option>
               ))}
             </select>
+            </div>
             <div className="text-[10px] text-gray-400 italic">
               You can change this once later from My Profile after your profile is completed.
             </div>

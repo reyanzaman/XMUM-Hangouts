@@ -7,6 +7,7 @@ import React from "react";
 import { HangoutRestrictions } from "../types";
 import { COUNTRIES, LANGUAGES, XMUM_PROGRAMS } from "../config/xmum-config";
 import { X } from "lucide-react";
+import { CountryFlag } from "./CountryFlag";
 
 interface RestrictionBuilderProps {
   restrictions: HangoutRestrictions;
@@ -68,6 +69,7 @@ export const RestrictionBuilder: React.FC<RestrictionBuilderProps> = ({ restrict
             <div className="flex flex-wrap gap-1.5 pt-1.5">
               {restrictions.countries.map(c => (
                 <span key={c} className="inline-flex items-center gap-1 bg-rose-50/45 text-rose-600 px-2.5 py-0.5 rounded-full text-[10px] font-medium border border-rose-100/20">
+                  <CountryFlag country={c} className="h-3.5 w-3.5" />
                   {c}
                   <button
                     type="button"

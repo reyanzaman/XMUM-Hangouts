@@ -48,7 +48,9 @@ const companionAngerSourceStorageKey = "xmum_companion_anger_source";
 const normalAngerPetsRequired = 5;
 const redHotAngerPetsRequired = 9;
 const companionReturnMinimumMinutes = 2;
-const companionReturnMaximumMinutes = 6;
+const companionReturnMaximumMinutes = 10;
+const companionHomePositionVersion = "mobile-down-18-right-9-v1";
+const companionHomePositionVersionStorageKey = "xmum_companion_home_position_version";
 const getRandomDragAngerThreshold = () => 8 + Math.floor(Math.random() * 6);
 
 type CompanionAngerSource = "none" | "profanity" | "drag";
@@ -143,6 +145,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const [isCompanionNearLeft, setIsCompanionNearLeft] = useState(false);
   const [showBubble, setShowBubble] = useState<boolean>(true);
   const initialMessagePreferences = resolveStoredCompanionState(currentUser?.email, currentUser || undefined);
+  const [companionVisible, setCompanionVisible] = useState(initialMessagePreferences.companionVisible !== false);
   const [companionMessagesEnabled, setCompanionMessagesEnabled] = useState(initialMessagePreferences.messagesEnabled !== false);
   const [companionMessageFrequency, setCompanionMessageFrequency] = useState(
     normalizeCompanionMessageFrequency(initialMessagePreferences.messageFrequency)
@@ -597,6 +600,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     const handleCompanionStateUpdated = (event: Event) => {
       const customEvent = event as CustomEvent<StoredCompanionState>;
       const detail = customEvent.detail || {};
+      if (detail.companionVisible !== undefined) {
+        setCompanionVisible(detail.companionVisible !== false);
+      }
       if (detail.messagesEnabled !== undefined) {
         const enabled = detail.messagesEnabled !== false;
         companionMessagesEnabledRef.current = enabled;
@@ -641,6 +647,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     setPetCount(nextPetCount);
     setSelectedStateId(nextSelectedStateId);
     const nextMessagesEnabled = resolvedState.messagesEnabled !== false;
+    setCompanionVisible(resolvedState.companionVisible !== false);
     const nextMessageFrequency = normalizeCompanionMessageFrequency(resolvedState.messageFrequency);
     companionMessagesEnabledRef.current = nextMessagesEnabled;
     companionMessageFrequencyRef.current = nextMessageFrequency;
@@ -1083,9 +1090,10 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   };
 
   const updateCompanionEdgeState = (offsetX: number, offsetY: number) => {
-    const restingBottom = currentUser ? 96 : 24;
+    const isDesktop = window.innerWidth >= 768;
+    const restingBottom = isDesktop ? 48 : currentUser ? 102 : 30;
     const estimatedCompanionTop = window.innerHeight - restingBottom - 72 + offsetY;
-    const restingRight = window.innerWidth >= 768 ? 24 : 16;
+    const restingRight = isDesktop ? 40 : 23;
     const estimatedCompanionLeft = window.innerWidth - restingRight - 72 + offsetX;
     setIsBubbleBelow(estimatedCompanionTop < 150);
     setIsCompanionNearLeft(estimatedCompanionLeft < (window.innerWidth >= 768 ? 170 : 120));
@@ -1150,6 +1158,38 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   };
 
   useEffect(() => () => clearCompanionReturnTimer(), []);
+
+  useEffect(() => {
+    const userPositionVersionKey = `${companionHomePositionVersionStorageKey}:${currentUser?.id || "guest"}`;
+    let shouldResetPosition = true;
+
+    try {
+      shouldResetPosition = localStorage.getItem(userPositionVersionKey) !== companionHomePositionVersion;
+      if (shouldResetPosition) {
+        localStorage.setItem(userPositionVersionKey, companionHomePositionVersion);
+      }
+    } catch {
+      // Reset safely even when browser storage is unavailable.
+    }
+
+    if (!shouldResetPosition) return;
+
+    clearCompanionReturnTimer();
+    companionOffsetRef.current = { x: 0, y: 0 };
+    setCompanionOffset({ x: 0, y: 0 });
+    setIsBubbleBelow(false);
+    setIsCompanionNearLeft(false);
+    setIsDragReturning(false);
+    setDragReturnMotion({
+      x: 0,
+      y: 0,
+      rotate: 0,
+      scale: 1,
+      scaleX: 1,
+      scaleY: 1,
+      transition: { type: "spring", stiffness: 150, damping: 20 }
+    });
+  }, [currentUser?.id]);
 
   useEffect(() => {
     const handleResize = () => window.requestAnimationFrame(keepCompanionInsideViewport);
@@ -1554,6 +1594,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         };
   const bubbleHorizontalShift = isCompanionNearLeft ? (window.innerWidth >= 768 ? 137 : 86) : 0;
 
+  if (!companionVisible) return null;
+
   return (
     <motion.div 
       ref={containerRef}
@@ -1565,7 +1607,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         damping: 18, 
         delay: 0.8
       }}
-      className={`fixed ${currentUser ? "bottom-24 right-4 md:bottom-6 md:right-6" : "bottom-6 right-4 md:right-6"} z-40 flex max-w-[calc(100vw-1rem)] flex-col items-end pointer-events-none font-sans select-none`}
+      className={`fixed ${currentUser ? "bottom-[102px] right-[23px] md:bottom-12 md:right-10" : "bottom-[30px] right-[23px] md:bottom-12 md:right-10"} z-40 flex max-w-[calc(100vw-1rem)] flex-col items-end pointer-events-none font-sans select-none`}
     >
       {/* Dynamic Bubble text */}
       <motion.div

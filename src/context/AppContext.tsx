@@ -310,6 +310,17 @@ const getLocalAuthToken = () => {
   }
 };
 
+const getCachedCurrentUser = (expectedUserId?: string | null): Profile | null => {
+  try {
+    const cached = localStorage.getItem("xmum_current_user_profile");
+    if (!cached) return null;
+    const profile = normalizeProfileRecord(JSON.parse(cached) as Profile);
+    return !expectedUserId || profile.id === expectedUserId ? profile : null;
+  } catch {
+    return null;
+  }
+};
+
 const getAuthRedirectOrigin = () => {
   const { protocol, hostname, port } = window.location;
   if (hostname === "127.0.0.1") {
@@ -652,6 +663,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // --- DATABASE TABLES IN LOCAL STORAGE ---
+  const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
   // Never treat a local profile cache as proof of authentication. Startup restores
   // the profile only after Supabase or the signed server session validates it.
   const [currentUser, setCurrentUser] = useState<Profile | null>(null);
@@ -661,13 +673,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser) {
       localStorage.setItem("xmum_current_user_profile", JSON.stringify(currentUser));
       localStorage.setItem("xmum_current_user_id", currentUser.id);
-    } else {
+    } else if (!isAuthInitializing) {
       localStorage.removeItem("xmum_current_user_profile");
       localStorage.removeItem("xmum_current_user_id");
     }
-  }, [currentUser]);
+  }, [currentUser, isAuthInitializing]);
   const [profiles, setProfiles] = useState<Profile[]>(() => getStoredProfilesSnapshot());
-  const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
   const authReconciliationVersionRef = useRef(0);
   const companionProfileSyncTimeoutRef = useRef<number | null>(null);
   const [hangouts, setHangouts] = useState<Hangout[]>(() => getStoredHangoutsSnapshot());
@@ -1096,6 +1107,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     localStorage.setItem("xmum_current_user_id", normalizedCurrentUser.id);
     localStorage.setItem("xmum_current_user_profile", JSON.stringify(normalizedCurrentUser));
+
+    // Keep a rolling signed fallback token alongside Supabase's refresh session.
+    // A temporary provider refresh problem should not sign the user out.
+    void (async () => {
+      try {
+        const response = await fetch("/api/auth/session", {
+          headers: await getAuthenticatedHeaders(false)
+        });
+        if (!response.ok) return;
+        const payload = await response.json().catch(() => ({}));
+        if (payload.local_auth_token) storeLocalAuthToken(payload.local_auth_token);
+      } catch {
+        // Session renewal is opportunistic; the current valid session remains active.
+      }
+    })();
 
     if (!normalizedCurrentUser.is_profile_complete) {
       setShowOnboarding(false);
@@ -1835,25 +1861,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // signed local token with the server before showing a logged-in session.
         const storedActiveUser = localStorage.getItem("xmum_current_user_id");
         if (!hasLiveSession && storedActiveUser) {
+          let sessionWasRejected = false;
           try {
             const sessionResponse = await fetch("/api/auth/session", {
               headers: await getAuthenticatedHeaders(false)
             });
-            if (!sessionResponse.ok) throw new Error("Session expired.");
+            if (sessionResponse.status === 401 || sessionResponse.status === 403) {
+              sessionWasRejected = true;
+              throw new Error("Session expired.");
+            }
+            if (!sessionResponse.ok) throw new Error("Session validation is temporarily unavailable.");
             const sessionPayload = await sessionResponse.json();
             const restoredProfile = sessionPayload?.profile
               ? normalizeProfileRecord(sessionPayload.profile as Profile)
               : null;
             if (!restoredProfile || restoredProfile.id !== storedActiveUser) {
+              sessionWasRejected = true;
               throw new Error("Session profile mismatch.");
             }
+            if (sessionPayload.local_auth_token) storeLocalAuthToken(sessionPayload.local_auth_token);
             setCurrentUser(restoredProfile);
           } catch {
-            ++authReconciliationVersionRef.current;
-            storeLocalAuthToken(null);
-            localStorage.removeItem("xmum_current_user_id");
-            localStorage.removeItem("xmum_current_user_profile");
-            setCurrentUser(null);
+            if (sessionWasRejected) {
+              ++authReconciliationVersionRef.current;
+              storeLocalAuthToken(null);
+              localStorage.removeItem("xmum_current_user_id");
+              localStorage.removeItem("xmum_current_user_profile");
+              setCurrentUser(null);
+            } else {
+              const cachedProfile = getCachedCurrentUser(storedActiveUser);
+              if (cachedProfile) setCurrentUser(cachedProfile);
+            }
           }
         }
 
@@ -1898,6 +1936,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setNotifications(fallbackNotifications);
         localStorage.setItem("xmum_notifications", JSON.stringify(fallbackNotifications));
 
+        let fallbackSessionWasRejected = false;
         try {
           const { data: fallbackSession } = await supabase.auth.getSession();
           if (fallbackSession.session?.user?.email) {
@@ -1910,17 +1949,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const sessionResponse = await fetch("/api/auth/session", {
               headers: await getAuthenticatedHeaders(false)
             });
-            if (!sessionResponse.ok) throw new Error("Session expired.");
+            if (sessionResponse.status === 401 || sessionResponse.status === 403) {
+              fallbackSessionWasRejected = true;
+              throw new Error("Session expired.");
+            }
+            if (!sessionResponse.ok) throw new Error("Session validation is temporarily unavailable.");
             const sessionPayload = await sessionResponse.json();
             if (!sessionPayload?.profile) throw new Error("Session profile unavailable.");
+            if (sessionPayload.local_auth_token) storeLocalAuthToken(sessionPayload.local_auth_token);
             setCurrentUser(normalizeProfileRecord(sessionPayload.profile as Profile));
           }
         } catch {
-          ++authReconciliationVersionRef.current;
-          storeLocalAuthToken(null);
-          localStorage.removeItem("xmum_current_user_id");
-          localStorage.removeItem("xmum_current_user_profile");
-          setCurrentUser(null);
+          if (fallbackSessionWasRejected) {
+            ++authReconciliationVersionRef.current;
+            storeLocalAuthToken(null);
+            localStorage.removeItem("xmum_current_user_id");
+            localStorage.removeItem("xmum_current_user_profile");
+            setCurrentUser(null);
+          } else {
+            const cachedUserId = localStorage.getItem("xmum_current_user_id");
+            const cachedProfile = getCachedCurrentUser(cachedUserId);
+            if (cachedProfile) setCurrentUser(cachedProfile);
+          }
         }
       } finally {
         clearAuthRedirectPending();

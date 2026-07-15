@@ -897,7 +897,7 @@ function generateLocalAuthToken(profile: { id: string; email: string }) {
   const payload = {
     profileId: profile.id,
     email: normalizeProfileEmail(profile.email),
-    exp: Date.now() + 1000 * 60 * 60 * 24 * 7
+    exp: Date.now() + 1000 * 60 * 60 * 24 * 365
   };
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = crypto.createHmac("sha256", getLocalAuthSecret()).update(encodedPayload).digest("base64url");
@@ -1393,10 +1393,13 @@ async function startServer() {
       if (!identity) return res.status(401).json({ error: "Session expired." });
       const profile = await resolveBestProfileByEmail(identity.email);
       if (!profile || profile.is_blocked_globally) return res.status(401).json({ error: "Session expired." });
-      return res.status(200).json({ profile: sanitizeProfileForClient(profile) });
+      return res.status(200).json({
+        profile: sanitizeProfileForClient(profile),
+        local_auth_token: generateLocalAuthToken(profile)
+      });
     } catch (error) {
       console.warn("Session validation failed:", error);
-      return res.status(401).json({ error: "Session expired." });
+      return res.status(503).json({ error: "Session validation is temporarily unavailable." });
     }
   });
 

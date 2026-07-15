@@ -11,6 +11,7 @@ export type StoredCompanionState = {
   selectedStateId?: string | null;
   messagesEnabled?: boolean;
   messageFrequency?: number;
+  companionVisible?: boolean;
 };
 
 export function normalizeCompanionMessageFrequency(value: unknown): number {
@@ -81,6 +82,7 @@ export function resolveStoredCompanionState(
 
   return {
     ...progressionState,
+    companionVisible: keyedState.companionVisible !== false,
     messagesEnabled: keyedState.messagesEnabled !== false,
     messageFrequency: normalizeCompanionMessageFrequency(keyedState.messageFrequency)
   };
@@ -92,6 +94,7 @@ export function writeStoredCompanionState(email: string | null | undefined, stat
     petCount: Math.max(0, Number(state.petCount || 0)),
     isPermanent: Math.max(0, Number(state.petCount || 0)) >= 1000 || Boolean(state.isPermanent),
     selectedStateId: state.selectedStateId || null,
+    companionVisible: state.companionVisible !== false,
     messagesEnabled: state.messagesEnabled !== false,
     messageFrequency: normalizeCompanionMessageFrequency(state.messageFrequency)
   };

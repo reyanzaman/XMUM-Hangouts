@@ -20,6 +20,7 @@ import {
 } from "../config/companionConfig";
 import { normalizeCompanionMessageFrequency, resolveStoredCompanionState, writeStoredCompanionState } from "../lib/companionState";
 import type { PushState } from "../hooks/usePwa";
+import { CountryFlag } from "./CountryFlag";
 import { ProfilePageSkeleton } from "./LoadingSkeletons";
 import { 
   User, 
@@ -144,9 +145,16 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
     deleteAccountConfirmationInput.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
   const companionPetCount = Math.max(0, Number(companionProgress.petCount || 0));
   const companionMessagesEnabled = companionProgress.messagesEnabled !== false;
+  const companionVisible = companionProgress.companionVisible !== false;
   const companionMessageFrequency = normalizeCompanionMessageFrequency(companionProgress.messageFrequency);
-  const companionMessageLevel = !companionMessagesEnabled ? 0 : companionMessageFrequency < 70 ? 1 : 2;
-  const companionMessageFrequencyLabel = companionMessageLevel === 0 ? "Off" : companionMessageLevel === 1 ? "Fewer" : "Full";
+  const companionMessageLevel = !companionVisible ? 0 : !companionMessagesEnabled ? 1 : companionMessageFrequency < 70 ? 2 : 3;
+  const companionMessageFrequencyLabel = companionMessageLevel === 0
+    ? "Removed"
+    : companionMessageLevel === 1
+      ? "Off"
+      : companionMessageLevel === 2
+        ? "Fewer"
+        : "Full";
   const companionActivityStats: CompanionActivityStats = {
     hosted: new Set(hangouts.filter(hangout => hangout.creator_id === currentUser.id).map(hangout => hangout.id)).size,
     joined: new Set(applications.filter(application => application.applicant_id === currentUser.id && application.status === "accepted").map(application => application.hangout_id)).size,
@@ -348,7 +356,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
     }
   };
 
-  const updateCompanionMessagePreferences = (preferences: Pick<typeof companionProgress, "messagesEnabled" | "messageFrequency">) => {
+  const updateCompanionMessagePreferences = (preferences: Pick<typeof companionProgress, "messagesEnabled" | "messageFrequency" | "companionVisible">) => {
     const nextState = writeStoredCompanionState(currentUser.email, {
       ...companionProgress,
       ...preferences,
@@ -395,7 +403,6 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             onClick={() => {
               setOnboardingStep(0);
               setShowOnboarding(true);
-              showToast("Launched Onboarding Guide.", "info");
             }}
             className="text-xs font-bold text-gray-650 hover:text-rose-600 bg-white hover:bg-rose-50/50 border border-gray-200 hover:border-rose-200 px-4 py-2 rounded-2xl transition-all shadow-sm flex items-center gap-2 justify-center hover:scale-[1.02] active:scale-95 cursor-pointer"
             >
@@ -625,28 +632,30 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                 id="companion-message-frequency"
                 type="range"
                 min="0"
-                max="2"
+                max="3"
                 step="1"
                 value={companionMessageLevel}
                 onChange={event => {
                   const level = Number(event.target.value);
                   updateCompanionMessagePreferences({
-                    messagesEnabled: level > 0,
-                    messageFrequency: level === 1 ? 40 : 100
+                    companionVisible: level > 0,
+                    messagesEnabled: level > 1,
+                    messageFrequency: level === 2 ? 40 : 100
                   });
                 }}
                 className="h-2 w-full cursor-pointer accent-rose-500"
                 aria-label="Companion message frequency"
               />
-              <div className="grid grid-cols-3 text-center text-[9px] font-semibold text-slate-400">
-                <span className="text-left">Off</span>
+              <div className="grid grid-cols-4 text-center text-[9px] font-semibold text-slate-400">
+                <span className="text-left">Remove</span>
+                <span>Off</span>
                 <span>Fewer</span>
                 <span className="text-right">Full</span>
               </div>
             </div>
           </div>
 
-          <div className="bg-white border border-gray-100 p-5 rounded-3xl shadow-sm">
+          {companionVisible && <div className="bg-white border border-gray-100 p-5 rounded-3xl shadow-sm">
             <button
               type="button"
               onClick={() => setIsCompanionProgressOpen(open => !open)}
@@ -735,7 +744,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                 </div>
               </div>
             </div>
-          </div>
+          </div>}
 
           <div className="bg-white border border-rose-100 p-5 rounded-3xl shadow-sm space-y-4">
             <div>
@@ -829,8 +838,8 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                           className="w-full bg-white/5 hover:bg-white/10 border border-white/10 p-2.5 rounded-xl text-left text-xs transition-colors flex items-center justify-between group cursor-pointer"
                         >
                           <div>
-                            <span className="font-black text-slate-100 block">{user.name}</span>
-                            <span className="text-[10px] text-slate-400 block mt-0.5">{user.program} · {user.country || "Malaysia"}</span>
+                            <span className="flex items-center gap-1.5 font-black text-slate-100"><CountryFlag country={user.country || "Malaysia"} className="h-4 w-4" />{user.name}</span>
+                            <span className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400"><CountryFlag country={user.country || "Malaysia"} className="h-3.5 w-3.5" />{user.program} · {user.country || "Malaysia"}</span>
                           </div>
                           <span className="text-[9px] font-bold bg-indigo-500/30 text-indigo-300 border border-indigo-400/40 px-2 py-0.5 rounded-full group-hover:scale-105 transition-transform">
                             Switch Focus
@@ -900,11 +909,13 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               {/* Country */}
               <div className="space-y-1.5">
                 <label className="text-xs font-extrabold text-gray-500 block">Home Country</label>
+                <div className="relative">
+                  <CountryFlag country={profileCountry} className="pointer-events-none absolute left-3 top-1/2 z-10 h-5 w-5 -translate-y-1/2" />
                 <select
                   value={profileCountry}
                   onChange={e => setProfileCountry(e.target.value)}
                   disabled={isCountryLocked}
-                  className={`w-full border rounded-xl px-4 py-2 text-xs sm:text-sm outline-none transition-all ${
+                  className={`w-full border rounded-xl pl-11 pr-4 py-2 text-xs sm:text-sm outline-none transition-all ${
                     isCountryLocked
                       ? "bg-slate-100 border-gray-200 text-gray-400 cursor-not-allowed"
                       : "bg-slate-50 border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-1 focus:ring-rose-455 text-gray-700"
@@ -916,6 +927,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     </option>
                   ))}
                 </select>
+                </div>
                 <div className="text-[10px] text-gray-400 italic mt-0.5">
                   {isCountryLocked
                     ? "* Country has already been changed once and is now locked."

@@ -11,6 +11,7 @@ import { isHangoutEditHistoryComment, parseHangoutEditHistoryEntry, splitHangout
 import { buildAnonymousAliasProfile } from "../lib/profiles";
 import { AvatarSVG } from "./AvatarSVG";
 import { ProfileCard } from "./ProfileCard";
+import { CountryFlag } from "./CountryFlag";
 import { ApplicantList } from "./ApplicantList";
 import {
   Heart,
@@ -298,6 +299,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
           <AvatarSVG id={creator.avatar_id} size={52} className={shouldMaskAnonymousOnCard ? "group-hover:opacity-90 transition-opacity shrink-0" : "group-hover:scale-105 transition-transform shrink-0"} />
           <div className="min-w-0 text-left">
             <div className="flex items-center flex-wrap gap-1">
+              <CountryFlag country={creator.country || realCreator?.country || "Malaysia"} className="h-4 w-4" />
               <h4 className={`font-bold text-gray-900 text-xs sm:text-sm transition-colors ${
                 shouldMaskAnonymousOnCard
                   ? ""
@@ -310,7 +312,10 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
                   ({realCreator?.name})
                 </span>
               )}
-              {renderGenderIcon(creator.gender || realCreator?.gender || "other")}
+              <span className="inline-flex items-center gap-1">
+                <CountryFlag country={creator.country || realCreator?.country || "Malaysia"} className="h-3.5 w-3.5" />
+                {renderGenderIcon(creator.gender || realCreator?.gender || "other")}
+              </span>
             </div>
             {realCreator ? (
               <span className="text-[10px] text-slate-400 block mt-0.5 truncate max-w-[200px] sm:max-w-xs font-medium">
@@ -608,6 +613,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
                           title={`View ${profile.name}'s profile`}
                         >
                           <AvatarSVG id={profile.avatar_id} size={24} />
+                          <CountryFlag country={profile.country || "Malaysia"} className="h-4 w-4" />
                           <span className="max-w-[170px] truncate text-[11px] font-semibold text-slate-700">
                             {profile.name}
                           </span>
