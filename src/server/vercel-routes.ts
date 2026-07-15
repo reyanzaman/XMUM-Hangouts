@@ -978,6 +978,7 @@ async function handleSyncRequest(req: VercelRequest, res: VercelResponse, config
     const { data, error } = await supabaseAdmin.from(table).select("*");
     if (error) return res.status(500).json({ error: `Failed to load ${payloadKey}.` });
     const readableRows = await filterReadableRows(table, data || [], await resolveRequestIdentity(req));
+    res.setHeader("Cache-Control", "no-store, max-age=0");
     return res.status(200).json({ [payloadKey]: readableRows });
   }
 
@@ -1359,7 +1360,7 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
       gender: "Male",
       student_type: "degree",
       about_me: "Hey there! I am new here on XMUM Hangouts.",
-      avatar_id: "panda",
+      avatar_id: "",
       is_profile_complete: false,
       hide_details: false,
       is_admin: isConfiguredAdminEmail(formattedEmail),
@@ -1436,7 +1437,7 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
       gender: "Male",
       student_type: "degree",
       about_me: "Hey there! I am new here on XMUM Hangouts.",
-      avatar_id: "panda",
+      avatar_id: "",
       is_profile_complete: false,
       hide_details: false,
       is_admin: isConfiguredAdminEmail(formattedEmail),

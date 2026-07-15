@@ -1216,7 +1216,7 @@ async function startServer() {
           gender: "Male",
           student_type: "degree",
           about_me: "Hey there! I am new here on XMUM Hangouts.",
-          avatar_id: "panda",
+          avatar_id: "",
           is_profile_complete: false,
           hide_details: false,
           is_admin: isConfiguredAdminEmail(formattedEmail),
@@ -1463,7 +1463,7 @@ async function startServer() {
           gender: "Male",
           student_type: "degree",
           about_me: "Hey there! I am new here on XMUM Hangouts.",
-          avatar_id: "panda",
+          avatar_id: "",
           is_profile_complete: false,
           hide_details: false,
           is_admin: isConfiguredAdminEmail(formattedEmail),
@@ -1569,6 +1569,19 @@ async function startServer() {
       let payload = localProfileMode ? getLocalProfiles() : getLocalData(fileName);
 
       if (table === "xmum_profiles") {
+        // The local file is an offline fallback only. Reading the database here
+        // ensures manual/admin profile edits are not hidden by an older cache.
+        if (supabaseAdmin) {
+          const { data: remoteProfiles, error: remoteProfilesError } = await supabaseAdmin
+            .from("xmum_profiles")
+            .select("*");
+          if (!remoteProfilesError && Array.isArray(remoteProfiles)) {
+            payload = collapseProfilesByEmail(remoteProfiles);
+            saveLocalProfiles(payload);
+          } else if (remoteProfilesError) {
+            console.warn("Profile refresh fell back to the local cache:", remoteProfilesError.message);
+          }
+        }
         payload = payload.map((row: any) => {
           const { password, password_hash, ...safeRow } = row;
           if (isAdmin || row.id === userId || !row.hide_details) return safeRow;
@@ -1595,6 +1608,7 @@ async function startServer() {
       } else if (table === "xmum_notifications") {
         payload = isAdmin ? payload : payload.filter((row: any) => row.user_id === userId);
       }
+      res.setHeader("Cache-Control", "no-store, max-age=0");
       return res.status(200).json({ [payloadKey]: payload });
     });
 

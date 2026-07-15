@@ -47,7 +47,7 @@ export function buildAnonymousAliasProfile(
     student_id: "",
     name: `Anonymous ${variant.label}`,
     name_last_changed_at: null,
-    country: profile?.country || "Malaysia",
+    country: profile?.country || "Hidden",
     country_last_changed_at: null,
     languages: Array.isArray(profile?.languages) ? profile.languages : [],
     age: profile?.age || 20,
@@ -170,6 +170,63 @@ const ACCOUNT_SYNC_FIELDS: Array<keyof Profile> = [
   "hide_details",
   "password_hash"
 ];
+
+const REMOTE_PROFILE_FIELDS: Array<keyof Profile> = [
+  "student_id",
+  "name",
+  "name_last_changed_at",
+  "country",
+  "country_last_changed_at",
+  "languages",
+  "age",
+  "birthdate",
+  "program",
+  "year_of_study",
+  "gender",
+  "gender_last_changed_at",
+  "student_type",
+  "about_me",
+  "avatar_id",
+  "is_profile_complete",
+  "hide_details",
+  "is_admin",
+  "is_blocked_globally",
+  "flag_status",
+  "appeal_count",
+  "companion_pet_count",
+  "companion_selected_state_id",
+  "is_demo_profile"
+];
+
+/**
+ * Rehydrates cached profiles while treating the server/database copy as the
+ * source of truth for user-visible and moderation fields. Local-only auth
+ * resilience fields are deliberately preserved.
+ */
+export function mergeProfilesWithRemoteAuthority(remoteProfiles: Profile[], cachedProfiles: Profile[]): Profile[] {
+  if (remoteProfiles.length === 0) return reconcileProfilesByEmail(cachedProfiles);
+
+  const canonicalRemote = collapseProfilesByEmail(reconcileProfilesByEmail(remoteProfiles));
+  const remoteById = new Map(canonicalRemote.map(profile => [profile.id, profile]));
+  const remoteByEmail = new Map(
+    canonicalRemote.map(profile => [normalizeProfileEmail(profile.email), profile])
+  );
+
+  const refreshedCached = cachedProfiles.map(cached => {
+    const remote = remoteById.get(cached.id) || remoteByEmail.get(normalizeProfileEmail(cached.email));
+    if (!remote) return cached;
+
+    const refreshed: Profile = { ...cached };
+    for (const field of REMOTE_PROFILE_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(remote, field) && remote[field] !== undefined) {
+        (refreshed as any)[field] = remote[field];
+      }
+    }
+    return refreshed;
+  });
+
+  return reconcileProfilesByEmail([...refreshedCached, ...canonicalRemote]);
+}
 
 export function reconcileProfilesByEmail(profiles: Profile[]): Profile[] {
   const grouped = new Map<string, Profile[]>();

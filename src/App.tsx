@@ -857,7 +857,7 @@ const AppContent: React.FC = () => {
             gender: "Male",
             student_type: "degree",
             about_me: "Hey there! I am new here on XMUM Hangouts.",
-            avatar_id: "panda",
+            avatar_id: "",
             is_profile_complete: false,
             hide_details: false,
             is_admin: isPrimaryAdmin,
@@ -3474,6 +3474,11 @@ const AppContent: React.FC = () => {
         <p className="max-w-xl sm:max-w-none mx-auto text-[9px] sm:text-[10px] leading-relaxed text-slate-450 font-mono px-4">
           Disclaimer: Independently run by students. Not affiliated with or endorsed by Xiamen University Malaysia (XMUM).
         </p>
+        {activeTab === "feed" && (
+          <p className="text-[8px] font-semibold tracking-[0.16em] text-slate-300" aria-label="App version 1.10">
+            v1.10
+          </p>
+        )}
       </footer>
 
       <AnimatePresence>

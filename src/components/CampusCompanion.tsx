@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, MotionConfig } from "motion/react";
 import { useApp } from "../context/AppContext";
 import { Heart } from "lucide-react";
 import { SpecialCompanionForms } from "./SpecialCompanionForms";
@@ -258,6 +258,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
   // Idle and sleeping state tracking
   const [isIdle, setIsIdle] = useState<boolean>(false);
+  const isIdleRef = useRef(false);
   const [zzzParticles, setZzzParticles] = useState<{ id: number; fontSize: number; x: number; y: number }[]>([]);
 
   const [isCompanionAngry, setIsCompanionAngry] = useState<boolean>(() => {
@@ -309,30 +310,47 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     let idleTimeout: any;
 
     const resetIdleTimer = () => {
-      setIsIdle(prev => {
-        if (prev) {
-          setBubbleText(formatCompanionLine(pickCompanionLine(companionDialogue.wake), { name: fName }));
-          setShowBubble(true);
-          setMood("happy");
-          setCompanionPose("rest");
-        }
-        return false;
-      });
+      const wasSleeping = isIdleRef.current;
+      isIdleRef.current = false;
+      setIsIdle(false);
+
+      if (wasSleeping) {
+        const wakeLine = formatCompanionLine(pickCompanionLine(companionDialogue.wake), { name: fName });
+        queueRef.current = queueRef.current.filter(line => line !== companionDialogue.nap);
+        processingQueueRef.current = false;
+        setBubbleTextInternal(wakeLine);
+        setHasBubbleMessage(true);
+        lastCompanionMessageRef.current = wakeLine;
+        lastSpeechTimeRef.current = Date.now();
+        setShowBubble(true);
+        setMood("happy");
+        setCompanionPose("rest");
+        setReactionType("none");
+      }
 
       clearTimeout(idleTimeout);
       // Wait for 30 seconds of absolute stillness before taking a deep cozy nap
       idleTimeout = setTimeout(() => {
+        isIdleRef.current = true;
         setIsIdle(true);
         setMood("sleepy");
         setCompanionPose("rest");
         setAccessory("none");
-        setBubbleText(companionDialogue.nap);
+        setReactionType("none");
+        queueRef.current = [];
+        processingQueueRef.current = false;
+        setBubbleTextInternal(companionDialogue.nap);
+        setHasBubbleMessage(true);
+        lastCompanionMessageRef.current = companionDialogue.nap;
+        lastSpeechTimeRef.current = Date.now();
         setShowBubble(true);
       }, 30000);
     };
 
     window.addEventListener("mousemove", resetIdleTimer);
     window.addEventListener("mousedown", resetIdleTimer);
+    window.addEventListener("pointerdown", resetIdleTimer);
+    window.addEventListener("touchstart", resetIdleTimer, { passive: true });
     window.addEventListener("keydown", resetIdleTimer);
     window.addEventListener("scroll", resetIdleTimer);
 
@@ -342,10 +360,12 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       clearTimeout(idleTimeout);
       window.removeEventListener("mousemove", resetIdleTimer);
       window.removeEventListener("mousedown", resetIdleTimer);
+      window.removeEventListener("pointerdown", resetIdleTimer);
+      window.removeEventListener("touchstart", resetIdleTimer);
       window.removeEventListener("keydown", resetIdleTimer);
       window.removeEventListener("scroll", resetIdleTimer);
     };
-  }, []);
+  }, [fName]);
 
   // Floating sleepy Zzz bubbles interval
   useEffect(() => {
@@ -1378,62 +1398,85 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     : activeTierState
     ? companionAnimations[activeTierState.pose]
     : companionAnimations.resting;
-  if (reactionType === "success") {
-    activeAnimation = companionAnimations.success;
-  } else if (reactionType === "error") {
-    activeAnimation = companionAnimations.error;
-  } else if (reactionType === "subtle") {
-    activeAnimation = companionAnimations.subtle;
-  } else if (reactionType === "milestone-small") {
-    activeAnimation = companionAnimations.milestoneSmall;
-  } else if (reactionType === "milestone-medium") {
-    activeAnimation = companionAnimations.milestoneMedium;
-  } else if (reactionType === "milestone-gold") {
-    activeAnimation = companionAnimations.milestoneGold;
-  } else if (reactionType === "milestone-rainbow") {
-    activeAnimation = companionAnimations.milestoneRainbow;
-  } else if (reactionType === "milestone-ultimate") {
-    activeAnimation = companionAnimations.milestoneUltimate;
-  } else if (isRedHotAngry) {
-    activeAnimation = companionAnimations.redHotFume;
-  } else if (isCompanionAngry) {
-    activeAnimation = companionAnimations.angrySulk;
-  } else if (companionPose === "bounce") {
-    activeAnimation = companionAnimations.bounce;
-  } else if (companionPose === "fly") {
-    activeAnimation = companionAnimations.fly;
-  } else if (companionPose === "wiggle") {
-    activeAnimation = companionAnimations.wiggle;
-  } else if (companionPose === "shimmy") {
-    activeAnimation = companionAnimations.shimmy;
-  } else if (companionPose === "spin") {
-    activeAnimation = companionAnimations.spin;
-  } else if (companionPose === "snuggle") {
-    activeAnimation = companionAnimations.snuggle;
-  } else if (companionPose === "stretch") {
-    activeAnimation = companionAnimations.stretch;
-  } else if (companionPose === "peek") {
-    activeAnimation = companionAnimations.peek;
-  } else if (companionPose === "dash") {
-    activeAnimation = companionAnimations.dash;
-  } else if (companionPose === "orbit") {
-    activeAnimation = companionAnimations.orbit;
-  } else if (companionPose === "curtsy") {
-    activeAnimation = companionAnimations.curtsy;
-  } else if (companionPose === "walk") {
-    activeAnimation = companionAnimations.walk;
-  } else if (companionPose === "study") {
-    activeAnimation = companionAnimations.study;
-  } else if (companionPose === "cook") {
-    activeAnimation = companionAnimations.cook;
-  } else if (companionPose === "exercise") {
-    activeAnimation = companionAnimations.exercise;
-  } else if (companionPose === "golf") {
-    activeAnimation = companionAnimations.golf;
+  if (!isIdle) {
+    if (reactionType === "success") {
+      activeAnimation = companionAnimations.success;
+    } else if (reactionType === "error") {
+      activeAnimation = companionAnimations.error;
+    } else if (reactionType === "subtle") {
+      activeAnimation = companionAnimations.subtle;
+    } else if (reactionType === "milestone-small") {
+      activeAnimation = companionAnimations.milestoneSmall;
+    } else if (reactionType === "milestone-medium") {
+      activeAnimation = companionAnimations.milestoneMedium;
+    } else if (reactionType === "milestone-gold") {
+      activeAnimation = companionAnimations.milestoneGold;
+    } else if (reactionType === "milestone-rainbow") {
+      activeAnimation = companionAnimations.milestoneRainbow;
+    } else if (reactionType === "milestone-ultimate") {
+      activeAnimation = companionAnimations.milestoneUltimate;
+    } else if (isRedHotAngry) {
+      activeAnimation = companionAnimations.redHotFume;
+    } else if (isCompanionAngry) {
+      activeAnimation = companionAnimations.angrySulk;
+    } else if (companionPose === "bounce") {
+      activeAnimation = companionAnimations.bounce;
+    } else if (companionPose === "fly") {
+      activeAnimation = companionAnimations.fly;
+    } else if (companionPose === "wiggle") {
+      activeAnimation = companionAnimations.wiggle;
+    } else if (companionPose === "shimmy") {
+      activeAnimation = companionAnimations.shimmy;
+    } else if (companionPose === "spin") {
+      activeAnimation = companionAnimations.spin;
+    } else if (companionPose === "snuggle") {
+      activeAnimation = companionAnimations.snuggle;
+    } else if (companionPose === "stretch") {
+      activeAnimation = companionAnimations.stretch;
+    } else if (companionPose === "peek") {
+      activeAnimation = companionAnimations.peek;
+    } else if (companionPose === "dash") {
+      activeAnimation = companionAnimations.dash;
+    } else if (companionPose === "orbit") {
+      activeAnimation = companionAnimations.orbit;
+    } else if (companionPose === "curtsy") {
+      activeAnimation = companionAnimations.curtsy;
+    } else if (companionPose === "walk") {
+      activeAnimation = companionAnimations.walk;
+    } else if (companionPose === "study") {
+      activeAnimation = companionAnimations.study;
+    } else if (companionPose === "cook") {
+      activeAnimation = companionAnimations.cook;
+    } else if (companionPose === "exercise") {
+      activeAnimation = companionAnimations.exercise;
+    } else if (companionPose === "golf") {
+      activeAnimation = companionAnimations.golf;
+    }
   };
 
   // Eyes rendering based on states
   const renderEyes = () => {
+    if (isIdle) {
+      return (
+        <g>
+          <motion.g
+            animate={{ y: [0, 1, 0], scaleY: [1, 1.08, 1] }}
+            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+            style={{ originX: 0.34, originY: 0.46 }}
+          >
+            <path d="M 28 45 Q 34 51, 40 45" stroke="#1e293b" strokeWidth="3.2" strokeLinecap="round" fill="none" />
+          </motion.g>
+          <motion.g
+            animate={{ y: [0, 1, 0], scaleY: [1, 1.08, 1] }}
+            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+            style={{ originX: 0.66, originY: 0.46 }}
+          >
+            <path d="M 60 45 Q 66 51, 72 45" stroke="#1e293b" strokeWidth="3.2" strokeLinecap="round" fill="none" />
+          </motion.g>
+        </g>
+      );
+    }
+
     if (reactionType === "error") {
       // Dizzy crossed/spiral eyes on error
       return (
@@ -1489,44 +1532,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       );
     }
 
-    if (isIdle) {
-      // Real proper closed sleeping eyes that gently breathe with motion!
-      return (
-        <g>
-          {/* Left Sleeping eye line curves downwards */}
-          <motion.g
-            animate={{ y: [0, 1, 0], scaleY: [1, 1.08, 1] }}
-            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-            style={{ originX: 0.34, originY: 0.46 }}
-          >
-            <path
-              d="M 28 45 Q 34 51, 40 45"
-              stroke="#1e293b"
-              strokeWidth="3.2"
-              strokeLinecap="round"
-              fill="none"
-            />
-          </motion.g>
-          {/* Right Sleeping eye line curves downwards */}
-          <motion.g
-            animate={{ y: [0, 1, 0], scaleY: [1, 1.08, 1] }}
-            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-            style={{ originX: 0.66, originY: 0.46 }}
-          >
-            <path
-              d="M 60 45 Q 66 51, 72 45"
-              stroke="#1e293b"
-              strokeWidth="3.2"
-              strokeLinecap="round"
-              fill="none"
-            />
-          </motion.g>
-        </g>
-      );
-    }
-
-    if (isBlinking || mood === "sleepy") {
-      // Cute happy curved sleepy eyes (for blink or transient sleepy poses)
+    if (isBlinking) {
+      // A quick natural blink; actual sleeping eyes are controlled only by isIdle.
       return (
         <g>
           <path d="M 29 46 Q 34 50, 39 46" stroke="#1e293b" strokeWidth="3" strokeLinecap="round" fill="none" />
@@ -1863,7 +1870,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             className="w-full h-full drop-shadow-[0_2.5px_4.5px_rgba(244,63,94,0.3)] select-none"
           >
             {activeSpecialStateId ? (
-              <SpecialCompanionForms stateId={activeSpecialStateId} />
+              <MotionConfig reducedMotion={isIdle ? "always" : "user"}>
+                <SpecialCompanionForms stateId={activeSpecialStateId} isSleeping={isIdle} />
+              </MotionConfig>
             ) : (
               <g id="classic-companion-form">
             {isCompanionAngry && !isRedHotAngry && (

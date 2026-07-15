@@ -838,8 +838,8 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                           className="w-full bg-white/5 hover:bg-white/10 border border-white/10 p-2.5 rounded-xl text-left text-xs transition-colors flex items-center justify-between group cursor-pointer"
                         >
                           <div>
-                            <span className="flex items-center gap-1.5 font-black text-slate-100"><CountryFlag country={user.country || "Malaysia"} className="h-4 w-4" />{user.name}</span>
-                            <span className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400"><CountryFlag country={user.country || "Malaysia"} className="h-3.5 w-3.5" />{user.program} · {user.country || "Malaysia"}</span>
+                            <span className="flex items-center gap-1.5 font-black text-slate-100">{user.name}</span>
+                            <span className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400">{user.program} · {user.country || "Malaysia"}</span>
                           </div>
                           <span className="text-[9px] font-bold bg-indigo-500/30 text-indigo-300 border border-indigo-400/40 px-2 py-0.5 rounded-full group-hover:scale-105 transition-transform">
                             Switch Focus

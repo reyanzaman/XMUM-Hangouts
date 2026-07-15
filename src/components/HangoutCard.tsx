@@ -148,7 +148,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
     if (g.includes("male") && !g.includes("female")) {
       return (
         <svg 
-          className="w-3.5 h-3.5 text-sky-500 shrink-0 ml-1 inline-block self-center" 
+          className="w-3.5 h-3.5 text-sky-500 shrink-0 inline-block self-center"
           viewBox="0 0 24 24" 
           fill="none" 
           stroke="currentColor" 
@@ -166,7 +166,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
     if (g.includes("female")) {
       return (
         <svg 
-          className="w-3.5 h-3.5 text-pink-400 shrink-0 ml-1 inline-block self-center" 
+          className="w-3.5 h-3.5 text-pink-400 shrink-0 inline-block self-center"
           viewBox="0 0 24 24" 
           fill="none" 
           stroke="currentColor" 
@@ -183,7 +183,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
     }
     return (
       <svg 
-        className="w-3 h-3 text-amber-500 shrink-0 ml-1 inline-block self-center" 
+        className="w-3 h-3 text-amber-500 shrink-0 inline-block self-center"
         viewBox="0 0 24 24" 
         fill="currentColor" 
         title={gender || "Peer"}
@@ -299,7 +299,6 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
           <AvatarSVG id={creator.avatar_id} size={52} className={shouldMaskAnonymousOnCard ? "group-hover:opacity-90 transition-opacity shrink-0" : "group-hover:scale-105 transition-transform shrink-0"} />
           <div className="min-w-0 text-left">
             <div className="flex items-center flex-wrap gap-1">
-              <CountryFlag country={creator.country || realCreator?.country || "Malaysia"} className="h-4 w-4" />
               <h4 className={`font-bold text-gray-900 text-xs sm:text-sm transition-colors ${
                 shouldMaskAnonymousOnCard
                   ? ""
@@ -312,8 +311,8 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
                   ({realCreator?.name})
                 </span>
               )}
+              <CountryFlag country={creator.country || realCreator?.country} className="ml-0.5 h-4 w-4" />
               <span className="inline-flex items-center gap-1">
-                <CountryFlag country={creator.country || realCreator?.country || "Malaysia"} className="h-3.5 w-3.5" />
                 {renderGenderIcon(creator.gender || realCreator?.gender || "other")}
               </span>
             </div>
@@ -613,10 +612,10 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
                           title={`View ${profile.name}'s profile`}
                         >
                           <AvatarSVG id={profile.avatar_id} size={24} />
-                          <CountryFlag country={profile.country || "Malaysia"} className="h-4 w-4" />
                           <span className="max-w-[170px] truncate text-[11px] font-semibold text-slate-700">
                             {profile.name}
                           </span>
+                          <CountryFlag country={profile.country || "Malaysia"} className="h-4 w-4" />
                         </button>
                       ))}
                     </div>

@@ -30,9 +30,13 @@ export const CountryFlag: React.FC<{ country?: string | null; className?: string
   );
 };
 
-export const CountryWithFlag: React.FC<{ country?: string | null; className?: string }> = ({ country, className = "" }) => (
-  <span className={`inline-flex items-center gap-1.5 ${className}`}>
-    <CountryFlag country={country} />
+export const CountryWithFlag: React.FC<{
+  country?: string | null;
+  className?: string;
+  flagClassName?: string;
+}> = ({ country, className = "", flagClassName = "h-4 w-4" }) => (
+  <span className={`inline-flex items-center gap-1.5 align-middle leading-none ${className}`}>
+    <CountryFlag country={country} className={flagClassName} />
     <span>{country || "Malaysia"}</span>
   </span>
 );

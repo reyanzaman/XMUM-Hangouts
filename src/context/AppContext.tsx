@@ -32,7 +32,7 @@ import {
   serializeHangoutEditHistoryEntry,
   validateFutureHangoutDate
 } from "../lib/hangouts";
-import { collapseProfilesByEmail, isDemoProfile, isDemoProfileId, normalizeProfileEmail, pickCanonicalProfile, reconcileProfilesByEmail } from "../lib/profiles";
+import { collapseProfilesByEmail, isDemoProfile, isDemoProfileId, mergeProfilesWithRemoteAuthority, normalizeProfileEmail, pickCanonicalProfile, reconcileProfilesByEmail } from "../lib/profiles";
 
 const SYSTEM_DELETED_USER_ID = "deleted_user";
 const SYSTEM_DELETED_USER_EMAIL = "deleted.user@system.local";
@@ -872,7 +872,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const fetchLocalCollection = async <T,>(path: string, payloadKey: string): Promise<T[]> => {
     try {
-      const res = await fetch(path, { headers: await getAuthenticatedHeaders(false) });
+      const res = await fetch(path, {
+        headers: await getAuthenticatedHeaders(false),
+        cache: "no-store"
+      });
       const json = await res.json();
       const payload = json?.[payloadKey];
       return Array.isArray(payload) ? (payload as T[]) : [];
@@ -1033,12 +1036,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn("Supabase profile lookup by email failed, falling back to local cache:", dbErr);
     }
 
-    candidates.push(
-      ...profiles,
-      ...getStoredProfilesSnapshot()
+    const refreshedCandidates = mergeProfilesWithRemoteAuthority(
+      candidates,
+      [...profiles, ...getStoredProfilesSnapshot()]
     );
-
-    const profile = pickCanonicalProfile(normalizeProfiles(candidates), { email: normalizedEmail, authUserId });
+    const profile = pickCanonicalProfile(normalizeProfiles(refreshedCandidates), { email: normalizedEmail, authUserId });
     if (!profile) return null;
 
     try {
@@ -1114,7 +1116,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         gender: "Male",
         student_type: "degree",
         about_me: "Hey there! I am new here on XMUM Hangouts.",
-        avatar_id: "panda",
+        avatar_id: "",
         is_profile_complete: false,
         hide_details: false,
         is_admin: isPrimaryAdmin,
@@ -1526,10 +1528,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         const storedProfilesSnapshot = getStoredProfilesSnapshot();
-        const normalizedProfiles = filterProfilesForRuntime(normalizeProfiles([
-          ...(((dbProfiles || []) as unknown) as Profile[]),
-          ...storedProfilesSnapshot
-        ]));
+        const normalizedProfiles = filterProfilesForRuntime(mergeProfilesWithRemoteAuthority(
+          (((dbProfiles || []) as unknown) as Profile[]),
+          storedProfilesSnapshot
+        ));
         setProfiles(normalizedProfiles);
         localStorage.setItem("xmum_profiles", JSON.stringify(normalizedProfiles));
 
@@ -2030,6 +2032,68 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       authSubscriptionCleanup?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (isAuthInitializing) return;
+
+    let disposed = false;
+    let refreshInFlight = false;
+
+    const refreshProfiles = async () => {
+      if (refreshInFlight || disposed) return;
+      refreshInFlight = true;
+      try {
+        const remoteProfiles = await fetchLocalCollection<Profile>("/api/profiles", "profiles");
+        if (disposed || remoteProfiles.length === 0) return;
+
+        setProfiles(previous => {
+          const refreshed = filterProfilesForRuntime(
+            mergeProfilesWithRemoteAuthority(remoteProfiles, previous)
+          );
+          localStorage.setItem("xmum_profiles", JSON.stringify(refreshed));
+          return refreshed;
+        });
+
+        setCurrentUser(previous => {
+          if (!previous) return previous;
+          const refreshed = mergeProfilesWithRemoteAuthority(remoteProfiles, [previous]);
+          return refreshed.find(profile =>
+            profile.id === previous.id ||
+            normalizeProfileEmail(profile.email) === normalizeProfileEmail(previous.email)
+          ) || previous;
+        });
+
+        setViewedProfile(previous => {
+          if (!previous) return previous;
+          const refreshed = mergeProfilesWithRemoteAuthority(remoteProfiles, [previous]);
+          return refreshed.find(profile =>
+            profile.id === previous.id ||
+            normalizeProfileEmail(profile.email) === normalizeProfileEmail(previous.email)
+          ) || previous;
+        });
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") void refreshProfiles();
+    };
+
+    void refreshProfiles();
+    const intervalId = window.setInterval(refreshProfiles, 2 * 60 * 1000);
+    window.addEventListener("focus", refreshProfiles);
+    window.addEventListener("online", refreshProfiles);
+    document.addEventListener("visibilitychange", handleVisible);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshProfiles);
+      window.removeEventListener("online", refreshProfiles);
+      document.removeEventListener("visibilitychange", handleVisible);
+    };
+  }, [isAuthInitializing]);
 
   // --- PERSISTENCE SYNCS ---
   const saveProfiles = async (data: Profile[], remoteFields: Array<keyof Profile> = []) => {
@@ -2809,7 +2873,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           gender: "Male",
           student_type: "degree",
           about_me: "Hey there! I am new here on XMUM Hangouts.",
-          avatar_id: "panda",
+          avatar_id: "",
           is_profile_complete: false,
           hide_details: false,
           is_admin: isPrimaryAdmin,

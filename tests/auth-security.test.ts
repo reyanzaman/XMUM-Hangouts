@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { generateOtpCode, hashOtpCode, isXmumEmail, matchesOtpCode, validatePassword } from "../src/server/auth-security.js";
-import { pickCanonicalProfile, reconcileProfilesByEmail } from "../src/lib/profiles.js";
+import { mergeProfilesWithRemoteAuthority, pickCanonicalProfile, reconcileProfilesByEmail } from "../src/lib/profiles.js";
 import type { Profile } from "../src/types.js";
 
 const profile = (overrides: Partial<Profile>): Profile => ({
@@ -42,4 +42,14 @@ test("a completed profile wins over an incomplete duplicate auth row", () => {
   const incomplete = profile({ id: "auth-id" });
   assert.equal(pickCanonicalProfile([incomplete, complete], { email: complete.email, authUserId: "auth-id" })?.id, "legacy");
   assert.equal(reconcileProfilesByEmail([incomplete, complete]).every(item => item.is_profile_complete), true);
+});
+
+test("remote profile edits replace stale cached details without discarding local auth resilience", () => {
+  const cached = profile({ country: "Malaysia", name: "Old Name", password_hash: "remembered-hash" });
+  const remote = profile({ country: "Philippines", name: "Updated Name", password_hash: null });
+  const [refreshed] = mergeProfilesWithRemoteAuthority([remote], [cached]);
+
+  assert.equal(refreshed.country, "Philippines");
+  assert.equal(refreshed.name, "Updated Name");
+  assert.equal(refreshed.password_hash, "remembered-hash");
 });

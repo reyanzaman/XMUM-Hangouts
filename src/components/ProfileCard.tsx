@@ -8,7 +8,7 @@ import { Profile } from "../types";
 import { AvatarSVG } from "./AvatarSVG";
 import { Shield, MapPin, Languages, BookOpen, Calendar, User, Eye, EyeOff } from "lucide-react";
 import { useApp } from "../context/AppContext";
-import { CountryFlag, CountryWithFlag } from "./CountryFlag";
+import { CountryWithFlag } from "./CountryFlag";
 
 interface ProfileCardProps {
   profile: Profile;
@@ -80,12 +80,10 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
           <AvatarSVG id={profile.avatar_id} size={64} className="ring-4 ring-rose-50" />
           <div className="flex-1 min-w-0">
             <h3 id={`profile-name-${profile.id}`} className="font-bold text-gray-900 text-base flex items-center gap-1 truncate font-sans">
-              <CountryFlag country={profile.country || "Malaysia"} className="h-5 w-5" />
               {profile.name}
             </h3>
             <div className="flex flex-wrap gap-1.5 mt-1 border-gray-50">
               <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-600 text-[10px] font-bold px-2 py-0.5 rounded-lg capitalize">
-                <CountryFlag country={profile.country || "Malaysia"} className="h-3.5 w-3.5" />
                 {profile.gender}
               </span>
               {isFull && (
@@ -116,9 +114,14 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
       {/* Full details vs Restricted banner */}
       {isFull ? (
         <div className="grid grid-cols-1 gap-3 pt-3 border-t border-gray-50 text-xs text-gray-650">
-          <div className="flex items-start gap-2">
-            <MapPin className="w-4 h-4 text-rose-405 shrink-0 mt-0.5" />
-            <span className="text-gray-700 leading-tight">From: <strong className="text-gray-900"><CountryWithFlag country={profile.country || "Malaysia"} /></strong></span>
+          <div className="flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-rose-405 shrink-0" />
+            <span className="inline-flex items-center gap-1.5 text-gray-700 leading-none">
+              From:
+              <strong className="inline-flex items-center text-gray-900">
+                <CountryWithFlag country={profile.country || "Malaysia"} />
+              </strong>
+            </span>
           </div>
 
           <div className="flex items-start gap-2">
@@ -154,7 +157,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
           {isSyntheticAnonymousProfile && (
             <div className="flex flex-wrap gap-2 text-[10px] font-semibold text-slate-700">
               <span className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 border border-slate-200">
-                Gender: <CountryFlag country={profile.country || "Malaysia"} className="h-3.5 w-3.5" /> <strong className="text-slate-900">{profile.gender || "Prefer not to say"}</strong>
+                Gender: <strong className="text-slate-900">{profile.gender || "Prefer not to say"}</strong>
               </span>
               <span className="rounded-full bg-white px-2.5 py-1 border border-slate-200">
                 Age: <strong className="text-slate-900">{profile.age || 20}</strong>

@@ -8,6 +8,7 @@ import { useApp } from "../context/AppContext";
 import { COUNTRIES, XMUM_PROGRAMS, LANGUAGES, STUDY_YEARS } from "../config/xmum-config";
 import { AvatarPicker } from "./AvatarPicker";
 import { CountryFlag } from "./CountryFlag";
+import { getRandomProfileAvatarId } from "../lib/avatars";
 import { Plus, X, Heart, ShieldAlert, Calendar } from "lucide-react";
 
 export function calculateAge(birthdateStr: string): number {
@@ -37,7 +38,7 @@ export const ProfileSetupForm: React.FC = () => {
   const [gender, setGender] = useState(currentUser.gender === "Prefer not to say" ? "Male" : (currentUser.gender || "Male"));
   const [studentType, setStudentType] = useState<"foundation" | "degree" | "postgraduate" | "Not Specified" | "">(currentUser.student_type || "");
   const [aboutMe, setAboutMe] = useState(currentUser.about_me || "");
-  const [avatarId, setAvatarId] = useState(currentUser.avatar_id || "panda");
+  const [avatarId, setAvatarId] = useState(currentUser.is_profile_complete ? (currentUser.avatar_id || "") : "");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   
@@ -112,7 +113,7 @@ export const ProfileSetupForm: React.FC = () => {
       gender,
       student_type: (studentType as any) || "Not Specified",
       about_me: aboutMe.trim(),
-      avatar_id: avatarId,
+      avatar_id: avatarId || getRandomProfileAvatarId(),
       ...(showPasswordResetSection && password ? { password } : {}),
       is_profile_complete: true
     });

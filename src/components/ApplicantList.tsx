@@ -140,11 +140,10 @@ export const ApplicantList: React.FC<ApplicantListProps> = ({ hangoutId }) => {
                     <AvatarSVG id={profileToRender.avatar_id} size={36} className="ring-2 ring-rose-100/20 group-hover:scale-105 transition-transform shrink-0" />
                     <div className="min-w-0">
                       <h5 className="font-bold text-slate-800 text-xs sm:text-sm truncate group-hover:underline">
-                        <CountryFlag country={profileToRender.country || "Malaysia"} className="mr-1 inline-flex h-4 w-4 align-middle" />
                         {profileToRender.name}
+                        <CountryFlag country={profileToRender.country || "Malaysia"} className="ml-1 inline-flex h-4 w-4 align-middle" />
                       </h5>
                       <p className="flex items-center gap-1 text-[10px] text-slate-500 capitalize truncate">
-                        <CountryFlag country={profileToRender.country || "Malaysia"} className="h-3.5 w-3.5" />
                         {profileToRender.gender} · {profileToRender.year_of_study} · {profileToRender.program || "General Program"}
                       </p>
                     </div>
