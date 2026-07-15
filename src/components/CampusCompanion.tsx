@@ -241,6 +241,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const [travelMode, setTravelMode] = useState<CompanionTravel>("home");
   const [dragReturnStyle, setDragReturnStyle] = useState<DragReturnStyle>("steady-bounce");
   const [isDragReturning, setIsDragReturning] = useState<boolean>(false);
+  const [isDraggingCompanion, setIsDraggingCompanion] = useState<boolean>(false);
   const [dragReturnMotion, setDragReturnMotion] = useState<DragReturnMotion>({
     x: 0,
     y: 0,
@@ -554,7 +555,10 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       return;
     }
 
-    setBubbleText(response.text);
+    const responseText = typeof response.text === "string"
+      ? response.text
+      : pickCompanionLine(response.text);
+    setBubbleText(formatCompanionLine(responseText, { name: fName }));
     setMood(response.mood);
     setShowBubble(true);
     setActionCount((prev) => prev + 1);
@@ -930,9 +934,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             ? isRedHotAngry
               ? companionDialogue.dragAngryClick
               : companionDialogue.angryClick
-            : [...companionDialogue.click, ...companionDialogue.safety, ...companionDialogue.petHint];
-          const choice = mix[Math.floor(Math.random() * mix.length)];
-          setBubbleText(choice);
+            : [companionDialogue.click, companionDialogue.personal, companionDialogue.petHint][Math.floor(Math.random() * 3)];
+          const choice = pickCompanionLine(mix);
+          setBubbleText(formatCompanionLine(choice, { name: fName }));
           setMood(isCompanionAngry ? (isRedHotAngry ? "excited" : "sleepy") : "bouncy");
           setShowBubble(true);
         }
@@ -1668,37 +1672,32 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       <motion.div
         ref={draggableCompanionRef}
         className={`pointer-events-auto relative z-10 ${isBubbleBelow ? "order-1" : "order-2"}`}
+        style={{ touchAction: "none", willChange: "transform" }}
         drag
         dragConstraints={companionDragBounds}
-        dragElastic={0.02}
+        dragElastic={0}
         dragMomentum={false}
-        dragTransition={{ bounceStiffness: 560, bounceDamping: 28, power: 0.08, timeConstant: 120 }}
+        dragTransition={{ bounceStiffness: 420, bounceDamping: 34, power: 0, timeConstant: 100 }}
         animate={dragReturnMotion}
-        whileDrag={{ scale: 1.02 }}
+        whileDrag={{ scale: 1.025, transition: { duration: 0.12, ease: "easeOut" } }}
         onPointerDown={() => {
           draggedRef.current = false;
+          const latestBounds = calculateCompanionDragBounds();
+          setCompanionDragBounds(latestBounds);
         }}
         onDragStart={() => {
           draggedRef.current = true;
+          setIsDraggingCompanion(true);
           setShowBubble(false);
           clearCompanionReturnTimer();
           setTravelMode("home");
           setIsDragReturning(false);
-          setDragReturnMotion({
-            x: companionOffsetRef.current.x,
-            y: companionOffsetRef.current.y,
-            rotate: 0,
-            scale: 1,
-            scaleX: 1,
-            scaleY: 1,
-            transition: { duration: 0.01 }
-          });
           setReactionType("subtle");
           setMood("excited");
-          window.requestAnimationFrame(keepCompanionInsideViewport);
         }}
         onDragEnd={(_, info) => {
           draggedRef.current = true;
+          setIsDraggingCompanion(false);
           const movedFarEnough = Math.abs(info.offset.x) > 12 || Math.abs(info.offset.y) > 12;
           const rawNextOffset = {
             x: companionOffsetRef.current.x + info.offset.x,
@@ -1776,7 +1775,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
           }`}
           onClick={handlePetKitty}
           initial={{ scale: 1 }}
-          animate={activeAnimation}
+          animate={isDraggingCompanion || isDragReturning
+            ? { x: 0, y: 0, rotate: 0, scale: 1, scaleX: 1, scaleY: 1 }
+            : activeAnimation}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           id="campus-companion-widget"

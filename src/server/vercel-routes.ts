@@ -1598,9 +1598,10 @@ async function handleLoginBackup(req: VercelRequest, res: VercelResponse) {
 
 async function handleAuthSession(req: VercelRequest, res: VercelResponse) {
   const identity = await resolveRequestIdentity(req);
-  if (!identity) return res.status(401).json({ error: "Session expired." });
+  if (!identity) return res.status(401).json({ error: "Session needs renewal.", code: "SESSION_INVALID" });
   const profile = await resolveBestProfileByEmail(identity.email);
-  if (!profile || profile.is_blocked_globally) return res.status(401).json({ error: "Session expired." });
+  if (!profile) return res.status(404).json({ error: "Account not found.", code: "ACCOUNT_NOT_FOUND" });
+  if (profile.is_blocked_globally) return res.status(423).json({ error: "Account is locked.", code: "ACCOUNT_BLOCKED" });
   return res.status(200).json({
     profile: sanitizeProfileForClient(profile),
     local_auth_token: generateLocalAuthToken(profile)

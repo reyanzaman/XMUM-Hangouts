@@ -664,9 +664,17 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // --- DATABASE TABLES IN LOCAL STORAGE ---
   const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
-  // Never treat a local profile cache as proof of authentication. Startup restores
-  // the profile only after Supabase or the signed server session validates it.
-  const [currentUser, setCurrentUser] = useState<Profile | null>(null);
+  // Restore the remembered identity immediately so an installed PWA never falls
+  // back to the login screen while its provider session is silently refreshing.
+  // Protected server operations still validate the signed auth headers.
+  const [currentUser, setCurrentUser] = useState<Profile | null>(() => {
+    try {
+      const storedUserId = localStorage.getItem("xmum_current_user_id");
+      return storedUserId ? getCachedCurrentUser(storedUserId) : null;
+    } catch {
+      return null;
+    }
+  });
 
   // Sync current user updates to local storage for instant loads and absolute session permanence
   useEffect(() => {
@@ -678,6 +686,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.removeItem("xmum_current_user_id");
     }
   }, [currentUser, isAuthInitializing]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    let disposed = false;
+    const renewRememberedSession = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const expiresAtMs = Number(data.session?.expires_at || 0) * 1000;
+        if (data.session?.refresh_token && expiresAtMs > 0 && expiresAtMs - Date.now() < 10 * 60 * 1000) {
+          await supabase.auth.refreshSession({ refresh_token: data.session.refresh_token });
+        }
+
+        const response = await fetch("/api/auth/session", {
+          headers: await getAuthenticatedHeaders(false)
+        });
+        if (!response.ok || disposed) return;
+        const payload = await response.json().catch(() => ({}));
+        if (payload.local_auth_token) storeLocalAuthToken(payload.local_auth_token);
+      } catch {
+        // Offline/provider interruptions must not clear a remembered PWA session.
+      }
+    };
+
+    const handleResume = () => {
+      if (document.visibilityState === "visible") void renewRememberedSession();
+    };
+
+    void renewRememberedSession();
+    const renewalInterval = window.setInterval(renewRememberedSession, 30 * 60 * 1000);
+    window.addEventListener("online", renewRememberedSession);
+    document.addEventListener("visibilitychange", handleResume);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(renewalInterval);
+      window.removeEventListener("online", renewRememberedSession);
+      document.removeEventListener("visibilitychange", handleResume);
+    };
+  }, [currentUser?.id]);
   const [profiles, setProfiles] = useState<Profile[]>(() => getStoredProfilesSnapshot());
   const authReconciliationVersionRef = useRef(0);
   const companionProfileSyncTimeoutRef = useRef<number | null>(null);
@@ -1857,18 +1905,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           );
         }
 
-        // A cached profile is never enough to restore authentication. Validate the
-        // signed local token with the server before showing a logged-in session.
+        // Refresh the signed session when possible. A transient or expired provider
+        // token must not erase the locally remembered PWA identity.
         const storedActiveUser = localStorage.getItem("xmum_current_user_id");
         if (!hasLiveSession && storedActiveUser) {
-          let sessionWasRejected = false;
+          let accountWasRevoked = false;
           try {
             const sessionResponse = await fetch("/api/auth/session", {
               headers: await getAuthenticatedHeaders(false)
             });
-            if (sessionResponse.status === 401 || sessionResponse.status === 403) {
-              sessionWasRejected = true;
-              throw new Error("Session expired.");
+            if (sessionResponse.status === 423) {
+              accountWasRevoked = true;
+              throw new Error("Account is no longer available.");
             }
             if (!sessionResponse.ok) throw new Error("Session validation is temporarily unavailable.");
             const sessionPayload = await sessionResponse.json();
@@ -1876,13 +1924,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               ? normalizeProfileRecord(sessionPayload.profile as Profile)
               : null;
             if (!restoredProfile || restoredProfile.id !== storedActiveUser) {
-              sessionWasRejected = true;
               throw new Error("Session profile mismatch.");
             }
             if (sessionPayload.local_auth_token) storeLocalAuthToken(sessionPayload.local_auth_token);
             setCurrentUser(restoredProfile);
           } catch {
-            if (sessionWasRejected) {
+            if (accountWasRevoked) {
               ++authReconciliationVersionRef.current;
               storeLocalAuthToken(null);
               localStorage.removeItem("xmum_current_user_id");
@@ -1936,7 +1983,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setNotifications(fallbackNotifications);
         localStorage.setItem("xmum_notifications", JSON.stringify(fallbackNotifications));
 
-        let fallbackSessionWasRejected = false;
+        let fallbackAccountWasRevoked = false;
         try {
           const { data: fallbackSession } = await supabase.auth.getSession();
           if (fallbackSession.session?.user?.email) {
@@ -1949,9 +1996,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const sessionResponse = await fetch("/api/auth/session", {
               headers: await getAuthenticatedHeaders(false)
             });
-            if (sessionResponse.status === 401 || sessionResponse.status === 403) {
-              fallbackSessionWasRejected = true;
-              throw new Error("Session expired.");
+            if (sessionResponse.status === 423) {
+              fallbackAccountWasRevoked = true;
+              throw new Error("Account is no longer available.");
             }
             if (!sessionResponse.ok) throw new Error("Session validation is temporarily unavailable.");
             const sessionPayload = await sessionResponse.json();
@@ -1960,7 +2007,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setCurrentUser(normalizeProfileRecord(sessionPayload.profile as Profile));
           }
         } catch {
-          if (fallbackSessionWasRejected) {
+          if (fallbackAccountWasRevoked) {
             ++authReconciliationVersionRef.current;
             storeLocalAuthToken(null);
             localStorage.removeItem("xmum_current_user_id");

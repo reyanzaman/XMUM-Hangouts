@@ -166,7 +166,7 @@ export const companionDialogue = {
     "Ready to find a cozy study buddy today?",
     "The Sepang sunshine feels lovely today.",
     "I am here if you want a little campus company.",
-    "Let us coordinate something fun and safe.",
+    "Let us coordinate something cozy and memorable.",
     "A warm drink and good company sound perfect.",
     "I am ready for another gentle little adventure.",
     "I saved a soft little corner of the day just for us.",
@@ -219,7 +219,7 @@ export const companionDialogue = {
   ],
   guest: [
     "Please sign in with your xmu.edu.my email.",
-    "Sign in to join plans and chat safely.",
+    "Sign in and I will help you find your campus people.",
     "Logging in helps me keep track of your headpats.",
     "I am your fluffy campus guide. Ready when you are.",
     "Let us find your buddies today.",
@@ -275,19 +275,32 @@ export const companionDialogue = {
     "At five pets I get just a tiny bit fancier. Very modest. Very tasteful.",
     "The early milestone is subtle, but I still preened for it."
   ],
-  safety: [
-    "Always meet in busy, public areas of XMUM first.",
-    "Meeting coordinates stay locked until you approve them.",
-    "Bell Avenue is better with good company and good sense.",
-    "If someone behaves badly, please use the Safety Report button.",
-    "Trust your peers, but verify their student profiles first.",
-    "You can hide your details from strangers with the Profile Shield.",
-    "Campus life feels better when everyone stays thoughtful."
+  personal: [
+    "What kind of little adventure would suit you today, {name}?",
+    "You choose the plan, {name}. I will bring the tiny moral support.",
+    "I noticed you came back. That made my ears perk up.",
+    "If you could plan one perfect hour today, what would it look like?",
+    "I like browsing with you. You have excellent tiny-decision energy.",
+    "Do you feel more social or more cozy today, {name}?",
+    "Pick something that sounds like you. I will quietly cheer.",
+    "I saved one very soft purr for whenever you need it.",
+    "You seem like you deserve a pleasant surprise today.",
+    "Where are we wandering next? My paws are ready.",
+    "I am curious which plan will make you pause and smile.",
+    "You bring the ideas. I bring the roundness.",
+    "I would share my favorite campus corner with you if I could.",
+    "Tell me nothing. I will simply sit here and understand the mood.",
+    "I am glad I get to be your little page companion.",
+    "Your next good memory might be hiding one click away.",
+    "I have decided we make a rather capable little team.",
+    "No rush, {name}. I enjoy the time we spend choosing.",
+    "I wonder what would make today feel special for you.",
+    "If your energy is low, I can carry the enthusiasm for a while."
   ],
   click: [
     "Ooh. What are we checking out?",
     "Ready to coordinate some plans?",
-    "Let us stay safe and have fun on campus.",
+    "Let us find something that feels just right today.",
     "Spotted a cool hangout? A join request might fit nicely.",
     "Warm student support is always nearby.",
     "I am looking too. Two sets of eyes are better than one.",
@@ -390,39 +403,64 @@ export const companionDialogue = {
   ]
 };
 
-const companionLineMemory = new WeakMap<readonly string[], string>();
+const companionLineMemory = new WeakMap<readonly string[], string[]>();
 let lastPickedCompanionLine = "";
 
-export const companionTabResponses: Record<string, { text: string; mood: CompanionMood }> = {
+export const companionTabResponses: Record<string, { text: string | readonly string[]; mood: CompanionMood }> = {
   feed: {
-    text: "Browse verified student plans. Public places first, always.",
+    text: [
+      "Which little plan catches your eye today? I want to see too.",
+      "Let us peek at what everyone is planning, {name}.",
+      "I have a good feeling about one of these little cards.",
+      "Are we browsing for company, curiosity, or a tiny adventure today?"
+    ],
     mood: "excited"
   },
   create: {
-    text: "Post a clear intention, then keep the final meetup point private.",
+    text: [
+      "Tell everyone what sounds fun. I will help with the tiny confidence boost.",
+      "Your idea deserves a little place on the calendar, {name}.",
+      "Go on, make the plan. I am doing my most encouraging face.",
+      "What would make you genuinely look forward to leaving your room?"
+    ],
     mood: "bouncy"
   },
   "my-plans": {
-    text: "Your hosted plans and requests are tracked here.",
+    text: [
+      "Your plans are all gathered here. Very organized. Very satisfying.",
+      "Let us see who wants to join your next memory, {name}.",
+      "Your little social calendar is growing paws.",
+      "I like checking our plans. It makes the future feel friendly."
+    ],
     mood: "happy"
   },
   chats: {
-    text: "Chat carefully and settle details step by step.",
+    text: [
+      "A message can be the beginning of a very good campus memory.",
+      "Someone might be waiting for your words, {name}.",
+      "Chat bubbles are just tiny doors with sentences on them.",
+      "I will sit quietly while you think of the perfect reply."
+    ],
     mood: "excited"
   },
   profile: {
-    text: "Your profile keeps your identity and safety details in order.",
+    text: [
+      "This page feels very you. I approve of the personal touches.",
+      "There you are, {name}. I recognize my favorite human-shaped profile.",
+      "Your profile has good energy. I checked with my whiskers.",
+      "A tiny update could make this page feel even more like you."
+    ],
     mood: "happy"
   }
 };
 
 export const companionAngryTabResponses: Record<string, { text: string; mood: CompanionMood }> = {
   feed: {
-    text: "I am still a little grumpy, so let us browse gently and keep things safe.",
+    text: "I am still a little grumpy, but I will browse beside you anyway.",
     mood: "sleepy"
   },
   create: {
-    text: "Post carefully. I am pouting, but I still expect a thoughtful plan.",
+    text: "Make it a thoughtful plan. I am pouting, but still curious.",
     mood: "sleepy"
   },
   "my-plans": {
@@ -441,7 +479,7 @@ export const companionAngryTabResponses: Record<string, { text: string; mood: Co
 
 export const companionRedHotTabResponses: Record<string, { text: string; mood: CompanionMood }> = {
   feed: {
-    text: "I am in red-hot mode, so we are browsing with fierce caution today.",
+    text: "I am in red-hot mode, so we are browsing with fierce focus today.",
     mood: "excited"
   },
   create: {
@@ -470,7 +508,7 @@ export const companionEventDialogue = {
   newMessage: [
     "Fresh chat coordinates arrived. Let us build real connections.",
     "You have a new message, {name}.",
-    "A new message pinged in. Time for a careful reply?",
+    "A new message pinged in. I wonder what they said?",
     "Fresh chat bubbles. The campus feels lively today.",
     "Someone reached out, {name}. Let us see what they said."
   ],
@@ -484,7 +522,7 @@ export const companionEventDialogue = {
   hangoutCancelled:
     "Plans changed for \"{intention}\". I sent a gentle heads-up to everyone involved.",
   accountDeleted:
-    "Account cleanup is complete. Active plans were wrapped up carefully."
+    "Account cleanup is complete. I will miss our little routine."
 };
 
 export const companionTierStates: CompanionTierState[] = [
@@ -1610,16 +1648,16 @@ export function pickCompanionLine(lines: readonly string[]): string {
   if (lines.length === 1) {
     const singleLine = lines[0] || "";
     lastPickedCompanionLine = singleLine;
-    companionLineMemory.set(lines, singleLine);
+    companionLineMemory.set(lines, [singleLine]);
     return singleLine;
   }
 
-  const previousLineForPool = companionLineMemory.get(lines) || "";
-  const blockedLines = new Set([previousLineForPool, lastPickedCompanionLine].filter(Boolean));
+  const recentLinesForPool = companionLineMemory.get(lines) || [];
+  const blockedLines = new Set([...recentLinesForPool, lastPickedCompanionLine].filter(Boolean));
   let availableLines = lines.filter(line => !blockedLines.has(line));
 
   if (availableLines.length === 0) {
-    availableLines = lines.filter(line => line !== previousLineForPool);
+    availableLines = lines.filter(line => line !== recentLinesForPool[recentLinesForPool.length - 1]);
   }
 
   const selectedLine =
@@ -1627,7 +1665,8 @@ export function pickCompanionLine(lines: readonly string[]): string {
     lines[Math.floor(Math.random() * lines.length)] ||
     "";
 
-  companionLineMemory.set(lines, selectedLine);
+  const memorySize = Math.min(5, Math.max(1, lines.length - 1));
+  companionLineMemory.set(lines, [...recentLinesForPool, selectedLine].slice(-memorySize));
   lastPickedCompanionLine = selectedLine;
   return selectedLine;
 }
