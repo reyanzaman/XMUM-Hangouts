@@ -298,11 +298,12 @@ export const dispatchPushNotifications = async (client: SupabaseAdminClient, not
 
 export const processScheduledReminders = async (client: SupabaseAdminClient) => {
   const now = Date.now();
-  const windowStart = new Date(now - 24 * 60 * 60 * 1000).toISOString();
   const windowEnd = new Date(now + 65 * 60 * 1000).toISOString();
   const [{ data: hangouts, error: hangoutError }, { data: applications, error: applicationError }] = await Promise.all([
-    client.from('xmum_hangouts').select('*').eq('status', 'active').gte('event_datetime', windowStart).lte('event_datetime', windowEnd),
-    client.from('xmum_applications').select('hangout_id, applicant_id, status').eq('status', 'accepted')
+    // Include every overdue active hangout so missed scheduler runs cannot leave
+    // old join requests pending. Upcoming reminders remain capped at 65 minutes.
+    client.from('xmum_hangouts').select('*').eq('status', 'active').lte('event_datetime', windowEnd),
+    client.from('xmum_applications').select('*').in('status', ['accepted', 'pending'])
   ]);
   if (hangoutError) throw hangoutError;
   if (applicationError) throw applicationError;
@@ -328,9 +329,12 @@ export const processScheduledReminders = async (client: SupabaseAdminClient) => 
     const eventTime = new Date(hangout.event_datetime).getTime();
     if (!Number.isFinite(eventTime)) continue;
     const accepted = (applications || [])
-      .filter((application: any) => application.hangout_id === hangout.id)
+      .filter((application: any) => application.hangout_id === hangout.id && application.status === 'accepted')
       .map((application: any) => application.applicant_id);
-    const recipients = Array.from(new Set<string>([hangout.creator_id, ...accepted]));
+    const pending = (applications || [])
+      .filter((application: any) => application.hangout_id === hangout.id && application.status === 'pending')
+      .map((application: any) => application.applicant_id);
+    const recipients = Array.from(new Set<string>([hangout.creator_id, ...accepted, ...(eventTime <= now ? pending : [])]));
     const remaining = eventTime - now;
     let stage: 'one_hour' | 'thirty_minutes' | 'started' | 'expired' | null = null;
     if (remaining <= 0) stage = 'expired';
@@ -346,7 +350,11 @@ export const processScheduledReminders = async (client: SupabaseAdminClient) => 
         one_hour: isHost ? `Your hangout "${hangout.intention}" starts in about 1 hour.` : `A hangout you joined, "${hangout.intention}", starts in about 1 hour.`,
         thirty_minutes: isHost ? `Your hangout "${hangout.intention}" starts in about 30 minutes.` : `A hangout you joined, "${hangout.intention}", starts in about 30 minutes.`,
         started: isHost ? `Your hangout "${hangout.intention}" is starting now.` : `A hangout you joined, "${hangout.intention}", is starting now.`,
-        expired: isHost ? `Your hangout "${hangout.intention}" has expired.` : `The hangout "${hangout.intention}" has expired.`
+        expired: isHost
+          ? `Your hangout "${hangout.intention}" has expired.`
+          : pending.includes(userId)
+            ? `Your pending request for "${hangout.intention}" expired when the hangout ended.`
+            : `The hangout "${hangout.intention}" has expired.`
       };
       newNotifications.push({
         id: `notif_schedule_${stage}_${crypto.randomUUID()}`,
@@ -370,6 +378,17 @@ export const processScheduledReminders = async (client: SupabaseAdminClient) => 
       .update({ status: 'expired', updated_at: new Date().toISOString() })
       .in('id', expiredIds);
     if (error) throw error;
+
+    const { error: applicationExpiryError } = await client
+      .from('xmum_applications')
+      .update({
+        status: 'retracted',
+        rejection_message: 'Automatically expired when the hangout ended.',
+        updated_at: new Date().toISOString()
+      })
+      .in('hangout_id', expiredIds)
+      .eq('status', 'pending');
+    if (applicationExpiryError) throw applicationExpiryError;
   }
   const dispatch = newNotifications.length > 0
     ? await dispatchPushNotifications(client, newNotifications.map(notification => notification.id))

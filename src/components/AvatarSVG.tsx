@@ -4,19 +4,147 @@
  */
 
 import React from "react";
+import { motion } from "motion/react";
 import { PROFILE_AVATARS } from "../lib/avatars";
+import { decodeAvatarSelection, getAvatarBorderReward, getCompanionStateIdFromAvatar, type AvatarBorderReward } from "../lib/avatarRewards";
+import { SpecialCompanionForms } from "./SpecialCompanionForms";
 
 interface AvatarProps {
   id: string;
   className?: string;
   size?: number;
+  petCount?: number | null;
 }
 
 export const AVATAR_LIST = PROFILE_AVATARS;
 
-export const AvatarSVG: React.FC<AvatarProps> = ({ id, className = "", size = 48 }) => {
+const AvatarBorderArt: React.FC<{ reward: AvatarBorderReward }> = ({ reward }) => {
+  const common = "pointer-events-none absolute inset-0 z-[22] h-full w-full overflow-hidden rounded-full drop-shadow-[0_1px_0_rgba(15,23,42,0.32)] [mask-image:radial-gradient(circle,transparent_0_68%,#000_69%)] [-webkit-mask-image:radial-gradient(circle,transparent_0_68%,#000_69%)]";
+  const accent = reward.accent || "#FB7185";
+  const secondary = reward.secondary || "#F9A8D4";
+  const ring = { fill: "none", strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+
+  switch (reward.id) {
+    case "honey-halo":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#92400E" strokeWidth="8" />
+        <motion.g stroke={secondary} strokeWidth="4.2" strokeLinecap="round" animate={{ rotate: 360, opacity: [.55, 1, .7] }} transition={{ duration: 11, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="M50 1v15M50 1v15" transform="rotate(30 50 50)" /><path d="M50 1v15" transform="rotate(60 50 50)" /><path d="M50 1v15" transform="rotate(90 50 50)" /><path d="M50 1v15" transform="rotate(120 50 50)" /><path d="M50 1v15" transform="rotate(150 50 50)" /><path d="M50 1v15" transform="rotate(180 50 50)" /><path d="M50 1v15" transform="rotate(210 50 50)" /><path d="M50 1v15" transform="rotate(240 50 50)" /><path d="M50 1v15" transform="rotate(270 50 50)" /><path d="M50 1v15" transform="rotate(300 50 50)" /><path d="M50 1v15" transform="rotate(330 50 50)" />
+        </motion.g>
+        <motion.circle cx="50" cy="50" r="38.5" {...ring} stroke="#fff" strokeOpacity=".9" strokeWidth="2.6" strokeDasharray="24 218" animate={{ rotate: 360, scale: [.96, 1.04, .96] }} transition={{ duration: 4.5, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    case "blossom-loop":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <motion.path d="M50 4C60 9 69 6 78 14s8 18 18 26c-5 10-2 19-10 29s-18 10-25 22c-11-4-20 1-31-5S18 70 6 62c4-11-1-20 5-31S29 19 38 6c4 1 8 0 12-2Z" {...ring} stroke={accent} strokeWidth="3.6" animate={{ scale: [1, .978, 1], rotate: [0, 2, 0] }} transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }} />
+        <motion.circle cx="50" cy="50" r="43" {...ring} stroke={secondary} strokeWidth="1.7" strokeDasharray="37 8" animate={{ strokeDashoffset: [0, -45], opacity: [.55, .95, .55] }} transition={{ duration: 9, repeat: Infinity, ease: "easeInOut" }} />
+      </motion.svg>;
+    case "crystal-tide":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#64748B" strokeWidth="7" />
+        <motion.g fill="#F8FAFC" fillOpacity=".94" stroke="#BAE6FD" strokeWidth="1.2" animate={{ rotate: [-1.5, 2, -1.5], opacity: [.72, 1, .72] }} transition={{ duration: 8.5, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="M38 2 46 8 50 19 54 8 62 2 50 6Z" /><path d="M38 2 46 8 50 19 54 8 62 2 50 6Z" transform="rotate(45 50 50)" /><path d="M38 2 46 8 50 19 54 8 62 2 50 6Z" transform="rotate(90 50 50)" /><path d="M38 2 46 8 50 19 54 8 62 2 50 6Z" transform="rotate(135 50 50)" /><path d="M38 2 46 8 50 19 54 8 62 2 50 6Z" transform="rotate(180 50 50)" /><path d="M38 2 46 8 50 19 54 8 62 2 50 6Z" transform="rotate(225 50 50)" /><path d="M38 2 46 8 50 19 54 8 62 2 50 6Z" transform="rotate(270 50 50)" /><path d="M38 2 46 8 50 19 54 8 62 2 50 6Z" transform="rotate(315 50 50)" />
+        </motion.g>
+        <motion.circle cx="50" cy="50" r="38.5" {...ring} stroke="#fff" strokeOpacity=".9" strokeWidth="2" strokeDasharray="24 218" animate={{ rotate: 360, opacity: [.35, .9, .35] }} transition={{ duration: 11, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    case "golden-heart":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#14532D" strokeWidth="8" />
+        <motion.g fill={secondary} stroke="#166534" strokeWidth="1.2" animate={{ rotate: [-5, 6, -5], scale: [.94, 1.06, .94] }} transition={{ duration: 6.5, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="M40 2c8 1 12 7 10 16-7-2-12-7-10-16Z" /><path d="M40 2c8 1 12 7 10 16-7-2-12-7-10-16Z" transform="rotate(45 50 50)" /><path d="M40 2c8 1 12 7 10 16-7-2-12-7-10-16Z" transform="rotate(90 50 50)" /><path d="M40 2c8 1 12 7 10 16-7-2-12-7-10-16Z" transform="rotate(135 50 50)" /><path d="M40 2c8 1 12 7 10 16-7-2-12-7-10-16Z" transform="rotate(180 50 50)" /><path d="M40 2c8 1 12 7 10 16-7-2-12-7-10-16Z" transform="rotate(225 50 50)" /><path d="M40 2c8 1 12 7 10 16-7-2-12-7-10-16Z" transform="rotate(270 50 50)" /><path d="M40 2c8 1 12 7 10 16-7-2-12-7-10-16Z" transform="rotate(315 50 50)" />
+        </motion.g>
+        <motion.circle cx="50" cy="50" r="39" {...ring} stroke="#FDE68A" strokeWidth="2.5" strokeDasharray="48 197" animate={{ rotate: 360, opacity: [.35, 1, .35] }} transition={{ duration: 7, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    case "moonlit-bloom":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#334155" strokeWidth="8" />
+        <motion.circle cx="50" cy="50" r="44" {...ring} stroke={secondary} strokeWidth="7" strokeDasharray="185 92" animate={{ rotate: [-42, 48, -42], opacity: [.52, 1, .62] }} transition={{ duration: 6.2, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }} />
+        <motion.circle cx="50" cy="50" r="39" {...ring} stroke="#fff" strokeOpacity=".95" strokeWidth="3" strokeDasharray="34 212" animate={{ rotate: 360 }} transition={{ duration: 4.8, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+        <motion.path d="M18 18A45 45 0 0 0 82 82" {...ring} stroke={accent} strokeWidth="3" animate={{ pathLength: [.2, 1, .35], opacity: [.3, 1, .3] }} transition={{ duration: 5.2, repeat: Infinity, ease: "easeInOut" }} />
+      </motion.svg>;
+    case "comet-ribbon":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#7F1D1D" strokeWidth="8" />
+        <motion.g fill={accent} stroke="#FDE68A" strokeWidth="1.5" animate={{ rotate: [-5, 6, -3, 0], scale: [1, .9, 1.08, .96, 1], opacity: [.58, 1, .72, 1, .58] }} transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="M40 3c2 8 7 9 10 14 3-5 8-6 10-14-4 4-7 1-10-3-3 4-6 7-10 3Z" /><path d="M40 3c2 8 7 9 10 14 3-5 8-6 10-14-4 4-7 1-10-3-3 4-6 7-10 3Z" transform="rotate(60 50 50)" /><path d="M40 3c2 8 7 9 10 14 3-5 8-6 10-14-4 4-7 1-10-3-3 4-6 7-10 3Z" transform="rotate(120 50 50)" /><path d="M40 3c2 8 7 9 10 14 3-5 8-6 10-14-4 4-7 1-10-3-3 4-6 7-10 3Z" transform="rotate(180 50 50)" /><path d="M40 3c2 8 7 9 10 14 3-5 8-6 10-14-4 4-7 1-10-3-3 4-6 7-10 3Z" transform="rotate(240 50 50)" /><path d="M40 3c2 8 7 9 10 14 3-5 8-6 10-14-4 4-7 1-10-3-3 4-6 7-10 3Z" transform="rotate(300 50 50)" />
+        </motion.g>
+        <motion.circle cx="50" cy="50" r="38.5" {...ring} stroke={secondary} strokeWidth="3" strokeDasharray="36 206" animate={{ rotate: 360, opacity: [.35, 1, .35], scale: [.94, 1.06, .94] }} transition={{ duration: 3.8, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    case "royal-aurora":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#F8FAFC" strokeWidth="8" />
+        <motion.g stroke={secondary} strokeWidth="4" strokeLinecap="round" animate={{ rotate: -360, scale: [.92, 1.06, .92], opacity: [.4, 1, .4] }} transition={{ duration: 8, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="M50 0v18" /><path d="M50 0v18" transform="rotate(45 50 50)" /><path d="M50 0v18" transform="rotate(90 50 50)" /><path d="M50 0v18" transform="rotate(135 50 50)" /><path d="M50 0v18" transform="rotate(180 50 50)" /><path d="M50 0v18" transform="rotate(225 50 50)" /><path d="M50 0v18" transform="rotate(270 50 50)" /><path d="M50 0v18" transform="rotate(315 50 50)" />
+        </motion.g>
+        <motion.circle cx="50" cy="50" r="39" {...ring} stroke="#fff" strokeWidth="3.2" strokeDasharray="30 215" animate={{ rotate: 360, opacity: [.35, 1, .35] }} transition={{ duration: 3.9, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    case "eternal-heartkeeper":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#881337" strokeWidth="8" />
+        <motion.g fill={secondary} stroke={accent} strokeWidth="1.4" animate={{ scaleX: [.84, 1.08, .84], opacity: [.55, 1, .55] }} transition={{ duration: 4.6, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="M15 6C4 20 1 38 7 50 1 63 4 80 15 94c-2-15 5-24-1-35 9-9 9-19 0-29 6-10 4-18 1-24Z" />
+          <path d="M15 6C4 20 1 38 7 50 1 63 4 80 15 94c-2-15 5-24-1-35 9-9 9-19 0-29 6-10 4-18 1-24Z" transform="translate(100 0) scale(-1 1)" />
+        </motion.g>
+        <motion.path d="M50 3c-7-7-15 3 0 18 15-15 7-25 0-18Z" fill={accent} stroke="#fff" strokeWidth="1.2" animate={{ scale: [.82, 1.18, .82], opacity: [.45, 1, .45] }} transition={{ duration: 3.4, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 10px" }} />
+        <motion.circle cx="50" cy="50" r="39" {...ring} stroke="#FDE7D7" strokeWidth="2.5" strokeDasharray="32 210" animate={{ rotate: 360 }} transition={{ duration: 6, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    case "heart-nebula":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#831843" strokeWidth="8" />
+        <motion.g fill={accent} stroke="#FBCFE8" strokeWidth="1.2" animate={{ rotate: 360, scale: [.94, 1.06, .94] }} transition={{ duration: 12, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="M50 3c-6-6-13 2 0 14 13-12 6-20 0-14Z" /><path d="M50 3c-6-6-13 2 0 14 13-12 6-20 0-14Z" transform="rotate(60 50 50)" /><path d="M50 3c-6-6-13 2 0 14 13-12 6-20 0-14Z" transform="rotate(120 50 50)" /><path d="M50 3c-6-6-13 2 0 14 13-12 6-20 0-14Z" transform="rotate(180 50 50)" /><path d="M50 3c-6-6-13 2 0 14 13-12 6-20 0-14Z" transform="rotate(240 50 50)" /><path d="M50 3c-6-6-13 2 0 14 13-12 6-20 0-14Z" transform="rotate(300 50 50)" />
+        </motion.g>
+        <motion.circle cx="50" cy="50" r="39" {...ring} stroke={secondary} strokeWidth="3" strokeDasharray="48 197" animate={{ rotate: -360, opacity: [.25, 1, .25] }} transition={{ duration: 6.5, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    case "sakura-current":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="46" {...ring} stroke={accent} strokeWidth="5" />
+        <motion.g fill={secondary} stroke="#fff" strokeOpacity=".72" strokeWidth="1" animate={{ rotate: 360, scale: [1, .975, 1] }} transition={{ rotate: { duration: 20, repeat: Infinity, ease: "linear" }, scale: { duration: 5, repeat: Infinity, ease: "easeInOut" } }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="M50 2C42 6 43 12 50 16 57 12 58 6 50 2Z" /><path d="M50 2C42 6 43 12 50 16 57 12 58 6 50 2Z" transform="rotate(45 50 50)" /><path d="M50 2C42 6 43 12 50 16 57 12 58 6 50 2Z" transform="rotate(90 50 50)" /><path d="M50 2C42 6 43 12 50 16 57 12 58 6 50 2Z" transform="rotate(135 50 50)" /><path d="M50 2C42 6 43 12 50 16 57 12 58 6 50 2Z" transform="rotate(180 50 50)" /><path d="M50 2C42 6 43 12 50 16 57 12 58 6 50 2Z" transform="rotate(225 50 50)" /><path d="M50 2C42 6 43 12 50 16 57 12 58 6 50 2Z" transform="rotate(270 50 50)" /><path d="M50 2C42 6 43 12 50 16 57 12 58 6 50 2Z" transform="rotate(315 50 50)" />
+        </motion.g>
+        <motion.circle cx="50" cy="50" r="41" {...ring} stroke="#fff" strokeOpacity=".8" strokeWidth="1.6" strokeDasharray="36 222" animate={{ rotate: -360, opacity: [.45, 1, .45] }} transition={{ duration: 7, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    case "celestial-crown":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#312E81" strokeWidth="8" />
+        <motion.circle cx="50" cy="50" r="41" {...ring} stroke={secondary} strokeWidth="3" strokeDasharray="92 36" animate={{ strokeDashoffset: [0, -128], opacity: [.45, 1, .45] }} transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }} />
+        <motion.g fill={accent} stroke="#FEF3C7" strokeWidth="1.5" animate={{ scale: [.88, 1.12, .88], y: [1, -2, 1], opacity: [.62, 1, .62] }} transition={{ duration: 4.2, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="M34 16 38 1 47 9 50 0 53 9 62 1 66 16Z" /><path d="M34 16 38 1 47 9 50 0 53 9 62 1 66 16Z" transform="rotate(180 50 50)" />
+        </motion.g>
+      </motion.svg>;
+    case "ocean-orbit":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="46" {...ring} stroke="#0E7490" strokeWidth="5" />
+        <motion.path d="M50 4c9 7 17 7 26 2 1 10 7 16 17 18-4 10-1 18 6 26-8 8-10 16-6 26-10 2-16 8-18 18-10-4-18-1-26 6-8-7-16-9-26-5-2-10-8-16-18-18 4-10 1-18-6-26 8-8 10-16 6-26 10-2 16-8 18-18 10 4 18 1 26-6 8 7 16 9 26 5Z" {...ring} stroke={accent} strokeWidth="3.5" animate={{ rotate: [0, 6, -4, 0], scaleX: [1, .985, 1.01, 1] }} transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }} />
+        <motion.circle cx="50" cy="50" r="42.5" {...ring} stroke={secondary} strokeWidth="1.7" strokeDasharray="90 45" animate={{ strokeDashoffset: [0, -135] }} transition={{ duration: 10, repeat: Infinity, ease: "linear" }} />
+        <motion.circle cx="50" cy="50" r="40.5" {...ring} stroke="#fff" strokeOpacity=".82" strokeWidth="1.8" strokeDasharray="22 233" animate={{ rotate: [0, 210, 360], scaleY: [1, .96, 1.02, 1] }} transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    case "prism-wings":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#4C1D95" strokeWidth="8" />
+        <motion.g fill={secondary} fillOpacity=".9" stroke="#EDE9FE" strokeWidth="1.3" animate={{ rotate: [0, 45, -18, 0], scale: [.94, 1.06, .94], opacity: [.48, 1, .62] }} transition={{ duration: 6.2, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="M38 2 50 18 62 2 50 8Z" /><path d="M38 2 50 18 62 2 50 8Z" transform="rotate(45 50 50)" /><path d="M38 2 50 18 62 2 50 8Z" transform="rotate(90 50 50)" /><path d="M38 2 50 18 62 2 50 8Z" transform="rotate(135 50 50)" /><path d="M38 2 50 18 62 2 50 8Z" transform="rotate(180 50 50)" /><path d="M38 2 50 18 62 2 50 8Z" transform="rotate(225 50 50)" /><path d="M38 2 50 18 62 2 50 8Z" transform="rotate(270 50 50)" /><path d="M38 2 50 18 62 2 50 8Z" transform="rotate(315 50 50)" />
+        </motion.g>
+        <motion.circle cx="50" cy="50" r="38.5" {...ring} stroke="#fff" strokeOpacity=".95" strokeWidth="3" strokeDasharray="30 212" animate={{ rotate: -360, scale: [.95, 1.05, .95] }} transition={{ duration: 4.6, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    case "starlight-gala":
+      return <motion.svg viewBox="0 0 100 100" className={common}>
+        <circle cx="50" cy="50" r="45" {...ring} stroke="#0F172A" strokeWidth="8" />
+        <motion.g fill={accent} stroke="#fff" strokeWidth=".8" animate={{ rotate: [-4, 5, -4], opacity: [.3, 1, .45, 1, .3], scale: [.9, 1.1, .9] }} transition={{ duration: 4.8, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 50px" }}>
+          <path d="m50 1 3 7 8 1-6 5 2 8-7-4-7 4 2-8-6-5 8-1Z" /><path d="m50 1 3 7 8 1-6 5 2 8-7-4-7 4 2-8-6-5 8-1Z" transform="rotate(60 50 50)" /><path d="m50 1 3 7 8 1-6 5 2 8-7-4-7 4 2-8-6-5 8-1Z" transform="rotate(120 50 50)" /><path d="m50 1 3 7 8 1-6 5 2 8-7-4-7 4 2-8-6-5 8-1Z" transform="rotate(180 50 50)" /><path d="m50 1 3 7 8 1-6 5 2 8-7-4-7 4 2-8-6-5 8-1Z" transform="rotate(240 50 50)" /><path d="m50 1 3 7 8 1-6 5 2 8-7-4-7 4 2-8-6-5 8-1Z" transform="rotate(300 50 50)" />
+        </motion.g>
+        <motion.circle cx="50" cy="50" r="39" {...ring} stroke={secondary} strokeWidth="2.5" strokeDasharray="18 225" animate={{ rotate: 360 }} transition={{ duration: 4.5, repeat: Infinity, ease: "linear" }} style={{ transformOrigin: "50px 50px" }} />
+      </motion.svg>;
+    default:
+      return null;
+  }
+};
+
+export const AvatarSVG: React.FC<AvatarProps> = ({ id, className = "", size = 48, petCount = 0 }) => {
+  const { avatarId, borderId } = decodeAvatarSelection(id);
+  const borderReward = getAvatarBorderReward(petCount, borderId);
+  const companionStateId = getCompanionStateIdFromAvatar(id);
   const getSVG = () => {
-    switch (id) {
+    switch (avatarId) {
       case "panda":
         return (
           <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
@@ -546,13 +674,111 @@ export const AvatarSVG: React.FC<AvatarProps> = ({ id, className = "", size = 48
     }
   };
 
+  const borderMotion = (() => {
+    if (!borderReward?.animated) return { animate: undefined, transition: undefined };
+    const isHighTier = borderReward.count >= 1000;
+    switch (borderReward.motion) {
+      case "heartbeat":
+        return isHighTier
+          ? { animate: { scale: [1, 1.035, 1, 1.022, 1], filter: ["brightness(1)", "brightness(1.22)", "brightness(1)", "brightness(1.12)", "brightness(1)"] }, transition: { duration: 3.8, repeat: Infinity, ease: "easeInOut" } }
+          : { animate: { scale: [1, 1.012, 1] }, transition: { duration: 5.5, repeat: Infinity, ease: "easeInOut" } };
+      case "lunar-sway":
+        return isHighTier
+          ? { animate: { rotate: [-7, 9, -7], scale: [1, 1.028, 1], filter: ["brightness(.94)", "brightness(1.2)", "brightness(.94)"] }, transition: { duration: 6.5, repeat: Infinity, ease: "easeInOut" } }
+          : { animate: { rotate: [-2, 2, -2], scale: [1, 1.008, 1] }, transition: { duration: 8, repeat: Infinity, ease: "easeInOut" } };
+      case "comet-spin":
+        return { animate: { rotate: 360, scale: [1, .98, 1.025, 1], filter: ["brightness(.92)", "brightness(1.28)", "brightness(1.04)", "brightness(.92)"] }, transition: { duration: 7, repeat: Infinity, ease: "linear" } };
+      case "aurora-shift":
+        return { animate: { rotate: [-3, 4, -3], scale: [.985, 1.03, .985], filter: ["brightness(.94) saturate(.95)", "brightness(1.3) saturate(1.12)", "brightness(.94) saturate(.95)"], opacity: [.82, 1, .82] }, transition: { duration: 6.8, repeat: Infinity, ease: "easeInOut" } };
+      case "eternal-orbit":
+        return { animate: { rotate: 360, scale: [1, 1.028, 1], filter: ["brightness(.95)", "brightness(1.24)", "brightness(.95)"] }, transition: { duration: 9, repeat: Infinity, ease: "linear" } };
+      case "nebula-drift":
+        return { animate: { rotate: [0, 18, 7, 26, 0], scale: [.985, 1.03, .995, 1.018, .985], filter: ["brightness(.9)", "brightness(1.22)", "brightness(1)", "brightness(1.16)", "brightness(.9)"] }, transition: { duration: 9.5, repeat: Infinity, ease: "easeInOut" } };
+      case "sakura-breathe":
+        return { animate: { scale: [.98, 1.035, .98], rotate: [-4, 6, -4], opacity: [.82, 1, .82], filter: ["brightness(.95)", "brightness(1.2)", "brightness(.95)"] }, transition: { duration: 6, repeat: Infinity, ease: "easeInOut" } };
+      case "crown-reverse":
+        return { animate: { rotate: -360, scale: [.99, 1.025, .99], filter: ["brightness(.92)", "brightness(1.26)", "brightness(.92)"] }, transition: { duration: 12, repeat: Infinity, ease: "linear" } };
+      case "ocean-tide":
+        return { animate: { scaleX: [1, 1.035, .98, 1], scaleY: [1, .98, 1.035, 1], rotate: [0, 3, -2, 0], filter: ["brightness(.92)", "brightness(1.2)", "brightness(1)", "brightness(.92)"] }, transition: { duration: 6.5, repeat: Infinity, ease: "easeInOut" } };
+      case "prism-shift":
+        return isHighTier
+          ? { animate: { rotate: [0, 120, 250, 360], scale: [1, 1.025, .99, 1], filter: ["brightness(.92) saturate(.95)", "brightness(1.28) saturate(1.12)", "brightness(1.02) saturate(1)", "brightness(.92) saturate(.95)"] }, transition: { duration: 10, repeat: Infinity, ease: "linear" } }
+          : { animate: { rotate: [0, 4, -3, 0], filter: ["brightness(.96)", "brightness(1.08)", "brightness(.96)"] }, transition: { duration: 9, repeat: Infinity, ease: "easeInOut" } };
+      case "starlight-glow":
+        return { animate: { rotate: [-3, 5, -3], scale: [.99, 1.03, .99], opacity: [.78, 1, .84, 1, .78], filter: ["brightness(.9)", "brightness(1.3)", "brightness(1)", "brightness(1.22)", "brightness(.9)"] }, transition: { duration: 6.2, repeat: Infinity, ease: "easeInOut" } };
+      default:
+        return { animate: { rotate: 360 }, transition: { duration: 7, repeat: Infinity, ease: "linear" } };
+    }
+  })();
+
   return (
     <div
       id={`avatar-${id}`}
-      className={`rounded-full overflow-hidden flex items-center justify-center border border-gray-100 shrink-0 aspect-square select-none ${className}`}
+      className={`relative overflow-hidden rounded-full flex items-center justify-center shrink-0 aspect-square select-none ${className}`}
       style={{ width: size, height: size, minWidth: size, minHeight: size, maxWidth: size, maxHeight: size }}
+      title={borderReward ? `${borderReward.name} avatar border — ${borderReward.count} pets` : undefined}
     >
-      {getSVG()}
+      <div className="absolute inset-0 z-10 overflow-hidden rounded-full border border-gray-100 bg-white">
+        {companionStateId === "base-sprout" ? (
+          <motion.svg
+            viewBox="0 0 100 100"
+            fill="none"
+            className="h-full w-full"
+            animate={{ y: [0, -2.5, 0], rotate: [-1.5, 1.5, -1.5] }}
+            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+            aria-label="Animated original cat companion avatar"
+          >
+            <circle cx="50" cy="50" r="48" fill="#fff7ed" />
+            <path d="M28 39 20 21 40 31M72 39l8-18-20 10" fill="#fbbf24" stroke="#92400e" strokeWidth="3" strokeLinejoin="round" />
+            <circle cx="50" cy="56" r="31" fill="#fde68a" stroke="#d97706" strokeWidth="3" />
+            <ellipse cx="50" cy="66" rx="15" ry="11" fill="#fff" opacity=".9" />
+            <circle cx="39" cy="53" r="4.5" fill="#334155" /><circle cx="61" cy="53" r="4.5" fill="#334155" />
+            <circle cx="40.5" cy="51.5" r="1.3" fill="#fff" /><circle cx="62.5" cy="51.5" r="1.3" fill="#fff" />
+            <path d="m46 62 4-3 4 3-4 4Z" fill="#fb7185" />
+            <path d="M43 68q7 7 14 0" stroke="#78350f" strokeWidth="2.2" strokeLinecap="round" />
+            <ellipse cx="29" cy="63" rx="5" ry="3" fill="#fda4af" /><ellipse cx="71" cy="63" rx="5" ry="3" fill="#fda4af" />
+            <motion.g animate={{ rotate: [-5, 6, -5] }} transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }} style={{ transformOrigin: "50px 27px" }}>
+              <path d="M50 30q-2-12 7-17" stroke="#15803d" strokeWidth="3" strokeLinecap="round" />
+              <path d="M55 16q8-5 11 2-7 6-12 3" fill="#4ade80" stroke="#15803d" strokeWidth="1.5" />
+            </motion.g>
+          </motion.svg>
+        ) : companionStateId ? (
+          <motion.svg
+            viewBox="0 0 100 100"
+            fill="none"
+            className="h-full w-full"
+            animate={{ y: [0, -2, 0], rotate: [-1, 1, -1] }}
+            transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
+            aria-label="Animated companion avatar"
+          >
+            <SpecialCompanionForms stateId={companionStateId} />
+          </motion.svg>
+        ) : getSVG()}
+      </div>
+
+      {borderReward && (
+        <motion.span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-20 rounded-full"
+          style={{
+            background: borderReward.gradient,
+            boxShadow: borderReward.visual === "glow" ? borderReward.shadow : "none",
+            WebkitMask: `radial-gradient(farthest-side, transparent calc(100% - ${borderReward.ringWidth || 4}px), #000 calc(100% - ${(borderReward.ringWidth || 4) - 1}px))`,
+            mask: `radial-gradient(farthest-side, transparent calc(100% - ${borderReward.ringWidth || 4}px), #000 calc(100% - ${(borderReward.ringWidth || 4) - 1}px))`
+          }}
+          animate={borderMotion.animate}
+          transition={borderMotion.transition}
+        />
+      )}
+
+      {borderReward && (
+        <>
+          <AvatarBorderArt reward={borderReward} />
+          <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-[23] rounded-full border border-slate-900/25" />
+          <span aria-hidden="true" className="pointer-events-none absolute inset-[4px] z-[23] rounded-full border border-transparent border-l-white/45 border-t-white/70 border-b-slate-900/25 border-r-slate-900/20" />
+        </>
+      )}
+
     </div>
   );
 };

@@ -4,10 +4,10 @@
     "hangout_id": "hangout_tj6b5cfie",
     "applicant_id": "869cab8c-9c75-4b5a-b913-e4a728132d40",
     "is_anonymous": false,
-    "status": "pending",
-    "rejection_message": null,
+    "status": "retracted",
+    "rejection_message": "Automatically expired when the hangout ended.",
     "created_at": "2026-07-02T16:55:59.789Z",
-    "updated_at": "2026-07-02T16:55:59.789Z"
+    "updated_at": "2026-07-15T21:50:46.805Z"
   },
   {
     "id": "app_sw43lfywj",

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence, MotionConfig } from "motion/react";
+import { motion, AnimatePresence, MotionConfig, useDragControls } from "motion/react";
 import { useApp } from "../context/AppContext";
 import { Heart } from "lucide-react";
 import { SpecialCompanionForms } from "./SpecialCompanionForms";
@@ -26,6 +26,7 @@ import {
   formatCompanionLine,
   getCompanionStateById,
   getCompanionMilestone,
+  getCompanionPetRequestLines,
   getUnlockedCompanionState,
   isCompanionStateUnlocked,
   pickCompanionLine,
@@ -242,6 +243,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const [dragReturnStyle, setDragReturnStyle] = useState<DragReturnStyle>("steady-bounce");
   const [isDragReturning, setIsDragReturning] = useState<boolean>(false);
   const [isDraggingCompanion, setIsDraggingCompanion] = useState<boolean>(false);
+  const [isPreparingCompanionDrag, setIsPreparingCompanionDrag] = useState<boolean>(false);
+  const [isHoldingCompanion, setIsHoldingCompanion] = useState<boolean>(false);
   const [dragReturnMotion, setDragReturnMotion] = useState<DragReturnMotion>({
     x: 0,
     y: 0,
@@ -442,8 +445,20 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
   const hasTrait = (trait: CompanionTrait) => activeTraits.has(trait);
   const activeRingClass = activeTierState?.ringClass || "";
-  const activeGlowClass = activeTierState?.glowClass || "";
   const activeSpecialStateId = activeTierState && activeTierState.count > 1000 ? activeTierState.id : null;
+  const reducedGlowCounts = new Set([1000, 1200, 1400, 1600, 1700, 1800, 1900, 2000]);
+  const activeStateCount = Number(activeTierState?.count || 0);
+  const activeGlowClass = (activeTierState?.glowClass || "")
+    .replace("animate-pulse", "")
+    .replace(/scale-\[[^\]]+\]/g, reducedGlowCounts.has(activeStateCount) ? "scale-[1.08]" : "scale-[1.11]")
+    .replace(/inset-\[-\d+px\]/g, reducedGlowCounts.has(activeStateCount) ? "inset-[-6px]" : "inset-[-7px]");
+  const activeGlowOpacity = activeTierState?.id === "sakura-kitsune"
+    ? 0.15
+    : reducedGlowCounts.has(activeStateCount)
+      ? activeStateCount === 2000 ? 0.16 : 0.13
+      : activeSpecialStateId
+        ? 0.21
+        : 0.2;
   const activeDialogueLines = activeTierState?.ambientLines || companionBaseStateOption.ambientLines;
   const isRedHotAngry = isCompanionAngry && angerSource === "drag";
 
@@ -464,15 +479,14 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             }
           : null;
       const petHintAction: CompanionAction | null =
-        !isCompanionAngry && petCount < 1000 && Math.random() < 0.08
+        !isCompanionAngry && Math.random() < 0.14
           ? {
-              text: pickCompanionLine(companionDialogue.petHint),
+              text: pickCompanionLine(getCompanionPetRequestLines(activeTierState)),
               pose: petCount >= 20 ? "wiggle" : "rest",
               mood: "happy",
               accessory: activeTierState?.accessory || "none",
-              speechChance: 0.18,
-              durationMs: 4200,
-              maxPetCount: 999
+              speechChance: 1,
+              durationMs: 4200
             }
           : null;
       const rareAction = !isCompanionAngry && Math.random() < (petCount >= 50 ? 0.14 : 0.08);
@@ -538,6 +552,20 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   
   const containerRef = useRef<HTMLDivElement>(null);
   const draggableCompanionRef = useRef<HTMLDivElement>(null);
+  const companionDragControls = useDragControls();
+  const companionHoldTimerRef = useRef<number | null>(null);
+  const petReactionResetTimerRef = useRef<number | null>(null);
+  const companionPointerRef = useRef<{
+    id: number;
+    startX: number;
+    startY: number;
+    lastPetX: number;
+    lastPetY: number;
+    lastPetAt: number;
+  } | null>(null);
+  const companionDragArmedRef = useRef(false);
+  const companionDragStartedRef = useRef(false);
+  const companionStrokePetRef = useRef(false);
   const [companionDragBounds, setCompanionDragBounds] = useState<CompanionDragBounds>(() => ({
     left: -Math.max(0, window.innerWidth - 104),
     right: 0,
@@ -1247,8 +1275,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     setTimeout(() => setReactionType("none"), 2400);
   };
 
-  const handlePetKitty = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const petCompanion = () => {
     if (draggedRef.current) {
       draggedRef.current = false;
       return;
@@ -1374,8 +1401,10 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       console.error(e);
     }
 
-    setTimeout(() => {
+    if (petReactionResetTimerRef.current !== null) window.clearTimeout(petReactionResetTimerRef.current);
+    petReactionResetTimerRef.current = window.setTimeout(() => {
       setReactionType("none");
+      petReactionResetTimerRef.current = null;
     }, rType === "milestone-ultimate" ? 3000 : rType === "milestone-rainbow" ? 1900 : 1200);
 
     const colors = isVerySpecial
@@ -1393,6 +1422,119 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
     setParticles(prev => [...prev.slice(-80), ...newParticles]);
   };
+
+  const handlePetKitty = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (companionStrokePetRef.current) {
+      companionStrokePetRef.current = false;
+      return;
+    }
+    petCompanion();
+  };
+
+  const clearCompanionHoldTimer = () => {
+    if (companionHoldTimerRef.current !== null) {
+      window.clearTimeout(companionHoldTimerRef.current);
+      companionHoldTimerRef.current = null;
+    }
+  };
+
+  const handleCompanionPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || companionPointerRef.current) return;
+
+    draggedRef.current = false;
+    companionStrokePetRef.current = false;
+    companionDragArmedRef.current = false;
+    companionDragStartedRef.current = false;
+    companionPointerRef.current = {
+      id: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastPetX: event.clientX,
+      lastPetY: event.clientY,
+      lastPetAt: Date.now()
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setIsPreparingCompanionDrag(true);
+
+    const latestBounds = calculateCompanionDragBounds();
+    setCompanionDragBounds(latestBounds);
+    const holdDelay = 2000 + Math.floor(Math.random() * 650);
+    companionHoldTimerRef.current = window.setTimeout(() => {
+      companionHoldTimerRef.current = null;
+      if (!companionPointerRef.current || companionPointerRef.current.id !== event.pointerId) return;
+      companionDragArmedRef.current = true;
+      setIsPreparingCompanionDrag(false);
+      setIsHoldingCompanion(true);
+      setShowBubble(false);
+      setReactionType("subtle");
+      setMood("excited");
+      if (navigator.vibrate) navigator.vibrate(24);
+    }, holdDelay);
+  };
+
+  const handleCompanionPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pointer = companionPointerRef.current;
+    if (!pointer || pointer.id !== event.pointerId) return;
+
+    if (companionDragArmedRef.current) {
+      if (!companionDragStartedRef.current) {
+        companionDragStartedRef.current = true;
+        draggedRef.current = true;
+        companionDragControls.start(event.nativeEvent, { snapToCursor: false });
+      }
+      return;
+    }
+
+    const movedFromStart = Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY);
+    if (movedFromStart > 7) {
+      clearCompanionHoldTimer();
+      setIsPreparingCompanionDrag(false);
+    }
+
+    const strokeDistance = Math.hypot(event.clientX - pointer.lastPetX, event.clientY - pointer.lastPetY);
+    const now = Date.now();
+    if (strokeDistance >= 14 && now - pointer.lastPetAt >= 700) {
+      pointer.lastPetX = event.clientX;
+      pointer.lastPetY = event.clientY;
+      pointer.lastPetAt = now;
+      companionStrokePetRef.current = true;
+      petCompanion();
+    }
+  };
+
+  const finishCompanionPointerGesture = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (companionPointerRef.current?.id !== event.pointerId) return;
+    clearCompanionHoldTimer();
+    companionPointerRef.current = null;
+    companionDragArmedRef.current = false;
+    if (!isDraggingCompanion) companionDragStartedRef.current = false;
+    setIsPreparingCompanionDrag(false);
+    if (!isDraggingCompanion) setIsHoldingCompanion(false);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  useEffect(() => () => {
+    clearCompanionHoldTimer();
+    if (petReactionResetTimerRef.current !== null) window.clearTimeout(petReactionResetTimerRef.current);
+  }, []);
+
+  const petReactionVariants = [
+    { y: [0, -5, -2, 0], rotate: [0, -3, 2, 0], scaleX: [1, 1.035, 0.985, 1], scaleY: [1, 0.96, 1.045, 1] },
+    { y: [0, 2, -3, 0], rotate: [0, 2.5, -1.5, 0], scaleX: [1, 1.055, 0.98, 1], scaleY: [1, 0.945, 1.035, 1] },
+    { x: [0, -2, 2, 0], y: [0, -2, -4, 0], rotate: [0, -2, 3, 0], scale: [1, 1.025, 1.045, 1] },
+    { x: [0, 2, -1, 0], y: [0, 1, -4, 0], rotate: [0, 3, -2, 0], scaleX: [1, 0.98, 1.04, 1], scaleY: [1, 1.04, 0.97, 1] }
+  ];
+  const activePetReaction = {
+    ...petReactionVariants[actionCount % petReactionVariants.length],
+    transition: {
+      duration: ["fly", "orbit", "feather-float"].includes(activeTierState?.pose || "") ? 1.15 : 0.95,
+      ease: [0.22, 1, 0.36, 1]
+    }
+  };
+
   let activeAnimation: any = isIdle
     ? companionAnimations.napping
     : activeTierState
@@ -1400,7 +1542,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     : companionAnimations.resting;
   if (!isIdle) {
     if (reactionType === "success") {
-      activeAnimation = companionAnimations.success;
+      activeAnimation = activePetReaction;
     } else if (reactionType === "error") {
       activeAnimation = companionAnimations.error;
     } else if (reactionType === "subtle") {
@@ -1681,20 +1823,24 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         className={`pointer-events-auto relative z-10 ${isBubbleBelow ? "order-1" : "order-2"}`}
         style={{ touchAction: "none", willChange: "transform" }}
         drag
+        dragControls={companionDragControls}
+        dragListener={false}
         dragConstraints={companionDragBounds}
         dragElastic={0}
         dragMomentum={false}
         dragTransition={{ bounceStiffness: 420, bounceDamping: 34, power: 0, timeConstant: 100 }}
         animate={dragReturnMotion}
-        whileDrag={{ scale: 1.025, transition: { duration: 0.12, ease: "easeOut" } }}
-        onPointerDown={() => {
-          draggedRef.current = false;
-          const latestBounds = calculateCompanionDragBounds();
-          setCompanionDragBounds(latestBounds);
-        }}
+        whileDrag={{ scale: 1.055, y: -4, rotate: [-1.5, 1.5, -1.5], transition: { duration: 0.75, repeat: Infinity, ease: "easeInOut" } }}
+        onPointerDown={handleCompanionPointerDown}
+        onPointerMove={handleCompanionPointerMove}
+        onPointerUp={finishCompanionPointerGesture}
+        onPointerCancel={finishCompanionPointerGesture}
         onDragStart={() => {
           draggedRef.current = true;
+          companionDragStartedRef.current = true;
           setIsDraggingCompanion(true);
+          setIsPreparingCompanionDrag(false);
+          setIsHoldingCompanion(true);
           setShowBubble(false);
           clearCompanionReturnTimer();
           setTravelMode("home");
@@ -1705,6 +1851,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         onDragEnd={(_, info) => {
           draggedRef.current = true;
           setIsDraggingCompanion(false);
+          setIsHoldingCompanion(false);
+          companionDragArmedRef.current = false;
+          companionDragStartedRef.current = false;
           const movedFarEnough = Math.abs(info.offset.x) > 12 || Math.abs(info.offset.y) > 12;
           const rawNextOffset = {
             x: companionOffsetRef.current.x + info.offset.x,
@@ -1773,7 +1922,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         }}
       >
         <motion.div
-          className={`cursor-pointer relative group flex items-center justify-center p-1 rounded-full transition-all duration-350 ${
+          className={`${isDraggingCompanion || isHoldingCompanion ? "cursor-grabbing" : "cursor-pointer"} relative group flex items-center justify-center p-1 rounded-full transition-all duration-350 ${
             isRedHotAngry
               ? "ring-4 ring-red-500/80 ring-offset-2 ring-offset-orange-100 shadow-[0_0_26px_rgba(239,68,68,0.45)]"
               : isCompanionAngry
@@ -1782,13 +1931,45 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
           }`}
           onClick={handlePetKitty}
           initial={{ scale: 1 }}
-          animate={isDraggingCompanion || isDragReturning
+          animate={isDraggingCompanion
+            ? { x: 0, y: -3, rotate: [0, -1.5, 1.5, 0], scale: 1.045, scaleX: 0.98, scaleY: 1.04, transition: { duration: 0.85, repeat: Infinity, ease: "easeInOut" } }
+            : isHoldingCompanion
+            ? { x: 0, y: -2, rotate: [0, -2, 2, 0], scale: [1, 0.94, 1.035], scaleX: 1, scaleY: 1, transition: { duration: 0.7, ease: "easeOut" } }
+            : isPreparingCompanionDrag
+            ? { x: 0, y: 1, rotate: 0, scale: 0.965, scaleX: 1.025, scaleY: 0.96, transition: { duration: 0.28, ease: "easeOut" } }
+            : isDragReturning
             ? { x: 0, y: 0, rotate: 0, scale: 1, scaleX: 1, scaleY: 1 }
             : activeAnimation}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
+          style={activeGlowClass && !isCompanionAngry ? {
+            boxShadow: reducedGlowCounts.has(activeStateCount)
+              ? "0 0 7px rgba(148,163,184,0.09)"
+              : "0 0 11px rgba(148,163,184,0.13)"
+          } : undefined}
           id="campus-companion-widget"
+          title="Slide to pet. Hold for 2 seconds, then move to reposition."
+          aria-label="Campus companion. Slide to pet, or hold for 2 seconds and move to reposition."
         >
+        <AnimatePresence>
+          {(isPreparingCompanionDrag || isHoldingCompanion) && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.82 }}
+              animate={{
+                opacity: isHoldingCompanion ? 0.95 : [0.25, 0.7, 0.45],
+                scale: isHoldingCompanion ? [1, 1.09, 1] : [0.9, 1.04, 0.96],
+                rotate: isHoldingCompanion ? 360 : 0
+              }}
+              exit={{ opacity: 0, scale: 1.12 }}
+              transition={isHoldingCompanion
+                ? { rotate: { duration: 2.4, repeat: Infinity, ease: "linear" }, scale: { duration: 0.8, repeat: Infinity } }
+                : { duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
+              className={`pointer-events-none absolute inset-[-5px] rounded-full border-2 border-dashed ${
+                isHoldingCompanion ? "border-violet-400 shadow-[0_0_16px_rgba(139,92,246,0.38)]" : "border-rose-300/70"
+              }`}
+            />
+          )}
+        </AnimatePresence>
         {/* Floating Heart Particles */}
         <AnimatePresence>
           {particles.map(p => (
@@ -1857,7 +2038,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               : activeGlowClass
             }`}
             style={!isCompanionAngry ? {
-              opacity: activeTierState?.id === "sakura-kitsune" ? 0.38 : activeSpecialStateId ? 0.6 : 0.54
+              opacity: activeGlowOpacity
             } : undefined}
           />
         )}
@@ -1867,7 +2048,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
           <svg
             viewBox="0 0 100 100"
             fill="none"
-            className="w-full h-full drop-shadow-[0_2.5px_4.5px_rgba(244,63,94,0.3)] select-none"
+            className="w-full h-full drop-shadow-[0_2px_3px_rgba(100,116,139,0.18)] select-none"
           >
             {activeSpecialStateId ? (
               <MotionConfig reducedMotion={isIdle ? "always" : "user"}>

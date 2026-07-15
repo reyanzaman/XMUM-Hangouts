@@ -7,6 +7,7 @@ import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
 import { hashPassword, isModernPasswordHash, matchesStoredPassword } from "./src/lib/security";
 import { collapseProfilesByEmail, normalizeProfileEmail, pickCanonicalProfile } from "./src/lib/profiles";
+import { decodeAvatarSelection, getCompanionStateIdFromAvatar } from "./src/lib/avatarRewards";
 import { generateOtpCode, hashOtpCode, isXmumEmail, matchesOtpCode, OTP_TTL_MS, validatePassword } from "./src/server/auth-security";
 import {
   dispatchPushNotifications,
@@ -1631,10 +1632,14 @@ async function startServer() {
         const isAdmin = Boolean(profile?.is_admin && isConfiguredAdminEmail(profile.email));
         let authorizedData = data;
         if (!isAdmin) {
-          if (table === "xmum_profiles") authorizedData = data.filter((row: any) => row.id === identity.userId || normalizeProfileEmail(row.email || "") === identity.email).map((row: any) => ({ ...row, id: profile?.id || identity.userId, email: identity.email, is_admin: false, is_blocked_globally: Boolean(profile?.is_blocked_globally), flag_status: profile?.flag_status || "none", appeal_count: Number(profile?.appeal_count || 0), password_hash: profile?.password_hash || null }));
+          if (table === "xmum_profiles") authorizedData = data.filter((row: any) => row.id === identity.userId || normalizeProfileEmail(row.email || "") === identity.email).map((row: any) => ({ ...row, id: profile?.id || identity.userId, email: identity.email, avatar_id: (getCompanionStateIdFromAvatar(row.avatar_id) || decodeAvatarSelection(row.avatar_id).borderId) && Number(profile?.companion_pet_count || 0) < 2000 ? profile?.avatar_id || "panda" : row.avatar_id, is_admin: false, is_blocked_globally: Boolean(profile?.is_blocked_globally), flag_status: profile?.flag_status || "none", appeal_count: Number(profile?.appeal_count || 0), password_hash: profile?.password_hash || null }));
           else if (table === "xmum_hangouts") authorizedData = data.filter((row: any) => row.creator_id === identity.userId);
-          else if (table === "xmum_likes") authorizedData = data.filter((row: any) => row.user_id === identity.userId);
-          else if (table === "xmum_comments") authorizedData = data.filter((row: any) => row.user_id === identity.userId);
+          else if (table === "xmum_likes" || table === "xmum_comments") {
+            const activeHangoutIds = new Set(getLocalData(LOCAL_HANGOUTS_FILE)
+              .filter((hangout: any) => hangout.status === "active" && new Date(hangout.event_datetime).getTime() > Date.now())
+              .map((hangout: any) => hangout.id));
+            authorizedData = data.filter((row: any) => row.user_id === identity.userId && activeHangoutIds.has(row.hangout_id));
+          }
           else if (table === "xmum_blocks") authorizedData = data.filter((row: any) => row.blocker_id === identity.userId);
           else if (table === "xmum_chats") authorizedData = data.filter((row: any) => row.user_a_id === identity.userId || row.user_b_id === identity.userId);
           else if (table === "xmum_messages") {

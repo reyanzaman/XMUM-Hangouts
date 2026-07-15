@@ -296,7 +296,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
           }}
           className="flex items-center gap-3.5 text-left outline-none group cursor-pointer"
         >
-          <AvatarSVG id={creator.avatar_id} size={52} className={shouldMaskAnonymousOnCard ? "group-hover:opacity-90 transition-opacity shrink-0" : "group-hover:scale-105 transition-transform shrink-0"} />
+          <AvatarSVG id={creator.avatar_id} size={52} petCount={shouldMaskAnonymousOnCard ? 0 : creator.companion_pet_count} className={shouldMaskAnonymousOnCard ? "group-hover:opacity-90 transition-opacity shrink-0" : "group-hover:scale-105 transition-transform shrink-0"} />
           <div className="min-w-0 text-left">
             <div className="flex items-center flex-wrap gap-1">
               <h4 className={`font-bold text-gray-900 text-xs sm:text-sm transition-colors ${
@@ -573,9 +573,13 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
           <div className="relative flex items-center gap-1">
             <button
               id={`hangout-like-btn-${hangout.id}`}
+              disabled={isExpired}
               onClick={() => toggleLike(hangout.id)}
+              title={isExpired ? "Expired hangouts are view only" : "Like this hangout"}
               className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl sm:rounded-2xl text-xs font-bold transition-all ${
-                isLikedByMe
+                isExpired
+                  ? "cursor-not-allowed border border-transparent text-slate-300"
+                  : isLikedByMe
                   ? "bg-rose-50 text-rose-500 border border-rose-100"
                   : "hover:bg-slate-50 border border-transparent text-gray-500"
               }`}
@@ -611,7 +615,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
                           className="inline-flex items-center gap-2 rounded-2xl border border-slate-100 bg-white px-2.5 py-2 text-left shadow-sm transition-all hover:border-rose-200 hover:bg-rose-50/40"
                           title={`View ${profile.name}'s profile`}
                         >
-                          <AvatarSVG id={profile.avatar_id} size={24} />
+                          <AvatarSVG id={profile.avatar_id} size={24} petCount={profile.companion_pet_count} />
                           <span className="max-w-[170px] truncate text-[11px] font-semibold text-slate-700">
                             {profile.name}
                           </span>
@@ -773,7 +777,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
                 const isLovedByMe = currentUser && commentLikes.some(lk => lk.comment_id === c.id && lk.user_id === currentUser.id);
                 return (
                   <div id={`comment-${c.id}`} key={c.id} className="bg-white border border-gray-100 rounded-2xl p-3 flex gap-3 text-xs leading-relaxed text-gray-600 shadow-sm">
-                    <AvatarSVG id={author.avatar_id} size={32} />
+                    <AvatarSVG id={author.avatar_id} size={32} petCount={author.companion_pet_count} />
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-center mb-0.5">
                         <button
@@ -791,9 +795,10 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
                           {/* Comment Love React */}
                           <button
                             type="button"
+                            disabled={isExpired}
                             onClick={() => toggleCommentLike(c.id)}
                             className={`flex items-center gap-0.5 transition-all cursor-pointer p-1 rounded-lg ${
-                              isLovedByMe ? "text-rose-500 bg-rose-50 scale-105" : "text-gray-400 hover:text-rose-500 hover:bg-slate-50"
+                              isExpired ? "cursor-not-allowed text-slate-300" : isLovedByMe ? "text-rose-500 bg-rose-50 scale-105" : "text-gray-400 hover:text-rose-500 hover:bg-slate-50"
                             }`}
                             title="Love react to comment"
                           >
@@ -811,7 +816,11 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
           </div>
 
           {/* Add a comment form */}
-          {currentUser ? (
+          {isExpired ? (
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-[10px] font-bold text-slate-400">
+              <Clock className="h-3.5 w-3.5" /> Discussion is archived and view only.
+            </div>
+          ) : currentUser ? (
             <form onSubmit={handleAddCommentSubmit} className="flex gap-2">
               <div className="flex flex-1 gap-2">
                 <input

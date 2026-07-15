@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { AlertCircle, ArrowLeft, Heart, Inbox, MessageSquare, Search, Send, ShieldAlert } from "lucide-react";
 import { useApp } from "../context/AppContext";
+import type { Chat, Profile } from "../types";
+import { formatHangoutIntent } from "../lib/hangouts";
 import { AvatarSVG } from "./AvatarSVG";
 import { ChatWindowSkeleton } from "./LoadingSkeletons";
-import { Send, BookOpen, AlertCircle, MessageSquare, ShieldAlert, ArrowLeft, MoreVertical, X } from "lucide-react";
-import { Chat, Message, Profile } from "../types";
-import { motion, AnimatePresence } from "motion/react";
-import { formatHangoutIntent } from "../lib/hangouts";
 
 export const ChatWindow: React.FC = () => {
   const {
@@ -29,256 +29,175 @@ export const ChatWindow: React.FC = () => {
 
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [typedMessage, setTypedMessage] = useState("");
+  const [threadSearch, setThreadSearch] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Focus and mark as read when chat changes
   const unreadCount = currentUser
-    ? messages.filter(m => m.chat_id === activeChatId && m.sender_id !== currentUser.id && !m.is_read).length
+    ? messages.filter(message => message.chat_id === activeChatId && message.sender_id !== currentUser.id && !message.is_read).length
     : 0;
 
   useEffect(() => {
-    if (activeChatId && currentUser && unreadCount > 0) {
-      markChatAsRead(activeChatId);
-    }
+    if (activeChatId && currentUser && unreadCount > 0) markChatAsRead(activeChatId);
   }, [activeChatId, unreadCount, currentUser?.id, markChatAsRead]);
 
-  // Scroll to bottom on updates
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, activeChatId]);
 
-  if (isAuthInitializing && !currentUser) {
-    return <ChatWindowSkeleton />;
-  }
+  if (isAuthInitializing && !currentUser) return <ChatWindowSkeleton />;
 
   if (!currentUser) {
     return (
-      <div id="chat-no-auth" className="text-center py-12 bg-white rounded-3xl border border-gray-100 p-8">
-        <MessageSquare className="w-12 h-12 text-rose-300 mx-auto stroke-1" />
-        <h4 className="font-bold text-gray-800 mt-3">Access Locked</h4>
-        <p className="text-gray-500 text-xs mt-1">Please sign in to read matching chats.</p>
+      <div id="chat-no-auth" className="rounded-[2rem] border border-rose-100 bg-gradient-to-br from-white to-rose-50/50 p-10 text-center shadow-sm">
+        <MessageSquare className="mx-auto h-11 w-11 text-rose-500" />
+        <h4 className="mt-3 font-black text-slate-800">Inbox locked</h4>
+        <p className="mt-1 text-xs text-slate-400">Sign in to read your conversations.</p>
       </div>
     );
   }
 
-  // Find all active chats for this user
-  const myChats = chats.filter(c => c.user_a_id === currentUser.id || c.user_b_id === currentUser.id);
-
-  // Helper to extract the other user
+  const myChats = chats.filter(chat => chat.user_a_id === currentUser.id || chat.user_b_id === currentUser.id);
   const getOtherUser = (chat: Chat): Profile | undefined => {
     const otherId = chat.user_a_id === currentUser.id ? chat.user_b_id : chat.user_a_id;
-    return profiles.find(p => p.id === otherId);
+    return profiles.find(profile => profile.id === otherId);
   };
+  const getUnreadCount = (chatId: string) =>
+    messages.filter(message => message.chat_id === chatId && message.sender_id !== currentUser.id && !message.is_read).length;
+  const getChatMessages = (chatId: string) =>
+    messages
+      .filter(message => message.chat_id === chatId)
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const getLastMessage = (chatId: string) => getChatMessages(chatId).at(-1);
 
-  // Helper to get unread count
-  const getUnreadCount = (chatId: string): number => {
-    return messages.filter(m => m.chat_id === chatId && m.sender_id !== currentUser.id && !m.is_read).length;
-  };
+  const visibleChats = [...myChats]
+    .filter(chat => {
+      const other = getOtherUser(chat);
+      const query = threadSearch.trim().toLowerCase();
+      if (!query) return true;
+      return Boolean(
+        other?.name.toLowerCase().includes(query) ||
+        other?.student_id.toLowerCase().includes(query) ||
+        getLastMessage(chat.id)?.content.toLowerCase().includes(query)
+      );
+    })
+    .sort((a, b) => {
+      const aTime = new Date(getLastMessage(a.id)?.created_at || a.created_at).getTime();
+      const bTime = new Date(getLastMessage(b.id)?.created_at || b.created_at).getTime();
+      return bTime - aTime;
+    });
 
-  const activeChat = chats.find(c => c.id === activeChatId);
+  const activeChat = myChats.find(chat => chat.id === activeChatId);
   const otherUser = activeChat ? getOtherUser(activeChat) : null;
-  const activeChatMessages = messages.filter(m => m.chat_id === activeChatId);
-
-  // Check locks/blocks
-  const isBlockedByUser = otherUser 
-    ? blocks.some(b => b.blocker_id === currentUser.id && b.blocked_id === otherUser.id)
+  const activeChatMessages = activeChatId ? getChatMessages(activeChatId) : [];
+  const totalUnread = myChats.reduce((sum, chat) => sum + getUnreadCount(chat.id), 0);
+  const isBlockedByUser = otherUser
+    ? blocks.some(block => block.blocker_id === currentUser.id && block.blocked_id === otherUser.id)
     : false;
   const hasBlockedMe = otherUser
-    ? blocks.some(b => b.blocker_id === otherUser.id && b.blocked_id === currentUser.id)
+    ? blocks.some(block => block.blocker_id === otherUser.id && block.blocked_id === currentUser.id)
     : false;
   const isChatLocked = isBlockedByUser || hasBlockedMe;
 
-  const handleSend = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSend = (event: React.FormEvent) => {
+    event.preventDefault();
     if (!typedMessage.trim() || !activeChatId || isChatLocked) return;
     sendChatMessage(activeChatId, typedMessage);
     setTypedMessage("");
   };
 
-  // If there are absolutely no chats, return a single cohesive full-width empty page instead of a weird split screen
   if (myChats.length === 0) {
     return (
-      <div
-        id="chat-system-empty"
-        className="bg-white border border-gray-100 rounded-3xl shadow-sm hover:shadow-md transition-all duration-300 h-[600px] flex flex-col items-center justify-center p-8 text-center font-sans animate-in fade-in duration-300"
-      >
-        <div className="p-4 bg-rose-50 rounded-full text-rose-500 mb-4 animate-bounce">
-          <MessageSquare className="w-10 h-10" />
+      <div id="chat-system-empty" className="relative isolate flex min-h-[520px] flex-col items-center justify-center overflow-hidden rounded-[2rem] border border-rose-100 bg-gradient-to-br from-white via-[#fff1f6] to-[#fff5f8] p-8 text-center shadow-[0_20px_55px_-42px_rgba(236,72,120,0.28)]">
+        <div className="absolute -left-14 -top-14 h-40 w-40 rounded-full bg-rose-200/25 blur-3xl" />
+        <div className="absolute -bottom-16 -right-12 h-44 w-44 rounded-full bg-[#f9a8c4]/40 blur-3xl" />
+        <div className="relative mb-5 flex h-20 w-20 items-center justify-center rounded-[1.75rem] bg-white text-rose-500 shadow-sm ring-1 ring-rose-100">
+          <Inbox className="h-9 w-9" />
+          <Heart className="absolute -right-1 -top-1 h-5 w-5 fill-pink-400 text-pink-400" />
         </div>
-        <h3 className="text-base sm:text-lg font-extrabold text-gray-900">Your Inbox is Empty 📬</h3>
-        <p className="text-gray-500 text-xs sm:text-sm max-w-sm mt-2 leading-relaxed font-medium">
-          Your private chats will automatically unlock and appear here when host approvals occur.
+        <h3 className="relative text-lg font-black tracking-tight text-slate-900 sm:text-xl">Your inbox is ready</h3>
+        <p className="mt-2 max-w-sm text-xs font-medium leading-relaxed text-slate-500 sm:text-sm">
+          Private conversations appear here after a host approves a join request.
         </p>
-        <div className="mt-4 text-[10px] text-gray-400 font-mono tracking-wide">
-          🔒 Safe • Verified student connections only
+        <div className="mt-5 inline-flex items-center gap-1.5 rounded-full border border-rose-100 bg-white/90 px-3 py-1.5 text-[10px] font-bold text-rose-600 shadow-sm">
+          <Heart className="h-3 w-3 text-pink-500" /> Your next campus conversation will land here.
         </div>
       </div>
     );
   }
 
   return (
-    <div
-      id="chat-system-grid"
-      className="bg-white border border-gray-100 rounded-3xl shadow-sm hover:shadow-md transition-shadow duration-200 h-[650px] flex overflow-hidden font-sans"
-    >
-      {/* 1. Chats List (Sidebar) */}
-      <div
-        id="chat-sidebar"
-        className={`w-full md:w-80 lg:w-96 border-r border-gray-50 flex flex-col h-full bg-slate-50/10 shrink-0 ${
-          activeChatId ? "hidden md:flex" : "flex"
-        }`}
-      >
-        <div className="p-4 border-b border-gray-50">
-          <h3 id="chat-sidebar-title" className="font-bold text-gray-800 text-sm">Your Hangouts Chats</h3>
-          <p className="text-[11px] text-gray-400 mt-0.5">Dual safe chats opened on approved join requests.</p>
+    <div id="chat-system-grid" className="flex h-[calc(100dvh-9rem)] min-h-[540px] max-h-[780px] overflow-hidden rounded-[2rem] border border-rose-100 bg-white font-sans shadow-[0_22px_60px_-44px_rgba(236,72,120,0.29)]">
+      <aside id="chat-sidebar" className={`${activeChatId ? "hidden md:flex" : "flex"} h-full w-full shrink-0 flex-col border-r border-rose-100 bg-gradient-to-b from-[#fff1f6] via-white to-[#fff5f8] md:w-[21rem] lg:w-[23rem]`}>
+        <div className="space-y-3 border-b border-rose-100 p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 text-base font-black tracking-tight text-slate-850"><Inbox className="h-4 w-4 text-rose-500" /> Inbox</h3>
+              <p className="mt-0.5 text-[10px] font-semibold text-slate-400">Your approved campus connections</p>
+            </div>
+            <span className="rounded-full bg-white px-2.5 py-1 text-[9px] font-black text-rose-600 shadow-sm ring-1 ring-rose-100">{totalUnread > 0 ? `${totalUnread} new` : `${myChats.length} chats`}</span>
+          </div>
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input value={threadSearch} onChange={event => setThreadSearch(event.target.value)} placeholder="Search conversations" className="w-full rounded-2xl border border-rose-100 bg-white py-2.5 pl-9 pr-3 text-xs font-semibold text-slate-700 outline-none transition-all placeholder:text-slate-350 focus:border-rose-300 focus:ring-2 focus:ring-rose-100" />
+          </label>
         </div>
 
-        <div id="chats-threads-list" className="flex-1 overflow-y-auto py-2">
-          {myChats.map(chat => {
+        <div id="chats-threads-list" className="flex-1 space-y-2 overflow-y-auto p-2.5 sm:p-3">
+          {visibleChats.map(chat => {
             const other = getOtherUser(chat);
             if (!other) return null;
-
             const unread = getUnreadCount(chat.id);
-            const chatMsgs = messages.filter(m => m.chat_id === chat.id);
-            const lastMsg = chatMsgs[chatMsgs.length - 1];
-
+            const lastMessage = getLastMessage(chat.id);
             return (
-              <button
-                id={`chat-thread-btn-${chat.id}`}
-                key={chat.id}
-                onClick={() => setActiveChatId(chat.id)}
-                className={`w-full p-4 flex gap-3.5 text-left border-b border-gray-50 hover:bg-slate-50/50 transition-colors duration-150 outline-none items-center relative ${
-                  activeChatId === chat.id ? "bg-rose-50/25 font-semibold" : ""
-                }`}
-              >
-                <AvatarSVG id={other.avatar_id} size={44} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-baseline mb-0.5">
-                    <span className="font-semibold text-gray-800 text-xs sm:text-sm truncate">
-                      {other.name}
-                    </span>
-                    {lastMsg && (
-                      <span className="text-[10px] text-gray-400 font-mono">
-                        {new Date(lastMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    )}
+              <button key={chat.id} id={`chat-thread-btn-${chat.id}`} onClick={() => setActiveChatId(chat.id)} className={`relative flex w-full items-center gap-3 rounded-2xl border p-3 text-left outline-none transition-all duration-200 ${activeChatId === chat.id ? "border-rose-200 bg-gradient-to-r from-white to-rose-50 shadow-sm" : "border-transparent bg-white/55 hover:border-rose-100 hover:bg-white"}`}>
+                <AvatarSVG id={other.avatar_id} size={44} petCount={other.companion_pet_count} />
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 flex items-baseline justify-between gap-2">
+                    <span className="truncate text-xs font-extrabold text-slate-800 sm:text-sm">{other.name}</span>
+                    {lastMessage && <span className="shrink-0 text-[9px] font-semibold text-slate-400">{new Date(lastMessage.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
                   </div>
-                  <p className="text-xs text-gray-500 truncate pr-4">
-                    {lastMsg ? lastMsg.content : "No messages yet."}
-                  </p>
+                  <p className={`truncate pr-2 text-[11px] ${unread > 0 ? "font-bold text-slate-650" : "font-medium text-slate-400"}`}>{lastMessage?.content || "Start your conversation"}</p>
                 </div>
-
-                {/* Badges */}
-                {unread > 0 && (
-                  <span className="bg-rose-500 text-[10px] text-white font-bold h-5 w-5 rounded-full flex items-center justify-center ring-2 ring-white ml-2 animate-pulse">
-                    {unread}
-                  </span>
-                )}
+                {unread > 0 && <span className="ml-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-gradient-to-br from-[#e34f78] to-[#f07b98] px-1 text-[9px] font-black text-white ring-2 ring-white">{unread}</span>}
               </button>
             );
           })}
+          {visibleChats.length === 0 && (
+            <div className="px-4 py-12 text-center"><Search className="mx-auto h-7 w-7 text-rose-300" /><p className="mt-2 text-xs font-bold text-slate-500">No matching conversations</p><p className="mt-1 text-[10px] text-slate-400">Try another name or message.</p></div>
+          )}
         </div>
-      </div>
+      </aside>
 
-      {/* 2. Message Thread (Active Window) */}
-      <div
-        id="chat-message-window"
-        className={`flex-1 flex flex-col h-full bg-white relative ${
-          activeChatId ? "flex" : "hidden md:flex"
-        }`}
-      >
-        {activeChatId && otherUser ? (
+      <section id="chat-message-window" className={`${activeChatId ? "flex" : "hidden md:flex"} relative h-full min-w-0 flex-1 flex-col bg-white`}>
+        {activeChat && otherUser ? (
           <>
-            {/* Header with robust responsive spacing to prevent email/button overlap */}
-            <div className="p-3.5 sm:p-4 border-b border-gray-50 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                <button
-                  onClick={() => setActiveChatId(null)}
-                  className="p-1 text-gray-550 hover:bg-slate-100 rounded-lg md:hidden shrink-0"
-                  title="Back to list"
-                >
-                  <ArrowLeft className="w-5 h-5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewedProfile(otherUser)}
-                  className="flex items-center gap-2 sm:gap-3 min-w-0 text-left hover:text-rose-600 transition-all cursor-pointer group outline-none"
-                  title={`View ${otherUser.name}'s Profile`}
-                >
-                  <div className="shrink-0 group-hover:scale-105 transition-transform">
-                    <AvatarSVG id={otherUser.avatar_id} size={36} />
-                  </div>
-                  <div className="min-w-0">
-                    <h4 className="font-bold text-slate-800 text-xs sm:text-sm truncate group-hover:underline">
-                      {otherUser.name}
-                    </h4>
-                    <p className="text-[9px] sm:text-[10px] text-teal-600 font-mono truncate">
-                      {otherUser.student_id}@xmu.edu.my
-                    </p>
-                  </div>
+            <header className="flex items-center justify-between gap-2 border-b border-rose-100 bg-white p-3.5 sm:px-5 sm:py-4">
+              <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                <button onClick={() => setActiveChatId(null)} className="shrink-0 rounded-xl p-1.5 text-slate-500 hover:bg-slate-100 md:hidden" title="Back to inbox"><ArrowLeft className="h-5 w-5" /></button>
+                <button type="button" onClick={() => setViewedProfile(otherUser)} className="group flex min-w-0 items-center gap-2.5 text-left outline-none">
+                  <span className="transition-transform group-hover:scale-105"><AvatarSVG id={otherUser.avatar_id} size={38} petCount={otherUser.companion_pet_count} /></span>
+                  <span className="min-w-0"><strong className="block truncate text-xs font-black text-slate-800 group-hover:text-rose-600 sm:text-sm">{otherUser.name}</strong><span className="block truncate text-[9px] font-semibold text-slate-400 sm:text-[10px]">{otherUser.student_id}</span></span>
                 </button>
               </div>
+              <button id="chat-toggle-block" onClick={() => toggleBlockUser(otherUser.id)} className={`shrink-0 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold transition-all ${isBlockedByUser ? "border-rose-200 bg-rose-50 text-rose-600" : "border-slate-200 bg-white text-slate-500 hover:border-rose-200 hover:text-rose-500"}`}>{isBlockedByUser ? "Unblock" : "Block"}</button>
+            </header>
 
-              {/* Block/Unblock header action */}
-              <div className="shrink-0">
-                <button
-                  id="chat-toggle-block"
-                  onClick={() => toggleBlockUser(otherUser.id)}
-                  className={`text-[10px] sm:text-[11px] px-2.5 py-1.5 font-semibold rounded-xl border transition-all cursor-pointer ${
-                    isBlockedByUser 
-                      ? "bg-rose-550 text-rose-600 border-rose-100/50" 
-                      : "bg-slate-100/60 hover:bg-slate-100 text-slate-650 border-slate-200/55"
-                  }`}
-                >
-                  {isBlockedByUser ? "Unblock" : "Block User"}
-                </button>
-              </div>
-            </div>
-
-            {/* Expansible info notes on the hangout related */}
-            {activeChat?.hangout_id && (
-              <div className="bg-amber-50/40 p-3 px-4 border-b border-gray-50/50 flex gap-2 items-start text-xs text-amber-800">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  Meet on-campus for security! Linked to hangout plan:{" "}
-                  <strong>
-                    {hangouts.find(h => h.id === activeChat.hangout_id)?.intention
-                      ? formatHangoutIntent(hangouts.find(h => h.id === activeChat.hangout_id)?.intention || "")
-                      : "This plan has ended."}
-                  </strong>
-                </div>
+            {activeChat.hangout_id && (
+              <div className="flex items-start gap-2 border-b border-rose-100 bg-gradient-to-r from-[#fff1f6] to-[#fff5f8] px-4 py-2.5 text-[10px] font-semibold text-rose-700 sm:px-5">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-500" />
+                <span>Linked plan: <strong>{hangouts.find(hangout => hangout.id === activeChat.hangout_id)?.intention ? formatHangoutIntent(hangouts.find(hangout => hangout.id === activeChat.hangout_id)?.intention || "") : "This plan has ended"}</strong></span>
               </div>
             )}
 
-            {/* Messages Thread list */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/10">
+            <div className="flex-1 space-y-3 overflow-y-auto bg-[radial-gradient(circle_at_top_left,_rgba(255,228,230,0.5),_transparent_38%),linear-gradient(180deg,_#fff_0%,_#fafafa_100%)] p-3 sm:p-5">
               <AnimatePresence initial={false}>
-                {activeChatMessages.map(msg => {
-                  const isMe = msg.sender_id === currentUser.id;
+                {activeChatMessages.map(message => {
+                  const isMe = message.sender_id === currentUser.id;
                   return (
-                    <motion.div
-                      key={msg.id}
-                      initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
-                      transition={{ type: "spring", stiffness: 350, damping: 25 }}
-                      className={`flex ${isMe ? "justify-end" : "justify-start"}`}
-                    >
-                      <div
-                        className={`max-w-[75%] rounded-2xl p-3 px-4 shadow-[0_1px_2px_rgba(0,0,0,0.05)] text-xs sm:text-sm ${
-                          isMe
-                            ? "bg-rose-500 text-white rounded-br-none"
-                            : "bg-slate-100 text-gray-800 rounded-bl-none border border-slate-200/40"
-                        }`}
-                      >
-                        <p className="leading-relaxed whitespace-pre-wrap font-sans">{msg.content}</p>
-                        <span
-                          className={`text-[9px] block text-right mt-1.5 font-mono ${
-                            isMe ? "text-rose-100" : "text-gray-400"
-                          }`}
-                        >
-                          {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                    <motion.div key={message.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 28 }} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-[84%] rounded-[1.35rem] px-3.5 py-2.5 text-xs shadow-sm sm:max-w-[72%] sm:px-4 sm:py-3 sm:text-sm ${isMe ? "rounded-br-md bg-gradient-to-br from-[#e34f78] via-[#ed6887] to-[#f59aae] text-white shadow-rose-100/70" : "rounded-bl-md border border-rose-100 bg-white text-slate-800"}`}>
+                        <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                        <span className={`mt-1.5 block text-right text-[8px] font-semibold ${isMe ? "text-rose-50" : "text-slate-350"}`}>{new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                       </div>
                     </motion.div>
                   );
@@ -287,51 +206,25 @@ export const ChatWindow: React.FC = () => {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Footer */}
-            <div className="p-4 border-t border-gray-50 bg-white">
+            <footer className="border-t border-rose-100 bg-white p-3 sm:p-4">
               {isChatLocked ? (
-                <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3 flex gap-2 items-center text-xs text-rose-800">
-                  <ShieldAlert className="w-4 h-4 text-rose-500 shrink-0" />
-                  <span>
-                    {isBlockedByUser 
-                      ? "You blocked this student. Unblock to message." 
-                      : "This user has blocked you or account security reviews are pending."}
-                  </span>
-                </div>
+                <div className="flex items-center gap-2 rounded-2xl border border-rose-100 bg-rose-50 p-3 text-xs font-semibold text-rose-700"><ShieldAlert className="h-4 w-4 shrink-0" />{isBlockedByUser ? "Unblock this student to continue messaging." : "This conversation is currently unavailable."}</div>
               ) : (
-                <form onSubmit={handleSend} className="flex gap-2">
-                  <input
-                    id="chat-text-input"
-                    type="text"
-                    value={typedMessage}
-                    onChange={e => setTypedMessage(e.target.value)}
-                    placeholder="Type a message..."
-                    className="flex-grow bg-slate-50 border border-gray-100 rounded-2xl px-4 py-3 text-xs sm:text-sm text-gray-700 outline-none focus:bg-white focus:ring-1 focus:ring-rose-400 focus:border-rose-400"
-                  />
-                  <button
-                    id="chat-send-btn"
-                    type="submit"
-                    className="p-3 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl transition-colors duration-150 flex items-center justify-center shrink-0"
-                    title="Send"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
+                <form onSubmit={handleSend} className="flex items-center gap-2 rounded-[1.35rem] border border-rose-100 bg-rose-50/35 p-1.5 transition-all focus-within:border-rose-300 focus-within:bg-white focus-within:ring-2 focus-within:ring-rose-100">
+                  <input id="chat-text-input" value={typedMessage} onChange={event => setTypedMessage(event.target.value)} placeholder="Write a message" className="min-w-0 flex-grow bg-transparent px-3 py-2 text-xs text-slate-700 outline-none sm:text-sm" />
+                  <button id="chat-send-btn" type="submit" disabled={!typedMessage.trim()} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#e34f78] to-[#f07b98] text-white shadow-sm transition-all hover:brightness-95 active:scale-95 disabled:cursor-not-allowed disabled:from-slate-200 disabled:to-slate-200" title="Send message"><Send className="h-4 w-4" /></button>
                 </form>
               )}
-            </div>
+            </footer>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-slate-50/5 animate-in fade-in duration-300">
-            <span className="p-4 bg-slate-50 text-rose-400 rounded-full mb-3.5 shadow-sm border border-slate-100">
-              <MessageSquare className="w-8 h-8" />
-            </span>
-            <h4 id="no-chat-chosen-msg" className="font-extrabold text-gray-850 text-sm sm:text-base">No Chat Selected</h4>
-            <p className="text-gray-400 text-xs max-w-[260px] mt-1.5 leading-relaxed">
-              Select an active student conversation from the sidebar list to coordinate your plans safely.
-            </p>
+          <div className="flex flex-1 flex-col items-center justify-center bg-gradient-to-br from-white via-[#fff1f6] to-[#fff5f8] p-8 text-center">
+            <span className="relative mb-4 flex h-16 w-16 items-center justify-center rounded-3xl border border-rose-100 bg-white text-rose-500 shadow-sm"><MessageSquare className="h-7 w-7" /><Heart className="absolute -right-1 -top-1 h-4 w-4 text-pink-400" /></span>
+            <h4 className="text-sm font-black text-slate-800 sm:text-base">Choose a conversation</h4>
+            <p className="mt-1.5 max-w-[260px] text-xs leading-relaxed text-slate-400">Pick a student from your inbox to continue planning together.</p>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 };

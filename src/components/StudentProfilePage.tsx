@@ -40,6 +40,8 @@ import {
   Lock,
   Heart,
   HelpCircle,
+  ChevronLeft,
+  ChevronRight,
   ChevronDown,
   LogOut,
   MessageCircle,
@@ -47,6 +49,9 @@ import {
   BellRing,
   Check
 } from "lucide-react";
+
+const COMPANION_PROGRESS_PAGE_SIZE = 25;
+const COMPANION_PROGRESS_PAGINATION_THRESHOLD = 30;
 
 type StudentProfilePageProps = {
   pushState: PushState;
@@ -135,6 +140,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [showPasswordResetPanel, setShowPasswordResetPanel] = useState(false);
   const [isCompanionProgressOpen, setIsCompanionProgressOpen] = useState(false);
+  const [companionProgressPage, setCompanionProgressPage] = useState(0);
   const [companionProgress, setCompanionProgress] = useState(
     () => resolveStoredCompanionState(currentUser.email, currentUser)
   );
@@ -179,10 +185,23 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
           return stateIsUnlocked(selectedState) ? selectedState : companionUnlockedState;
         })()
       : companionUnlockedState;
+  const companionProgressStates = [companionBaseStateOption, ...companionTierStates];
+  const companionProgressUsesPagination = companionProgressStates.length > COMPANION_PROGRESS_PAGINATION_THRESHOLD;
+  const companionProgressPageCount = companionProgressUsesPagination
+    ? Math.ceil(companionProgressStates.length / COMPANION_PROGRESS_PAGE_SIZE)
+    : 1;
+  const visibleCompanionProgressStates = companionProgressUsesPagination
+    ? companionProgressStates.slice(
+        companionProgressPage * COMPANION_PROGRESS_PAGE_SIZE,
+        (companionProgressPage + 1) * COMPANION_PROGRESS_PAGE_SIZE
+      )
+    : companionProgressStates;
 
   useEffect(() => {
     // Each mobile profile visit starts with the progress details folded.
     setIsCompanionProgressOpen(false);
+    const selectedIndex = companionProgressStates.findIndex(state => state.id === companionSelectedState?.id);
+    setCompanionProgressPage(selectedIndex >= 0 ? Math.floor(selectedIndex / COMPANION_PROGRESS_PAGE_SIZE) : 0);
   }, [currentUser.id]);
 
   useEffect(() => {
@@ -708,7 +727,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
 
               <div className="space-y-3">
                 <div className="grid grid-cols-3 gap-x-2 gap-y-4 sm:grid-cols-4 lg:grid-cols-5">
-                    {[companionBaseStateOption, ...companionTierStates].map(state => {
+                    {visibleCompanionProgressStates.map(state => {
                       const active = companionSelectedState?.id === state.id;
                       const tierState = getCompanionStateById(state.id);
                       const unlocked = state.id === companionBaseStateOption.id || stateIsUnlocked(tierState);
@@ -742,6 +761,31 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                       );
                     })}
                 </div>
+                {companionProgressUsesPagination && (
+                  <div className="flex items-center justify-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setCompanionProgressPage(page => Math.max(0, page - 1))}
+                      disabled={companionProgressPage === 0}
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-all hover:border-rose-200 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30"
+                      aria-label="Previous companion progress page"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span className="min-w-10 text-center text-[10px] font-bold tabular-nums text-slate-500">
+                      {companionProgressPage + 1} / {companionProgressPageCount}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCompanionProgressPage(page => Math.min(companionProgressPageCount - 1, page + 1))}
+                      disabled={companionProgressPage === companionProgressPageCount - 1}
+                      className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition-all hover:border-rose-200 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30"
+                      aria-label="Next companion progress page"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>}
@@ -868,7 +912,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               <label className="text-xs font-extrabold text-gray-700 tracking-wide uppercase block">
                 1. Select Digital Avatar
               </label>
-              <AvatarPicker selectedId={profileAvatar} onChange={setProfileAvatar} />
+              <AvatarPicker selectedId={profileAvatar} onChange={setProfileAvatar} petCount={currentUser.companion_pet_count || 0} isAdmin={currentUser.is_admin} />
             </div>
 
             {/* Profile Core Info Grid */}

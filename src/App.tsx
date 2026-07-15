@@ -452,7 +452,6 @@ const AppContent: React.FC = () => {
   const [showExpired, setShowExpired] = useState(false);
   const [showAllHangoutHistory, setShowAllHangoutHistory] = useState(false);
   const [datePeriodFilter, setDatePeriodFilter] = useState<"all" | "today" | "week" | "month">("all");
-  const [languageFilter, setLanguageFilter] = useState<"all" | "en" | "zh">("all");
   const [genderFilter, setGenderFilter] = useState<"all" | "male" | "female">("all");
   const [feedSortMode, setFeedSortMode] = useState<"posted" | "event">("posted");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
@@ -475,7 +474,7 @@ const AppContent: React.FC = () => {
   // Reset pagination to page 1 whenever search, activeTab, or filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchLocation, eligibleOnlyFilter, showExpired, showAllHangoutHistory, datePeriodFilter, languageFilter, genderFilter, feedSortMode, activeTab]);
+  }, [searchLocation, eligibleOnlyFilter, showExpired, showAllHangoutHistory, datePeriodFilter, genderFilter, feedSortMode, activeTab]);
 
   const feedCommentResetKey = [
     searchLocation.trim().toLowerCase(),
@@ -483,7 +482,6 @@ const AppContent: React.FC = () => {
     showExpired ? "1" : "0",
     showAllHangoutHistory ? "1" : "0",
     datePeriodFilter,
-    languageFilter,
     genderFilter,
     feedSortMode
   ].join("|");
@@ -495,7 +493,6 @@ const AppContent: React.FC = () => {
     eligibleOnlyFilter ? "1" : "0",
     showAllHangoutHistory ? "1" : "0",
     datePeriodFilter,
-    languageFilter,
     genderFilter,
     feedSortMode
   ].join("|");
@@ -542,22 +539,6 @@ const AppContent: React.FC = () => {
 
     if (eligibleOnlyFilter && currentUser) {
       feed = feed.filter(h => isEligibleForHangout(currentUser, h).eligible);
-    }
-
-    if (languageFilter === "en") {
-      feed = feed.filter(h => {
-        const hostUser = profiles.find(p => p.id === h.creator_id);
-        const hostEn = hostUser ? hostUser.languages.some(l => l.toLowerCase().includes("english")) : true;
-        const restrictEn = h.restrictions.languages.length === 0 || h.restrictions.languages.some(l => l.toLowerCase().includes("english"));
-        return hostEn && restrictEn;
-      });
-    } else if (languageFilter === "zh") {
-      feed = feed.filter(h => {
-        const hostUser = profiles.find(p => p.id === h.creator_id);
-        const hostZh = hostUser ? hostUser.languages.some(l => l.toLowerCase().includes("chinese") || l.toLowerCase().includes("mandarin")) : false;
-        const restrictZh = h.restrictions.languages.length === 0 || h.restrictions.languages.some(l => l.toLowerCase().includes("chinese") || l.toLowerCase().includes("mandarin"));
-        return hostZh || restrictZh;
-      });
     }
 
     if (genderFilter === "male") {
@@ -609,7 +590,6 @@ const AppContent: React.FC = () => {
     eligibleOnlyFilter,
     showAllHangoutHistory,
     datePeriodFilter,
-    languageFilter,
     genderFilter,
     feedSortMode,
     browseFeedAutoExpiredKey
@@ -1160,7 +1140,6 @@ const AppContent: React.FC = () => {
     setSearchLocation("");
     setEligibleOnlyFilter(false);
     setDatePeriodFilter("all");
-    setLanguageFilter("all");
     setGenderFilter("all");
     setFeedSortMode("posted");
     setShowExpired(true);
@@ -1484,38 +1463,6 @@ const AppContent: React.FC = () => {
                   {/* Divider line style for desktop only */}
                   <div className="hidden md:block w-px h-3 bg-gray-150 shrink-0" />
 
-                  {/* Language */}
-                  <div className="flex flex-row items-center gap-1.5 text-xs text-gray-500 shrink-0">
-                    <span className="font-extrabold text-[9px] text-gray-400 uppercase tracking-widest font-sans">Language:</span>
-                    <div className="flex gap-1 font-sans">
-                      {(["all", "en", "zh"] as const).map(option => {
-                        let label = "All";
-                        if (option === "en") label = "English";
-                        else if (option === "zh") label = "Chinese";
-                        
-                        const isSelected = languageFilter === option;
-                        return (
-                          <button
-                            key={option}
-                            id={`lang-filter-btn-${option}`}
-                            type="button"
-                            onClick={() => setLanguageFilter(option)}
-                            className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border ${
-                              isSelected
-                                ? "bg-rose-500 text-white border-rose-500 shadow-sm"
-                                : "bg-slate-50 text-gray-500 border-transparent hover:bg-slate-100 hover:text-gray-700"
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Divider line style for desktop only */}
-                  <div className="hidden md:block w-px h-3 bg-gray-150 shrink-0" />
-
                   {/* Gender Filter */}
                   <div className="flex flex-row items-center gap-1.5 text-xs text-gray-500 shrink-0">
                     <span className="font-extrabold text-[9px] text-gray-400 uppercase tracking-widest font-sans">Gender:</span>
@@ -1577,14 +1524,13 @@ const AppContent: React.FC = () => {
                   </div>
                 </div>
 
-                {(datePeriodFilter !== "all" || searchLocation || eligibleOnlyFilter || languageFilter !== "all" || genderFilter !== "all" || feedSortMode !== "posted") && (
+                {(datePeriodFilter !== "all" || searchLocation || eligibleOnlyFilter || genderFilter !== "all" || feedSortMode !== "posted") && (
                   <button
                     id="clear-filters-btn"
                     onClick={() => {
                       setSearchLocation("");
                       setEligibleOnlyFilter(false);
                       setDatePeriodFilter("all");
-                      setLanguageFilter("all");
                       setGenderFilter("all");
                       setFeedSortMode("posted");
                     }}
@@ -2756,6 +2702,24 @@ const AppContent: React.FC = () => {
                         </strong>
                       </div>
                     </div>
+                    <div className="mt-4 border-t border-slate-200/70 pt-3">
+                      <p className="mb-2 text-[9px] font-black uppercase tracking-wider text-slate-400">Pets by student</p>
+                      <div className="max-h-44 space-y-1.5 overflow-y-auto pr-1">
+                        {[...countableProfiles]
+                          .sort((a, b) => Number(b.companion_pet_count || 0) - Number(a.companion_pet_count || 0) || a.name.localeCompare(b.name))
+                          .map(profile => (
+                            <div key={profile.id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-2.5 py-2 shadow-sm">
+                              <div className="min-w-0">
+                                <p className="truncate text-[10px] font-bold text-slate-700">{profile.name}</p>
+                                <p className="truncate text-[8px] font-semibold text-slate-400">{profile.student_id}</p>
+                              </div>
+                              <strong className="shrink-0 rounded-full bg-rose-50 px-2 py-1 text-[10px] font-black text-rose-600">
+                                {Math.max(0, Number(profile.companion_pet_count || 0))} pets
+                              </strong>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
                   </div>
                   <p className="text-[10px] text-gray-400 mt-4 leading-normal">
                     These values are synced per student profile so they can be tracked in both the app and Supabase.
@@ -3253,7 +3217,7 @@ const AppContent: React.FC = () => {
                   title="Customize student profile"
                 >
                   {currentUser.is_profile_complete && currentUser.avatar_id && (
-                    <AvatarSVG id={currentUser.avatar_id} size={28} />
+                    <AvatarSVG id={currentUser.avatar_id} size={28} petCount={currentUser.companion_pet_count} />
                   )}
                   <span className="truncate max-w-[80px] hidden sm:inline-block">My Profile</span>
                 </button>

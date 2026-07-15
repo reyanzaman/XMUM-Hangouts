@@ -3,6 +3,7 @@ import test from "node:test";
 import { generateOtpCode, hashOtpCode, isXmumEmail, matchesOtpCode, validatePassword } from "../src/server/auth-security.js";
 import { mergeProfilesWithRemoteAuthority, pickCanonicalProfile, reconcileProfilesByEmail } from "../src/lib/profiles.js";
 import type { Profile } from "../src/types.js";
+import { companionAvatarId, decodeAvatarSelection, encodeAvatarSelection, getAvatarBorderReward, getCompanionStateIdFromAvatar } from "../src/lib/avatarRewards.js";
 
 const profile = (overrides: Partial<Profile>): Profile => ({
   id: "profile-1", email: "student@xmu.edu.my", student_id: "student", name: "student",
@@ -52,4 +53,27 @@ test("remote profile edits replace stale cached details without discarding local
   assert.equal(refreshed.country, "Philippines");
   assert.equal(refreshed.name, "Updated Name");
   assert.equal(refreshed.password_hash, "remembered-hash");
+});
+
+test("avatar rewards advance at the configured pet milestones", () => {
+  assert.equal(getAvatarBorderReward(199), null);
+  assert.equal(getAvatarBorderReward(200)?.count, 200);
+  assert.equal(getAvatarBorderReward(999)?.count, 800);
+  assert.equal(getAvatarBorderReward(2000)?.name, "Eternal Heartkeeper");
+});
+
+test("animated companion avatar ids round-trip safely", () => {
+  const avatarId = companionAvatarId("moon-mochi-bun");
+  assert.equal(avatarId, "companion:moon-mochi-bun");
+  assert.equal(getCompanionStateIdFromAvatar(avatarId), "moon-mochi-bun");
+  assert.equal(getCompanionStateIdFromAvatar("panda"), null);
+});
+
+test("selected 2000-pet borders preserve regular and companion avatar ids", () => {
+  const regular = encodeAvatarSelection("fox", "heart-nebula");
+  const companion = encodeAvatarSelection(companionAvatarId("base-sprout"), "starlight-gala");
+
+  assert.deepEqual(decodeAvatarSelection(regular), { avatarId: "fox", borderId: "heart-nebula" });
+  assert.equal(getCompanionStateIdFromAvatar(companion), "base-sprout");
+  assert.equal(getAvatarBorderReward(2000, "starlight-gala")?.name, "Starlight Gala");
 });

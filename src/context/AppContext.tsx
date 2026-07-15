@@ -33,6 +33,7 @@ import {
   validateFutureHangoutDate
 } from "../lib/hangouts";
 import { collapseProfilesByEmail, isDemoProfile, isDemoProfileId, mergeProfilesWithRemoteAuthority, normalizeProfileEmail, pickCanonicalProfile, reconcileProfilesByEmail } from "../lib/profiles";
+import { decodeAvatarSelection, getCompanionStateIdFromAvatar } from "../lib/avatarRewards";
 
 const SYSTEM_DELETED_USER_ID = "deleted_user";
 const SYSTEM_DELETED_USER_EMAIL = "deleted.user@system.local";
@@ -3198,6 +3199,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!original) return { success: false, error: "Profile not found" };
 
     const update: Partial<Profile> = { ...data };
+
+    if (
+      (getCompanionStateIdFromAvatar(update.avatar_id) || decodeAvatarSelection(update.avatar_id).borderId) &&
+      !currentUser.is_admin &&
+      Number(original.companion_pet_count || 0) < 2000
+    ) {
+      return { success: false, error: "Animated companion avatars and selectable borders unlock at 2000 pets." };
+    }
     
     // Safety check: Name / Country 14-day edit cooldown validation
     const now = new Date().getTime();
@@ -3619,6 +3628,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast("Please login to react to this hangout.", "error");
       return;
     }
+    const targetHangout = hangouts.find(h => h.id === hangoutId);
+    if (!targetHangout || targetHangout.status !== "active" || new Date(targetHangout.event_datetime).getTime() <= Date.now()) {
+      showToast("Expired hangouts are view only.", "info");
+      return;
+    }
     const existingLike = likes.find(l => l.hangout_id === hangoutId && l.user_id === currentUser.id);
     let nextLikes = [...likes];
     
@@ -3636,7 +3650,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       saveLikes(nextLikes);
 
       // Send Notification to creator
-      const targetHangout = hangouts.find(h => h.id === hangoutId);
       if (targetHangout && targetHangout.creator_id !== currentUser.id) {
         const newNotif: AppNotification = {
           id: "notif_" + Math.random().toString(36).substring(2, 11),
@@ -3747,6 +3760,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast("Please log in to react.", "error");
       return;
     }
+    const targetComment = comments.find(comment => comment.id === commentId);
+    const targetHangout = targetComment ? hangouts.find(hangout => hangout.id === targetComment.hangout_id) : null;
+    if (!targetHangout || targetHangout.status !== "active" || new Date(targetHangout.event_datetime).getTime() <= Date.now()) {
+      showToast("Expired hangouts are view only.", "info");
+      return;
+    }
     const exists = commentLikes.some(l => l.comment_id === commentId && l.user_id === currentUser.id);
     let nextLikes = [];
     if (exists) {
@@ -3788,6 +3807,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     if (!currentUser) return { success: false, error: "Please log in to leave a comment." };
     if (!currentUser.is_profile_complete) return { success: false, error: "Please complete your profile first." };
+    const targetHangout = hangouts.find(hangout => hangout.id === hangoutId);
+    if (!targetHangout || targetHangout.status !== "active" || new Date(targetHangout.event_datetime).getTime() <= Date.now()) {
+      return { success: false, error: "Expired hangouts are view only." };
+    }
     if (!content.trim()) return { success: false, error: "Comment cannot be empty." };
 
     // Vulgarity detection
@@ -3852,7 +3875,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setLastCommentCreatedTime(now);
 
     // Notify hangout creator or parent commenter
-    const targetHangout = hangouts.find(h => h.id === hangoutId);
     if (targetHangout) {
       const notifyUserId = parentCommentId 
         ? comments.find(c => c.id === parentCommentId)?.user_id 
@@ -4650,6 +4672,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (hangoutsChanged) {
       void saveHangouts(nextHangouts);
+    }
+
+    const expiredHangoutIds = new Set(
+      nextHangouts
+        .filter(hangout => hangout.status === "expired" || new Date(hangout.event_datetime).getTime() <= nowStamp)
+        .map(hangout => hangout.id)
+    );
+    const nextApplications = currentApplications.map(application =>
+      application.status === "pending" && expiredHangoutIds.has(application.hangout_id)
+        ? {
+            ...application,
+            status: "retracted" as const,
+            rejection_message: "Automatically expired when the hangout ended.",
+            updated_at: new Date().toISOString()
+          }
+        : application
+    );
+    const applicationsChanged = nextApplications.some((application, index) =>
+      application.status !== currentApplications[index]?.status ||
+      application.updated_at !== currentApplications[index]?.updated_at
+    );
+    if (applicationsChanged) {
+      void saveApplications(nextApplications);
     }
 
     if (newNotifications.length > 0) {

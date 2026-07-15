@@ -137,7 +137,7 @@ export const ApplicantList: React.FC<ApplicantListProps> = ({ hangoutId }) => {
                     className="flex items-center gap-2.5 min-w-0 text-left hover:text-rose-600 transition-all cursor-pointer group outline-none animate-in fade-in"
                     title={`View ${profileToRender.name}'s Profile`}
                   >
-                    <AvatarSVG id={profileToRender.avatar_id} size={36} className="ring-2 ring-rose-100/20 group-hover:scale-105 transition-transform shrink-0" />
+                    <AvatarSVG id={profileToRender.avatar_id} size={36} petCount={profileToRender.companion_pet_count} className="ring-2 ring-rose-100/20 group-hover:scale-105 transition-transform shrink-0" />
                     <div className="min-w-0">
                       <h5 className="font-bold text-slate-800 text-xs sm:text-sm truncate group-hover:underline">
                         {profileToRender.name}

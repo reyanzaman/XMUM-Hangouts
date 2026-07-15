@@ -77,7 +77,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
       {/* Header Info */}
       {!hideHeader && (
         <div className="flex gap-4 items-center">
-          <AvatarSVG id={profile.avatar_id} size={64} className="ring-4 ring-rose-50" />
+          <AvatarSVG id={profile.avatar_id} size={64} petCount={profile.companion_pet_count} className="ring-4 ring-rose-50" />
           <div className="flex-1 min-w-0">
             <h3 id={`profile-name-${profile.id}`} className="font-bold text-gray-900 text-base flex items-center gap-1 truncate font-sans">
               {profile.name}

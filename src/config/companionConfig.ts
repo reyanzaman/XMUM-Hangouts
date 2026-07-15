@@ -275,6 +275,14 @@ export const companionDialogue = {
     "At five pets I get just a tiny bit fancier. Very modest. Very tasteful.",
     "The early milestone is subtle, but I still preened for it."
   ],
+  petRequest: [
+    "Could I have one slow little pet, {name}? My fluff misses you.",
+    "My head is right here if your hand needs somewhere soft to land.",
+    "I have prepared my tiniest purr. It only needs one gentle pet.",
+    "Would you smooth my fluff for a moment? I promise to lean into it.",
+    "I am feeling especially pettable today. Just quietly mentioning it.",
+    "One soft stroke from you would improve my whole tiny afternoon."
+  ],
   personal: [
     "What kind of little adventure would suit you today, {name}?",
     "You choose the plan, {name}. I will bring the tiny moral support.",
@@ -1405,6 +1413,35 @@ export const companionPetMilestones: CompanionMilestone[] = companionTierStates.
   special: true,
   accessory: state.accessory === "none" ? undefined : state.accessory
 }));
+
+const specialStatePetRequests: Record<string, readonly string[]> = {
+  "moon-mochi-bun": ["My moon ears are waiting for a slow bedtime stroke.", "Could you pet my mochi-soft forehead without waking the stars?"],
+  "strawberry-puff": ["Would you smooth my strawberry leaves and the fluff underneath?", "A berry-soft headpat would make me extra sweet."],
+  "cloud-lamb": ["My cloud curls need one gentle little fluffing.", "Could your fingers make a tiny path through my woolly clouds?"],
+  "honey-bumble-bear": ["A slow pet would make my honey-bear wings buzz happily.", "Please smooth my striped fluff before my next tiny flight."],
+  "sakura-kitsune": ["Could you pet between my fox ears without disturbing the blossoms?", "My sakura tails are swishing because they hope you will pet me."],
+  "pearl-tide-otter": ["A little otter head rub would make my pearl shine brighter.", "Could you stroke my tide-soft fur from forehead to nose?"],
+  "starlight-owl": ["One careful pet between my owl tufts would feel stellar.", "My starlight feathers are ready for your gentlest stroke."],
+  "royal-red-panda": ["Royal request: one dignified red-panda headpat, please.", "My fluffy royal cheeks would like a tiny bit of attention."],
+  "dream-dragon": ["Would you pet my cloud horns and send me a nice little dream?", "My tiny dragon scales are secretly softer than they look."],
+  "eternal-heart-cosmos": ["A gentle pet might set my little heart cosmos sparkling.", "Could you trace one soft orbit across my cosmic fluff?"],
+  "campus-capybara": ["A calm capybara head rub would suit this peaceful moment.", "I saved a very chill patch of fur for your hand."],
+  "ribbon-swan": ["Could you smooth my swan feathers just below the ribbon?", "One graceful little pet would make my ribbon flutter."],
+  "bamboo-panda": ["My panda ears would like a soft rub after all that bamboo thinking.", "Could I trade one imaginary bamboo leaf for one gentle pet?"],
+  "story-grizzly": ["Pet my storybook fur and I may remember a cozy new tale.", "My grizzly forehead marks the perfect place for a slow headpat."]
+};
+
+export function getCompanionPetRequestLines(state?: CompanionTierState): readonly string[] {
+  if (!state) return companionDialogue.petRequest;
+  const specialLines = specialStatePetRequests[state.id];
+  if (specialLines) return specialLines;
+
+  const accessoryDetail = state.accessory === "none" ? "fluffy look" : `${state.accessory} look`;
+  return [
+    `${state.name} reporting in with a very pettable ${accessoryDetail}.`,
+    `Could you give my ${state.name} fluff one slow stroke before I practice my ${state.pose}?`
+  ];
+}
 
 export const companionMilestoneCounts = companionTierStates.filter(state => !state.activityUnlock).map(state => state.count);
 

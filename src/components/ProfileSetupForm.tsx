@@ -459,7 +459,7 @@ export const ProfileSetupForm: React.FC = () => {
         </div>
 
         {/* Avatar Selection Grid */}
-        <AvatarPicker selectedId={avatarId} onChange={setAvatarId} />
+        <AvatarPicker selectedId={avatarId} onChange={setAvatarId} petCount={currentUser.companion_pet_count || 0} isAdmin={currentUser.is_admin} />
 
         {/* About user textarea info */}
         <div className="space-y-1.5">

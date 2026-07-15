@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 import { collapseProfilesByEmail, normalizeProfileEmail, pickCanonicalProfile } from "../lib/profiles.js";
 import { hashPassword, isModernPasswordHash, matchesStoredPassword } from "../lib/security.js";
+import { decodeAvatarSelection, getCompanionStateIdFromAvatar } from "../lib/avatarRewards.js";
 import type {
   AppNotification,
   Block,
@@ -847,6 +848,10 @@ async function filterAuthorizedSyncRows(
       ...row,
       id: profile?.id || identity.userId,
       email: identity.email,
+      avatar_id:
+        (getCompanionStateIdFromAvatar(row?.avatar_id) || decodeAvatarSelection(row?.avatar_id).borderId) && Number(profile?.companion_pet_count || 0) < 2000
+          ? profile?.avatar_id || "panda"
+          : row?.avatar_id,
       is_admin: false,
       is_blocked_globally: Boolean(profile?.is_blocked_globally),
       flag_status: profile?.flag_status || "none",
@@ -855,8 +860,17 @@ async function filterAuthorizedSyncRows(
     }));
   }
   if (table === "xmum_hangouts") return rows.filter(row => row?.creator_id === identity.userId);
-  if (table === "xmum_likes") return rows.filter(row => row?.user_id === identity.userId);
-  if (table === "xmum_comments") return rows.filter(row => row?.user_id === identity.userId);
+  if (table === "xmum_likes" || table === "xmum_comments") {
+    const ownedRows = rows.filter(row => row?.user_id === identity.userId);
+    const hangoutIds = Array.from(new Set(ownedRows.map(row => row?.hangout_id).filter(Boolean)));
+    const { data: activeHangouts } = hangoutIds.length
+      ? await backendProfileClient.from("xmum_hangouts").select("id,status,event_datetime").in("id", hangoutIds)
+      : { data: [] as any[] };
+    const activeIds = new Set((activeHangouts || []).filter((hangout: any) =>
+      hangout.status === "active" && new Date(hangout.event_datetime).getTime() > Date.now()
+    ).map((hangout: any) => hangout.id));
+    return ownedRows.filter(row => activeIds.has(row?.hangout_id));
+  }
   if (table === "xmum_blocks") return rows.filter(row => row?.blocker_id === identity.userId);
   if (table === "xmum_chats") return rows.filter(row => row?.user_a_id === identity.userId || row?.user_b_id === identity.userId);
   if (table === "xmum_messages") {
