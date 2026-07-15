@@ -18,7 +18,7 @@ import {
   isCompanionStateUnlocked,
   type CompanionActivityStats
 } from "../config/companionConfig";
-import { resolveStoredCompanionState, writeStoredCompanionState } from "../lib/companionState";
+import { normalizeCompanionMessageFrequency, resolveStoredCompanionState, writeStoredCompanionState } from "../lib/companionState";
 import { ProfilePageSkeleton } from "./LoadingSkeletons";
 import { 
   User, 
@@ -39,7 +39,10 @@ import {
   Heart,
   HelpCircle,
   ChevronDown,
-  LogOut
+  LogOut,
+  MessageCircle,
+  Volume2,
+  VolumeX
 } from "lucide-react";
 
 export const StudentProfilePage: React.FC = () => {
@@ -122,6 +125,17 @@ export const StudentProfilePage: React.FC = () => {
   const deleteAccountConfirmationMatches =
     deleteAccountConfirmationInput.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
   const companionPetCount = Math.max(0, Number(companionProgress.petCount || 0));
+  const companionMessagesEnabled = companionProgress.messagesEnabled !== false;
+  const companionMessageFrequency = normalizeCompanionMessageFrequency(companionProgress.messageFrequency);
+  const companionMessageFrequencyLabel = companionMessageFrequency <= 20
+    ? "Very quiet"
+    : companionMessageFrequency <= 40
+      ? "Reduced"
+      : companionMessageFrequency <= 60
+        ? "Balanced"
+        : companionMessageFrequency <= 80
+          ? "Social"
+          : "Full";
   const companionActivityStats: CompanionActivityStats = {
     hosted: new Set(hangouts.filter(hangout => hangout.creator_id === currentUser.id).map(hangout => hangout.id)).size,
     joined: new Set(applications.filter(application => application.applicant_id === currentUser.id && application.status === "accepted").map(application => application.hangout_id)).size,
@@ -174,9 +188,9 @@ export const StudentProfilePage: React.FC = () => {
   }, [currentUser.email, currentUser.companion_pet_count, currentUser.companion_selected_state_id]);
 
   // Toggle active PII Shield
-  const handleTogglePii = () => {
+  const handleTogglePii = async () => {
     const nextVal = !currentUser.hide_details;
-    const { success, error } = updateProfile({ hide_details: nextVal });
+    const { success, error } = await updateProfile({ hide_details: nextVal });
     if (success) {
       showToast(
         nextVal 
@@ -211,7 +225,7 @@ export const StudentProfilePage: React.FC = () => {
     setProfileLanguages(profileLanguages.filter(l => l !== lang));
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
     
@@ -231,18 +245,18 @@ export const StudentProfilePage: React.FC = () => {
       setIsSaving(false);
       return;
     }
-    if (profilePassword.trim() && profilePassword.trim().length < 8) {
+    if (profilePassword && profilePassword.length < 8) {
       showToast("Security password must be at least 8 characters.", "error");
       setIsSaving(false);
       return;
     }
-    if (profilePassword.trim() && profilePassword.trim() !== profilePasswordConfirm.trim()) {
+    if (profilePassword && profilePassword !== profilePasswordConfirm) {
       showToast("Please enter the same password in both password fields.", "error");
       setIsSaving(false);
       return;
     }
 
-    const { success, error } = updateProfile({
+    const { success, error } = await updateProfile({
       name: profileName.trim(),
       country: profileCountry,
       languages: profileLanguages || [],
@@ -254,14 +268,14 @@ export const StudentProfilePage: React.FC = () => {
       student_type: (profileType as any) || "Not Specified",
       about_me: profileBio.trim(),
       avatar_id: profileAvatar,
-      ...(showPasswordResetPanel && profilePassword.trim() ? { password: profilePassword.trim() } : {}),
+      ...(showPasswordResetPanel && profilePassword ? { password: profilePassword } : {}),
       is_profile_complete: true
     });
 
     setTimeout(() => {
       setIsSaving(false);
       if (success) {
-        if (showPasswordResetPanel && profilePassword.trim()) {
+        if (showPasswordResetPanel && profilePassword) {
           setProfilePassword("");
           setProfilePasswordConfirm("");
           setShowPasswordResetPanel(false);
@@ -323,6 +337,16 @@ export const StudentProfilePage: React.FC = () => {
     }
   };
 
+  const updateCompanionMessagePreferences = (preferences: Pick<typeof companionProgress, "messagesEnabled" | "messageFrequency">) => {
+    const nextState = writeStoredCompanionState(currentUser.email, {
+      ...companionProgress,
+      ...preferences,
+      petCount: companionPetCount
+    });
+    setCompanionProgress(nextState);
+    window.dispatchEvent(new CustomEvent("xmum-companion-state-updated", { detail: nextState }));
+  };
+
   // Switch demo profiles
   const demoUsers = profiles.filter(p => p.id !== currentUser.id);
 
@@ -337,7 +361,7 @@ export const StudentProfilePage: React.FC = () => {
     profileType !== (currentUser.student_type || "") ||
     profileBio !== (currentUser.about_me || "") ||
     profileAvatar !== (currentUser.avatar_id || "panda") ||
-    profilePassword.trim().length > 0 ||
+    profilePassword.length > 0 ||
     JSON.stringify(profileLanguages.slice().sort()) !== JSON.stringify((currentUser.languages || []).slice().sort());
 
   return (
@@ -437,7 +461,7 @@ export const StudentProfilePage: React.FC = () => {
                 type="password"
                 value={profilePassword}
                 onChange={e => setProfilePassword(e.target.value)}
-                placeholder="Minimum 6 characters"
+                placeholder="Minimum 8 characters"
                 className="w-full bg-slate-50 border border-gray-200 focus:border-rose-455 focus:bg-white focus:ring-1 focus:ring-rose-455 rounded-xl px-4 py-2 text-xs sm:text-sm text-gray-700 outline-none transition-all"
               />
             </div>
@@ -511,6 +535,66 @@ export const StudentProfilePage: React.FC = () => {
                 </>
               )}
             </button>
+          </div>
+
+          <div className="bg-white border border-gray-100 p-5 rounded-3xl shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-50 pb-3">
+              <div className="flex items-center gap-2">
+                <MessageCircle className="h-5 w-5 text-rose-500" />
+                <h3 className="text-sm font-bold text-slate-850">Companion Messages</h3>
+              </div>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                companionMessagesEnabled ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-500"
+              }`}>
+                {companionMessagesEnabled ? companionMessageFrequencyLabel : "Off"}
+              </span>
+            </div>
+
+            <p className="text-xs leading-relaxed text-gray-500">
+              Choose how often your companion speaks. You can still pet and move it when messages are off.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => updateCompanionMessagePreferences({
+                messagesEnabled: !companionMessagesEnabled,
+                messageFrequency: companionMessageFrequency
+              })}
+              className={`flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black transition-colors ${
+                companionMessagesEnabled
+                  ? "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                  : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              {companionMessagesEnabled ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+              {companionMessagesEnabled ? "Turn off companion messages" : "Turn on companion messages"}
+            </button>
+
+            <div className={`space-y-2 ${companionMessagesEnabled ? "" : "opacity-45"}`}>
+              <div className="flex items-center justify-between gap-3 text-[10px] font-bold text-slate-500">
+                <label htmlFor="companion-message-frequency">Message frequency</label>
+                <span>{companionMessageFrequencyLabel}</span>
+              </div>
+              <input
+                id="companion-message-frequency"
+                type="range"
+                min="20"
+                max="100"
+                step="20"
+                value={companionMessageFrequency}
+                disabled={!companionMessagesEnabled}
+                onChange={event => updateCompanionMessagePreferences({
+                  messagesEnabled: companionMessagesEnabled,
+                  messageFrequency: Number(event.target.value)
+                })}
+                className="h-2 w-full cursor-pointer accent-rose-500 disabled:cursor-not-allowed"
+                aria-label="Companion message frequency"
+              />
+              <div className="flex justify-between text-[9px] font-semibold text-slate-400">
+                <span>Fewer</span>
+                <span>More</span>
+              </div>
+            </div>
           </div>
 
           <div className="bg-white border border-gray-100 p-5 rounded-3xl shadow-sm">

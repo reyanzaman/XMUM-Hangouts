@@ -88,7 +88,7 @@ export const GetAppPage: React.FC<GetAppPageProps> = ({
           </div>
           <div className="space-y-3 flex-1">
             <p className="uppercase tracking-[0.22em] text-[10px] sm:text-xs font-black text-rose-100">Your campus circle, one tap away</p>
-            <h1 className="text-2xl sm:text-4xl font-black tracking-tight">Get the XMUM Hangouts App</h1>
+            <h1 className="text-2xl sm:text-4xl font-black tracking-tight">Get the Hangouts App</h1>
             <p className="text-sm sm:text-base text-rose-50 font-semibold leading-relaxed max-w-2xl">
               Install it directly from this website. It stays in sync automatically and uses no app store.
             </p>
@@ -206,7 +206,7 @@ export const GetAppPage: React.FC<GetAppPageProps> = ({
               <BellRing className="w-4 h-4" /> {pushState === 'checking'
                 ? 'Checking this device…'
                 : notificationPermission === 'granted'
-                  ? 'Reconnect notifications'
+                  ? 'Re-enable notifications'
                   : 'Enable notifications'}
             </button>
           )}

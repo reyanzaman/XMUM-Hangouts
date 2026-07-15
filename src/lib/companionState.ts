@@ -9,7 +9,15 @@ export type StoredCompanionState = {
   milestoneTimestamp?: number;
   isPermanent?: boolean;
   selectedStateId?: string | null;
+  messagesEnabled?: boolean;
+  messageFrequency?: number;
 };
+
+export function normalizeCompanionMessageFrequency(value: unknown): number {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return 100;
+  return Math.min(100, Math.max(20, Math.round(numericValue / 20) * 20));
+}
 
 export function getCompanionStateStorageKey(email?: string | null) {
   const normalizedEmail = email ? normalizeProfileEmail(email) : "guest";
@@ -49,7 +57,7 @@ export function resolveStoredCompanionState(
   const profileState = buildStoredCompanionStateFromProfile(profile);
   const states = [profileState, legacyState, keyedState];
 
-  return states.reduce<StoredCompanionState>((best, candidate) => {
+  const progressionState = states.reduce<StoredCompanionState>((best, candidate) => {
     const bestCount = Math.max(0, Number(best.petCount || 0));
     const candidateCount = Math.max(0, Number(candidate.petCount || 0));
 
@@ -70,6 +78,12 @@ export function resolveStoredCompanionState(
 
     return best;
   }, {});
+
+  return {
+    ...progressionState,
+    messagesEnabled: keyedState.messagesEnabled !== false,
+    messageFrequency: normalizeCompanionMessageFrequency(keyedState.messageFrequency)
+  };
 }
 
 export function writeStoredCompanionState(email: string | null | undefined, state: StoredCompanionState) {
@@ -77,7 +91,9 @@ export function writeStoredCompanionState(email: string | null | undefined, stat
     ...state,
     petCount: Math.max(0, Number(state.petCount || 0)),
     isPermanent: Math.max(0, Number(state.petCount || 0)) >= 1000 || Boolean(state.isPermanent),
-    selectedStateId: state.selectedStateId || null
+    selectedStateId: state.selectedStateId || null,
+    messagesEnabled: state.messagesEnabled !== false,
+    messageFrequency: normalizeCompanionMessageFrequency(state.messageFrequency)
   };
 
   try {

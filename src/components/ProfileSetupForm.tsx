@@ -66,7 +66,7 @@ export const ProfileSetupForm: React.FC = () => {
     setLanguages(languages.filter(l => l !== lang));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorText("");
 
@@ -87,20 +87,20 @@ export const ProfileSetupForm: React.FC = () => {
       setErrorText("Please write a small bio about yourself (minimum 10 characters).");
       return;
     }
-    if (!hasExistingPassword && !password.trim()) {
+    if (!hasExistingPassword && !password) {
       setErrorText("For security, you must set an account password (minimum 8 characters) to login in future.");
       return;
     }
-    if (password.trim() && password.length < 8) {
+    if (password && password.length < 8) {
       setErrorText("For security, your password must be at least 8 characters.");
       return;
     }
-    if (password.trim() && password.trim() !== passwordConfirm.trim()) {
+    if (password && password !== passwordConfirm) {
       setErrorText("Please enter the same password in both fields.");
       return;
     }
 
-    const { success, error } = updateProfile({
+    const { success, error } = await updateProfile({
       name: name.trim(),
       country, // non-changeable
       languages: languages.length > 0 ? languages : ["English"], // default to English if none selected
@@ -112,7 +112,7 @@ export const ProfileSetupForm: React.FC = () => {
       student_type: (studentType as any) || "Not Specified",
       about_me: aboutMe.trim(),
       avatar_id: avatarId,
-      ...(showPasswordResetSection && password.trim() ? { password: password.trim() } : {}),
+      ...(showPasswordResetSection && password ? { password } : {}),
       is_profile_complete: true
     });
 
@@ -362,7 +362,7 @@ export const ProfileSetupForm: React.FC = () => {
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="Minimum 6 characters"
+                  placeholder="Minimum 8 characters"
                   className="w-full bg-white border border-gray-200 focus:border-rose-400 focus:ring-1 focus:ring-rose-400 rounded-xl px-4 py-2.5 text-xs sm:text-sm outline-none transition-colors text-slate-800"
                   required={!hasExistingPassword}
                 />

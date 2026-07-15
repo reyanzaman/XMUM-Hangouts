@@ -798,7 +798,7 @@ const AppContent: React.FC = () => {
             avatar_id: "panda",
             is_profile_complete: false,
             hide_details: false,
-            is_admin: isPrimaryAdmin || email.toLowerCase().startsWith("admin"),
+            is_admin: isPrimaryAdmin,
             is_blocked_globally: false,
             flag_status: "none",
             appeal_count: 0
@@ -3375,7 +3375,7 @@ const AppContent: React.FC = () => {
             id="footer-get-app-button"
             onClick={() => { setActiveTab("get-app"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
             className="inline-flex items-center justify-center gap-1 text-slate-500 hover:text-rose-500 transition-colors cursor-pointer"
-            aria-label="Get the XMUM Hangouts app"
+            aria-label="Get the Hangouts app"
           >
             <Download className="h-3 w-3 shrink-0" />
             Get App
@@ -3493,13 +3493,14 @@ const AppContent: React.FC = () => {
               <div className="mt-5 grid gap-2">
                 <button
                   id="post-login-enable-notifications"
-                  onClick={async () => {
-                    const enabled = await pwa.enablePush();
+                  onClick={() => {
                     setShowNotificationPrompt(false);
-                    if (!enabled) {
-                      setActiveTab("get-app");
-                      window.scrollTo(0, 0);
-                    }
+                    void pwa.enablePush().then(enabled => {
+                      if (!enabled) {
+                        setActiveTab("get-app");
+                        window.scrollTo(0, 0);
+                      }
+                    });
                   }}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-400 py-3 text-sm font-black text-amber-950 transition-colors hover:bg-amber-500 cursor-pointer"
                 >

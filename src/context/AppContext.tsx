@@ -580,7 +580,7 @@ interface AppContextType {
   createMockUser: (email: string, name: string, isAdmin?: boolean) => void;
 
   // Profile Functions
-  updateProfile: (data: Partial<Profile>) => { success: boolean; error?: string };
+  updateProfile: (data: Partial<Profile>) => Promise<{ success: boolean; error?: string }>;
   syncCompanionProgress: (progress: StoredCompanionState) => void;
   setHideDetails: (hide: boolean) => void;
   deleteCurrentAccount: () => Promise<{ success: boolean; error?: string }>;
@@ -652,14 +652,9 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // --- DATABASE TABLES IN LOCAL STORAGE ---
-  const [currentUser, setCurrentUser] = useState<Profile | null>(() => {
-    try {
-      const cached = localStorage.getItem("xmum_current_user_profile");
-      return cached ? normalizeProfileRecord(JSON.parse(cached)) : null;
-    } catch {
-      return null;
-    }
-  });
+  // Never treat a local profile cache as proof of authentication. Startup restores
+  // the profile only after Supabase or the signed server session validates it.
+  const [currentUser, setCurrentUser] = useState<Profile | null>(null);
 
   // Sync current user updates to local storage for instant loads and absolute session permanence
   useEffect(() => {
@@ -673,6 +668,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentUser]);
   const [profiles, setProfiles] = useState<Profile[]>(() => getStoredProfilesSnapshot());
   const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
+  const authReconciliationVersionRef = useRef(0);
   const companionProfileSyncTimeoutRef = useRef<number | null>(null);
   const [hangouts, setHangouts] = useState<Hangout[]>(() => getStoredHangoutsSnapshot());
   const hangoutsRef = useRef<Hangout[]>(getStoredHangoutsSnapshot());
@@ -897,7 +893,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const normalizedEmail = normalizeProfileEmail(email);
     const candidates: Profile[] = [];
 
+    // The application API is authoritative in production. Direct browser table
+    // access may be intentionally blocked by the database security migration.
     try {
+      const response = await fetch("/api/profiles", {
+        headers: await getAuthenticatedHeaders(false)
+      });
+      if (response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const serverProfiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+        candidates.push(
+          ...normalizeProfiles(
+            (serverProfiles as Profile[]).filter(
+              profile => normalizeProfileEmail(profile.email) === normalizedEmail
+            )
+          )
+        );
+      } else {
+        console.warn("Application profile lookup returned status", response.status);
+      }
+    } catch (apiError) {
+      console.warn("Application profile lookup failed, trying the compatibility path:", apiError);
+    }
+
+    if (candidates.length === 0) try {
       let { data, error } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("email", normalizedEmail);
       if (
         error &&
@@ -994,7 +1013,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const applyAuthenticatedProfile = async (email: string, authUserId?: string | null, authUser?: any | null) => {
+  const applyAuthenticatedProfile = async (
+    email: string,
+    authUserId?: string | null,
+    authUser?: any | null,
+    expectedVersion?: number
+  ) => {
     const normalizedEmail = normalizeProfileEmail(email);
 
     if (!normalizedEmail.endsWith("@xmu.edu.my")) {
@@ -1010,10 +1034,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     let profile = await resolveProfileByEmail(normalizedEmail, authUserId);
+    if (expectedVersion !== undefined && expectedVersion !== authReconciliationVersionRef.current) return null;
 
     if (!profile) {
       const student_id = normalizedEmail.split("@")[0];
       const isPrimaryAdmin = await matchesPrimaryAdminEmail(normalizedEmail);
+      if (expectedVersion !== undefined && expectedVersion !== authReconciliationVersionRef.current) return null;
       profile = {
         id: authUserId || ("user_" + Math.random().toString(36).substring(2, 11)),
         email: normalizedEmail,
@@ -1038,13 +1064,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         appeal_count: 0
       };
       try {
-        await supabase.from("xmum_profiles").insert([profile]);
+        const response = await fetch("/api/profiles/sync", {
+          method: "POST",
+          headers: await getAuthenticatedHeaders(),
+          body: JSON.stringify({ profiles: [profile], profile_remote_fields: [] })
+        });
+        if (!response.ok) throw new Error(`Profile creation returned ${response.status}.`);
       } catch (insErr) {
-        console.warn("Authenticated profile creation deferred (offline database):", insErr);
+        console.warn("Server-side authenticated profile creation failed; trying the database compatibility path:", insErr);
+        const { error } = await supabase.from("xmum_profiles").upsert([profile]);
+        if (error) console.warn("Authenticated profile creation deferred:", error.message);
       }
     }
 
     const normalizedCurrentUser = mergeProfileWithAuthMetadata(profile, authUser);
+    if (expectedVersion !== undefined && expectedVersion !== authReconciliationVersionRef.current) return null;
     setCurrentUser(normalizedCurrentUser);
     setProfiles(prev => {
       const nextProfiles = prev.some(
@@ -1425,14 +1459,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setProfiles(normalizedProfiles);
         localStorage.setItem("xmum_profiles", JSON.stringify(normalizedProfiles));
 
-        const authSubscription = supabase.auth.onAuthStateChange(async (_event, session) => {
-          try {
-            if (session?.user?.email) {
-              await applyAuthenticatedProfile(session.user.email, session.user.id, session.user);
-            }
-          } catch (callbackErr) {
-            console.error("Auth state change callback exception:", callbackErr);
-          }
+        const authSubscription = supabase.auth.onAuthStateChange((_event, session) => {
+          const version = ++authReconciliationVersionRef.current;
+          if (!session?.user?.email) return;
+
+          // Defer all auth/database work until after Supabase releases its auth-state lock.
+          window.setTimeout(() => {
+            void applyAuthenticatedProfile(session.user.email!, session.user.id, session.user, version).catch(callbackErr => {
+              console.error("Auth state change reconciliation exception:", callbackErr);
+            });
+          }, 0);
         });
         authSubscriptionCleanup = () => authSubscription.data.subscription.unsubscribe();
 
@@ -1795,56 +1831,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           );
         }
 
-        // Initialize active user session if previously logged in from local state
+        // A cached profile is never enough to restore authentication. Validate the
+        // signed local token with the server before showing a logged-in session.
         const storedActiveUser = localStorage.getItem("xmum_current_user_id");
         if (!hasLiveSession && storedActiveUser) {
           try {
-            let restoredProfile: Profile | null = null;
-            const cachedCurrentUser = localStorage.getItem("xmum_current_user_profile");
-            if (cachedCurrentUser) {
-              try {
-                const parsedCachedUser = normalizeProfileRecord(JSON.parse(cachedCurrentUser));
-                restoredProfile = await resolveProfileByEmail(parsedCachedUser.email, storedActiveUser) || parsedCachedUser;
-              } catch (cachedErr) {
-                console.warn("Cached current user could not be restored directly:", cachedErr);
-              }
+            const sessionResponse = await fetch("/api/auth/session", {
+              headers: await getAuthenticatedHeaders(false)
+            });
+            if (!sessionResponse.ok) throw new Error("Session expired.");
+            const sessionPayload = await sessionResponse.json();
+            const restoredProfile = sessionPayload?.profile
+              ? normalizeProfileRecord(sessionPayload.profile as Profile)
+              : null;
+            if (!restoredProfile || restoredProfile.id !== storedActiveUser) {
+              throw new Error("Session profile mismatch.");
             }
-
-            if (!restoredProfile) {
-              let { data: userProfile, error: userProfileError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", storedActiveUser).maybeSingle();
-              if (
-                userProfileError &&
-                isMissingOptionalProfileColumnError(userProfileError)
-              ) {
-                markUnsupportedProfileColumns(userProfileError);
-                ({ data: userProfile, error: userProfileError } = await supabase.from("xmum_profiles").select(getProfileSelectColumns()).eq("id", storedActiveUser).maybeSingle());
-              }
-              if (userProfile) {
-                restoredProfile =
-                  await resolveProfileByEmail((userProfile as unknown as Profile).email, storedActiveUser) || normalizeProfileRecord(userProfile as unknown as Profile);
-              }
-            }
-
-            if (!restoredProfile) {
-              const fallbackLocal = normalizedProfiles.find(p => p.id === storedActiveUser);
-              if (fallbackLocal) {
-                restoredProfile =
-                  pickCanonicalProfile(normalizeProfiles([fallbackLocal, ...normalizedProfiles]), {
-                    email: fallbackLocal.email,
-                    authUserId: storedActiveUser
-                  }) || normalizeProfileRecord(fallbackLocal);
-              }
-            }
-
-            if (restoredProfile) {
-              setCurrentUser(normalizeProfileRecord(restoredProfile));
-            }
-          } catch (actErr) {
-            console.warn("Active user profile fetch errored, resolving from local profiles cache:", actErr);
-            const fallbackLocal = normalizedProfiles.find(p => p.id === storedActiveUser);
-            if (fallbackLocal) {
-              setCurrentUser(normalizeProfileRecord(fallbackLocal));
-            }
+            setCurrentUser(restoredProfile);
+          } catch {
+            ++authReconciliationVersionRef.current;
+            storeLocalAuthToken(null);
+            localStorage.removeItem("xmum_current_user_id");
+            localStorage.removeItem("xmum_current_user_profile");
+            setCurrentUser(null);
           }
         }
 
@@ -1889,10 +1898,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setNotifications(fallbackNotifications);
         localStorage.setItem("xmum_notifications", JSON.stringify(fallbackNotifications));
 
-        const storedActiveUser = localStorage.getItem("xmum_current_user_id");
-        if (storedActiveUser && fallbackProfiles.length > 0) {
-          const found = fallbackProfiles.find((p: any) => p.id === storedActiveUser);
-          if (found) setCurrentUser(normalizeProfileRecord(found));
+        try {
+          const { data: fallbackSession } = await supabase.auth.getSession();
+          if (fallbackSession.session?.user?.email) {
+            await applyAuthenticatedProfile(
+              fallbackSession.session.user.email,
+              fallbackSession.session.user.id,
+              fallbackSession.session.user
+            );
+          } else {
+            const sessionResponse = await fetch("/api/auth/session", {
+              headers: await getAuthenticatedHeaders(false)
+            });
+            if (!sessionResponse.ok) throw new Error("Session expired.");
+            const sessionPayload = await sessionResponse.json();
+            if (!sessionPayload?.profile) throw new Error("Session profile unavailable.");
+            setCurrentUser(normalizeProfileRecord(sessionPayload.profile as Profile));
+          }
+        } catch {
+          ++authReconciliationVersionRef.current;
+          storeLocalAuthToken(null);
+          localStorage.removeItem("xmum_current_user_id");
+          localStorage.removeItem("xmum_current_user_profile");
+          setCurrentUser(null);
         }
       } finally {
         clearAuthRedirectPending();
@@ -2848,6 +2876,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const signOutSimulated = async () => {
+    ++authReconciliationVersionRef.current;
     try {
       if (window.isSecureContext && "serviceWorker" in navigator) {
         const registration = await navigator.serviceWorker.ready;
@@ -2994,7 +3023,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Profile Update
-  const updateProfile = (data: Partial<Profile>) => {
+  const updateProfile = async (data: Partial<Profile>) => {
     if (!currentUser) return { success: false, error: "Not logged in" };
 
     const original = profiles.find(p => p.id === currentUser.id);
@@ -3061,11 +3090,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     delete update.is_demo_profile;
 
     if (typeof update.password === "string") {
-      const trimmedPassword = update.password.trim();
-      if (trimmedPassword.length > 0) {
-        void syncPasswordCredential(trimmedPassword);
-        update.password_hash = "configured";
+      const password = update.password;
+      if (password.length < 8 || password.length > 128) {
+        return { success: false, error: "Password must be between 8 and 128 characters." };
       }
+      if (!(await syncPasswordCredential(password))) {
+        return { success: false, error: "Your password could not be saved. Please try again before completing your profile." };
+      }
+      update.password_hash = "configured";
       delete update.password;
     }
 

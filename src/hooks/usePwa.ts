@@ -185,6 +185,15 @@ export const usePwa = (userId?: string | null) => {
       const applicationServerKey = urlBase64ToUint8Array(keyPayload.publicKey);
       let existing = await registration.pushManager.getSubscription();
       if (existing && !applicationServerKeysMatch(existing, applicationServerKey)) {
+        try {
+          await fetch('/api/push/unsubscribe', {
+            method: 'POST',
+            headers: await getAuthenticatedHeaders(),
+            body: JSON.stringify({ endpoint: existing.endpoint })
+          });
+        } catch {
+          // The stale server endpoint will expire safely if cleanup is offline.
+        }
         await existing.unsubscribe();
         existing = null;
       }
@@ -230,25 +239,40 @@ export const usePwa = (userId?: string | null) => {
   }, [enablePush, pushState, userId]);
 
   const disablePush = useCallback(async () => {
+    setPushError('');
+    setPushState('checking');
+    // An intentional opt-out must not trigger the automatic login repair.
+    automaticPushSetupRef.current = userId || null;
     try {
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();
       if (subscription) {
-        await fetch('/api/push/unsubscribe', {
-          method: 'POST',
-          headers: await getAuthenticatedHeaders(),
-          body: JSON.stringify({ endpoint: subscription.endpoint })
-        });
-        await subscription.unsubscribe();
+        try {
+          const response = await fetch('/api/push/unsubscribe', {
+            method: 'POST',
+            headers: await getAuthenticatedHeaders(),
+            body: JSON.stringify({ endpoint: subscription.endpoint })
+          });
+          if (!response.ok) {
+            console.warn('The server could not immediately retire this push endpoint.');
+          }
+        } catch (error) {
+          console.warn('The server push endpoint will expire after the browser disconnects:', error);
+        }
+
+        const unsubscribed = await subscription.unsubscribe();
+        if (!unsubscribed) {
+          throw new Error('The browser did not confirm that notifications were turned off.');
+        }
       }
       setPushState('prompt');
       return true;
     } catch (error) {
-      setPushState('error');
-      setPushError(error instanceof Error ? error.message : 'Notifications could not be disabled.');
+      await refreshPushState();
+      setPushError('Notifications could not be turned off on this device. Please try again.');
       return false;
     }
-  }, []);
+  }, [refreshPushState, userId]);
 
   return {
     ...platform,

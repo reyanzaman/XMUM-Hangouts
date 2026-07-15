@@ -7,6 +7,7 @@ import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
 import { hashPassword, isModernPasswordHash, matchesStoredPassword } from "./src/lib/security";
 import { collapseProfilesByEmail, normalizeProfileEmail, pickCanonicalProfile } from "./src/lib/profiles";
+import { generateOtpCode, hashOtpCode, isXmumEmail, matchesOtpCode, OTP_TTL_MS, validatePassword } from "./src/server/auth-security";
 import {
   dispatchPushNotifications,
   getVapidPublicKey,
@@ -986,7 +987,7 @@ async function startServer() {
       const formattedEmail = normalizeProfileEmail(email);
 
       // Server-side validation of email domain restriction
-      if (!formattedEmail.endsWith("@xmu.edu.my")) {
+      if (!isXmumEmail(formattedEmail)) {
         return res.status(400).json({
           error: "Only official Xiamen University Malaysia student emails (@xmu.edu.my) are permitted to login or register."
         });
@@ -1039,15 +1040,15 @@ async function startServer() {
       }
 
       // Generate a secure 6-digit OTP code for login
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const otp = generateOtpCode();
       
       // Log for easy testing and debugging flow visibility
-      console.log(`[SECURITY-OTP] Generated code ${otp} for student: ${formattedEmail}`);
+      if (!isProduction) console.log(`[DEV-OTP] Generated code ${otp} for student: ${formattedEmail}`);
 
-      // Store generated OTP (expire in 60 minutes)
+      // Store only a keyed hash of the short-lived code.
       otpStore.set(formattedEmail, {
-        otp,
-        expiresAt: now + 60 * 60 * 1000,
+        otp: hashOtpCode(formattedEmail, otp, getLocalAuthSecret()),
+        expiresAt: now + OTP_TTL_MS,
         attempts: 0
       });
       rateLimitStore.set(formattedEmail, now);
@@ -1056,11 +1057,7 @@ async function startServer() {
       recentRequests.push(now);
       otpRequestTracker.set(formattedEmail, recentRequests);
 
-      // Resolve dynamic baseUrl from headers to support all sandbox and preview environments beautifully
-      const baseUrl = getRequestOrigin(req);
-      const magicLink = `${baseUrl}/api/auth/login-backup?email=${encodeURIComponent(formattedEmail)}&otp=${otp}`;
-
-      // Email template styling with OTP highlighted heavily and Magic Link as subtle secondary
+      // Email template styling with the OTP highlighted.
       const emailHtml = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
           <div style="text-align: center; margin-bottom: 24px;">
@@ -1085,20 +1082,8 @@ async function startServer() {
               Type this code into the active login screen.
             </p>
             <p style="color: #94a3b8; font-size: 10px; margin: 4px 0 0;">
-              This code will expire in 60 minutes.
+              This code will expire in 10 minutes.
             </p>
-          </div>
-
-          <!-- Divider -->
-          <div style="border-top: 1px solid #f1f5f9; padding-top: 20px; text-align: center; margin-top: 20px;">
-            <p style="color: #64748b; font-size: 12px; margin: 0 0 10px 0;">
-              Alternatively, use this secondary auto-login option:
-            </p>
-            
-            <!-- Secondary Magic Link button (Subtle visual styling) -->
-            <a href="${magicLink}" target="_blank" style="display: inline-block; background-color: #f1f5f9; hover: { background-color: #e2e8f0; }; border: 1px solid #e2e8f0; color: #334155; text-decoration: none; font-size: 13px; font-weight: 600; padding: 10px 20px; border-radius: 8px; text-align: center; cursor: pointer; transition: all 0.15s ease;">
-              ⚡️ Fast Sign In (Magic Link)
-            </a>
           </div>
 
           <p style="color: #94a3b8; font-size: 10px; line-height: 1.4; margin-top: 32px; text-align: center; border-top: 1px solid #f1f5f9; padding-top: 16px; margin-bottom: 0;">
@@ -1186,6 +1171,14 @@ async function startServer() {
       }
 
       const formattedEmail = normalizeProfileEmail(email);
+      if (!isXmumEmail(formattedEmail)) {
+        return res.status(400).json({ error: "Please use your official @xmu.edu.my student email." });
+      }
+      const passwordValidation = validatePassword(password);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({ error: "Email or password is incorrect." });
+      }
+      const validatedPassword = passwordValidation.password;
       const attempt = consumePasswordLoginAttempt(req, formattedEmail);
       if (!attempt.allowed) {
         res.setHeader("Retry-After", String(attempt.retryAfterSeconds));
@@ -1198,7 +1191,7 @@ async function startServer() {
       if (!profile) {
         const authOnlyResponse = await supabase.auth.signInWithPassword({
           email: formattedEmail,
-          password
+          password: validatedPassword
         });
 
         if (authOnlyResponse.error || !authOnlyResponse.data?.user?.email) {
@@ -1230,10 +1223,10 @@ async function startServer() {
           is_blocked_globally: false,
           flag_status: "none",
           appeal_count: 0,
-          password_hash: hashPassword(formattedEmail, password)
+          password_hash: hashPassword(formattedEmail, validatedPassword)
         };
         await upsertProfileWithFallback(profile);
-        await mirrorProfileToAuthUser(profile, password);
+        await mirrorProfileToAuthUser(profile, validatedPassword);
       }
 
       // Sync local cache
@@ -1241,11 +1234,11 @@ async function startServer() {
 
       let authResponse = await supabase.auth.signInWithPassword({
         email: formattedEmail,
-        password
+        password: validatedPassword
       });
 
       const hasAppPassword = Boolean(profile.password_hash || profile.password);
-      const appPasswordMatches = hasAppPassword && matchesStoredPassword(formattedEmail, password, profile);
+      const appPasswordMatches = hasAppPassword && matchesStoredPassword(formattedEmail, validatedPassword, profile);
 
       if (!appPasswordMatches && (authResponse.error || !authResponse.data?.session)) {
         return res.status(hasAppPassword ? 401 : 400).json({
@@ -1256,13 +1249,13 @@ async function startServer() {
       }
 
       if (!appPasswordMatches && authResponse.data?.session) {
-        profile.password_hash = hashPassword(formattedEmail, password);
+        profile.password_hash = hashPassword(formattedEmail, validatedPassword);
         await upsertProfileWithFallback(profile, ["password_hash"]);
-        await mirrorProfileToAuthUser(profile, password);
+        await mirrorProfileToAuthUser(profile, validatedPassword);
       }
 
       if (appPasswordMatches && !isModernPasswordHash(profile.password_hash)) {
-        profile.password_hash = hashPassword(formattedEmail, password);
+        profile.password_hash = hashPassword(formattedEmail, validatedPassword);
         delete profile.password;
 
         try {
@@ -1278,10 +1271,10 @@ async function startServer() {
       }
 
       if (appPasswordMatches && (authResponse.error || !authResponse.data?.session)) {
-        await mirrorProfileToAuthUser(profile, password);
+        await mirrorProfileToAuthUser(profile, validatedPassword);
         authResponse = await supabase.auth.signInWithPassword({
           email: formattedEmail,
-          password
+          password: validatedPassword
         });
       }
 
@@ -1333,10 +1326,11 @@ async function startServer() {
         return res.status(503).json({ error: "Password sync requires SUPABASE_SERVICE_ROLE_KEY." });
       }
 
-      const password = String(req.body?.password || "").trim();
-      if (password.length < 8) {
-        return res.status(400).json({ error: "Password must be at least 8 characters." });
+      const passwordValidation = validatePassword(req.body?.password);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({ error: "error" in passwordValidation ? passwordValidation.error : "Invalid password." });
       }
+      const password = passwordValidation.password;
 
       const authHeader = req.headers.authorization || "";
       const accessToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
@@ -1374,7 +1368,7 @@ async function startServer() {
         password_hash: hashPassword(formattedEmail, password)
       };
 
-      const authUser = authUserId ? { id: authUserId } : await findAuthUserByEmail(formattedEmail);
+      const authUser = accessToken && authUserId ? { id: authUserId } : await findAuthUserByEmail(formattedEmail);
       if (authUser?.id) {
         const { error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, { password });
         if (error) {
@@ -1393,84 +1387,18 @@ async function startServer() {
     }
   });
 
-  // Helper calculation to generate a secure, non-guessable deterministic password on the server
-  function getDeterministicPassword(email: string): string {
-    const secretSalt =
-      process.env.JWT_SECRET ||
-      (process.env.NODE_ENV !== "production" ? "xmum-local-dev-secret-change-me" : "");
-
-    if (!secretSalt) {
-      throw new Error("JWT_SECRET must be set in production.");
+  app.get("/api/auth/session", async (req, res) => {
+    try {
+      const identity = await resolveExpressRequestIdentity(req);
+      if (!identity) return res.status(401).json({ error: "Session expired." });
+      const profile = await resolveBestProfileByEmail(identity.email);
+      if (!profile || profile.is_blocked_globally) return res.status(401).json({ error: "Session expired." });
+      return res.status(200).json({ profile: sanitizeProfileForClient(profile) });
+    } catch (error) {
+      console.warn("Session validation failed:", error);
+      return res.status(401).json({ error: "Session expired." });
     }
-
-    return crypto.createHmac("sha256", secretSalt).update(email).digest("hex");
-  }
-
-  async function establishOtpAuthSession(email: string, deterministicPassword: string) {
-    let authResponse = await supabase.auth.signInWithPassword({
-      email,
-      password: deterministicPassword
-    });
-
-    if (!authResponse.error && authResponse.data?.session) {
-      return authResponse;
-    }
-
-    const authUser = await findAuthUserByEmail(email);
-
-    if (supabaseAdmin && authUser?.id) {
-      const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
-        password: deterministicPassword,
-        email_confirm: true
-      });
-
-      if (!updateError) {
-        authResponse = await supabase.auth.signInWithPassword({
-          email,
-          password: deterministicPassword
-        });
-
-        if (!authResponse.error && authResponse.data?.session) {
-          return authResponse;
-        }
-      } else {
-        console.warn("OTP auth password repair failed:", updateError.message);
-      }
-    } else if (supabaseAdmin && !authUser) {
-      const { error: createError } = await supabaseAdmin.auth.admin.createUser({
-        email,
-        password: deterministicPassword,
-        email_confirm: true
-      });
-
-      if (!createError) {
-        authResponse = await supabase.auth.signInWithPassword({
-          email,
-          password: deterministicPassword
-        });
-
-        if (!authResponse.error && authResponse.data?.session) {
-          return authResponse;
-        }
-      } else {
-        console.warn("OTP auth user creation failed:", createError.message);
-      }
-    }
-
-    const signUpResponse = await supabase.auth.signUp({
-      email,
-      password: deterministicPassword
-    });
-
-    if (!signUpResponse.error) {
-      authResponse = await supabase.auth.signInWithPassword({
-        email,
-        password: deterministicPassword
-      });
-    }
-
-    return authResponse;
-  }
+  });
 
   // 2. Clear & Authenticate verified OTP endpoint
   app.post("/api/auth/verify-otp", async (req, res) => {
@@ -1482,6 +1410,9 @@ async function startServer() {
 
       const formattedEmail = normalizeProfileEmail(email);
       const codeStr = otp.trim();
+      if (!isXmumEmail(formattedEmail)) {
+        return res.status(400).json({ error: "Please use your official @xmu.edu.my student email." });
+      }
 
       const entry = otpStore.get(formattedEmail);
       if (!entry) {
@@ -1491,7 +1422,7 @@ async function startServer() {
       // Check OTP expiration
       if (Date.now() > entry.expiresAt) {
         otpStore.delete(formattedEmail);
-        return res.status(400).json({ error: "Verification code has expired (60 minute limit). Please send a new one." });
+        return res.status(400).json({ error: "Verification code has expired (10 minute limit). Please send a new one." });
       }
 
       // Max attempt protection against brute forcing (5 attempts total)
@@ -1501,7 +1432,7 @@ async function startServer() {
       }
 
       // Check OTP match
-      if (entry.otp !== codeStr) {
+      if (!matchesOtpCode(entry.otp, formattedEmail, codeStr, getLocalAuthSecret())) {
         entry.attempts += 1;
         otpStore.set(formattedEmail, entry);
         return res.status(400).json({ error: `Incorrect verification code. Attempts remaining: ${5 - entry.attempts}.` });
@@ -1510,93 +1441,14 @@ async function startServer() {
       // OTP Is Correct! Wipe from the active volatile memory store
       otpStore.delete(formattedEmail);
 
-      // Perform authentication logic on Supabase
-      const deterministicPassword = getDeterministicPassword(formattedEmail);
-
-      let sessionData: any = null;
-      let sessionErr: any = null;
-      try {
-        const ret = await establishOtpAuthSession(formattedEmail, deterministicPassword);
-        sessionData = ret.data;
-        sessionErr = ret.error;
-      } catch (authErr: any) {
-        console.warn("Supabase OTP session setup failed (offline/paused):", authErr);
-        sessionErr = authErr;
-      }
-
-      if (sessionErr || !sessionData?.session) {
-        console.warn("Supabase active session payload could not be compiled directly. Triggering custom resilient local-session fallback:", sessionErr?.message || sessionErr);
-        
-        // Search if profile already exists in the profile table
-        let profileErrorFallback: any = await resolveBestProfileByEmail(formattedEmail);
-
-        if (!profileErrorFallback) {
-          const student_id = formattedEmail.split("@")[0];
-          const newId = "user_" + Math.random().toString(36).substring(2, 11);
-          const newProfile = {
-            id: newId,
-            email: formattedEmail,
-            student_id,
-            name: student_id,
-            name_last_changed_at: null,
-            country: "Malaysia",
-            country_last_changed_at: null,
-            languages: ["English"],
-            age: 18,
-            program: "Software Engineering",
-            year_of_study: "Year 1",
-            gender: "Male",
-            student_type: "degree",
-            about_me: "Hey there! I am new here on XMUM Hangouts.",
-            avatar_id: "panda",
-            is_profile_complete: false,
-            hide_details: false,
-            is_admin: isConfiguredAdminEmail(formattedEmail),
-            is_blocked_globally: false,
-            flag_status: "none",
-            appeal_count: 0
-          };
-          
-          try {
-            await upsertProfileWithFallback(newProfile);
-          } catch (dbInsErr: any) {
-            console.warn("Supabase insert new fallback profile threw exception:", dbInsErr);
-          }
-          profileErrorFallback = newProfile;
-        }
-
-        profileErrorFallback = mergeProfileWithAuthMetadata(profileErrorFallback, sessionData?.user);
-        await mirrorProfileToAuthUser(profileErrorFallback);
-
-        // Mirrors the profile in our local file cache registry to guarantee persistent authentication state
-        upsertLocalProfiles([profileErrorFallback]);
-
-        return res.status(200).json({
-          success: true,
-          message: "Identity verified! (Validated fallback session)",
-          is_fallback: true,
-          profile: sanitizeProfileForClient(profileErrorFallback),
-          local_auth_token: generateLocalAuthToken(profileErrorFallback),
-          session: {
-            access_token: "resilient_fallback_session_token",
-            refresh_token: "resilient_fallback_session_token",
-            expires_at: Math.floor(Date.now() / 1000) + 3600 * 24 * 30, // 30 days
-            user: {
-              id: profileErrorFallback.id,
-              email: formattedEmail
-            }
-          }
-        });
-      }
-
-      let profile = await resolveBestProfileByEmail(formattedEmail);
-      if (!profile) {
-        const student_id = formattedEmail.split("@")[0];
-        profile = {
-          id: sessionData.user?.id || ("user_" + Math.random().toString(36).substring(2, 11)),
+      let verifiedProfile = await resolveBestProfileByEmail(formattedEmail);
+      if (!verifiedProfile) {
+        const studentId = formattedEmail.split("@")[0];
+        verifiedProfile = {
+          id: `user_${crypto.randomUUID()}`,
           email: formattedEmail,
-          student_id,
-          name: student_id,
+          student_id: studentId,
+          name: studentId,
           name_last_changed_at: null,
           country: "Malaysia",
           country_last_changed_at: null,
@@ -1615,32 +1467,27 @@ async function startServer() {
           flag_status: "none",
           appeal_count: 0
         };
-
-        try {
-          await upsertProfileWithFallback(profile);
-        } catch (dbInsErr: any) {
-          console.warn("Supabase insert profile after OTP verification threw exception:", dbInsErr);
-        }
+        await upsertProfileWithFallback(verifiedProfile);
       }
 
-      profile = mergeProfileWithAuthMetadata(profile, sessionData.user);
-      await mirrorProfileToAuthUser(profile);
-      upsertLocalProfiles([profile]);
+      verifiedProfile = mergeProfileWithAuthMetadata(verifiedProfile);
+      await mirrorProfileToAuthUser(verifiedProfile);
+      upsertLocalProfiles([verifiedProfile]);
 
-      // Return the tokens safely to the client browser
       return res.status(200).json({
         success: true,
-        message: "Identity verified! Authorizing app session.",
-        is_fallback: false,
-        profile: sanitizeProfileForClient(profile),
-        local_auth_token: generateLocalAuthToken(profile),
+        message: "Identity verified!",
+        is_fallback: true,
+        profile: sanitizeProfileForClient(verifiedProfile),
+        local_auth_token: generateLocalAuthToken(verifiedProfile),
         session: {
-          access_token: sessionData.session.access_token,
-          refresh_token: sessionData.session.refresh_token,
-          expires_at: sessionData.session.expires_at,
-          user: sessionData.user
+          access_token: "local_verified_session",
+          refresh_token: "local_verified_session",
+          expires_at: Math.floor(Date.now() / 1000) + 3600 * 24 * 7,
+          user: { id: verifiedProfile.id, email: formattedEmail }
         }
       });
+
 
     } catch (apiErr: any) {
       console.error("Fatal exception during OTP verification operation:", apiErr);
@@ -1650,6 +1497,8 @@ async function startServer() {
 
   // 3. Backup login direct redirect link landing endpoint
   app.get("/api/auth/login-backup", async (req, res) => {
+    return res.status(410).send("<h3>This sign-in link has been retired for security. Return to XMUM Hangouts and enter the verification code from your email.</h3>");
+    /* legacy implementation retained temporarily for source compatibility
     try {
       const email = req.query.email as string;
       const otp = req.query.otp as string;
@@ -1676,12 +1525,8 @@ async function startServer() {
       otpStore.delete(formattedEmail);
 
       // Perform authentication logic on Supabase
-      const deterministicPassword = getDeterministicPassword(formattedEmail);
 
       // Retrieve existing / create new user
-      const otpSession = await establishOtpAuthSession(formattedEmail, deterministicPassword);
-      let sessionData = otpSession.data;
-      let sessionErr = otpSession.error;
 
       if (sessionErr || !sessionData?.session) {
         return res.status(500).send("<h3>Authentication service is temporarily busy. Try logging in normally.</h3>");
@@ -1696,7 +1541,7 @@ async function startServer() {
     } catch (err) {
       console.error("Backup Login exception:", err);
       return res.status(500).send("<h3>Internal server validation error</h3>");
-    }
+    } */
   });
 
   const registerSyncRoute = (options: {

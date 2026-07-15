@@ -15,6 +15,7 @@ import type {
   ReportAppeal
 } from "../types.js";
 import { deleteOtpRecord, getOtpRecord, OtpStorageConfigurationError, saveOtpRecord } from "./otp-store.js";
+import { generateOtpCode, hashOtpCode, isXmumEmail, matchesOtpCode, OTP_TTL_MS, validatePassword } from "./auth-security.js";
 import {
   dispatchPushNotifications,
   getVapidPublicKey,
@@ -490,76 +491,6 @@ function getLocalAuthSecret() {
   return secret;
 }
 
-function getDeterministicPassword(email: string): string {
-  return crypto.createHmac("sha256", getLocalAuthSecret()).update(email).digest("hex");
-}
-
-async function establishOtpAuthSession(email: string, deterministicPassword: string) {
-  let authResponse = await supabase.auth.signInWithPassword({
-    email,
-    password: deterministicPassword
-  });
-
-  if (!authResponse.error && authResponse.data?.session) {
-    return authResponse;
-  }
-
-  const authUser = await findAuthUserByEmail(email);
-
-  if (supabaseAdmin && authUser?.id) {
-    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
-      password: deterministicPassword,
-      email_confirm: true
-    });
-
-    if (!updateError) {
-      authResponse = await supabase.auth.signInWithPassword({
-        email,
-        password: deterministicPassword
-      });
-
-      if (!authResponse.error && authResponse.data?.session) {
-        return authResponse;
-      }
-    } else {
-      console.warn("OTP auth password repair failed:", updateError.message);
-    }
-  } else if (supabaseAdmin && !authUser) {
-    const { error: createError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password: deterministicPassword,
-      email_confirm: true
-    });
-
-    if (!createError) {
-      authResponse = await supabase.auth.signInWithPassword({
-        email,
-        password: deterministicPassword
-      });
-
-      if (!authResponse.error && authResponse.data?.session) {
-        return authResponse;
-      }
-    } else {
-      console.warn("OTP auth user creation failed:", createError.message);
-    }
-  }
-
-  const signUpResponse = await supabase.auth.signUp({
-    email,
-    password: deterministicPassword
-  });
-
-  if (!signUpResponse.error) {
-    authResponse = await supabase.auth.signInWithPassword({
-      email,
-      password: deterministicPassword
-    });
-  }
-
-  return authResponse;
-}
-
 function generateLocalAuthToken(profile: { id: string; email: string }) {
   const payload = {
     profileId: profile.id,
@@ -719,11 +650,7 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
 
   if (
     profileError &&
-    (
-      isMissingPasswordHashColumnError(profileError) ||
-      isMissingProfileColumnError(profileError, "companion_pet_count") ||
-      isMissingProfileColumnError(profileError, "companion_selected_state_id") || isMissingProfileColumnError(profileError, "birthdate")
-    )
+    isMissingOptionalProfileColumnError(profileError)
   ) {
     markUnsupportedProfileColumns(profileError);
     ({ data: profilesByEmail, error: profileError } = await backendProfileClient
@@ -734,6 +661,7 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
 
   if (profileError) {
     console.warn("Backend Supabase profile load failed:", profileError);
+    throw new Error("The existing profile could not be loaded from the database.");
   }
 
   let candidateProfiles = ((profilesByEmail || []) as unknown) as Profile[];
@@ -746,11 +674,7 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
 
     if (
       insensitiveError &&
-      (
-        isMissingPasswordHashColumnError(insensitiveError) ||
-        isMissingProfileColumnError(insensitiveError, "companion_pet_count") ||
-        isMissingProfileColumnError(insensitiveError, "companion_selected_state_id") || isMissingProfileColumnError(insensitiveError, "birthdate")
-      )
+      isMissingOptionalProfileColumnError(insensitiveError)
     ) {
       markUnsupportedProfileColumns(insensitiveError);
       ({ data: insensitiveProfiles, error: insensitiveError } = await backendProfileClient
@@ -761,6 +685,7 @@ async function resolveBestProfileByEmail(email: string): Promise<Profile | null>
 
     if (insensitiveError) {
       console.warn("Backend case-insensitive profile load failed:", insensitiveError);
+      throw new Error("The existing profile could not be loaded from the database.");
     } else if (insensitiveProfiles?.length) {
       candidateProfiles = ((insensitiveProfiles || []) as unknown as Profile[]).filter(
         profile => normalizeProfileEmail(profile.email) === formattedEmail
@@ -1240,7 +1165,7 @@ async function handleSendOtp(req: VercelRequest, res: VercelResponse) {
   }
 
   const formattedEmail = normalizeProfileEmail(email);
-  if (!formattedEmail.endsWith("@xmu.edu.my")) {
+  if (!isXmumEmail(formattedEmail)) {
     return res.status(400).json({
       error: "Only official Xiamen University Malaysia student emails (@xmu.edu.my) are permitted to login or register."
     });
@@ -1279,20 +1204,17 @@ async function handleSendOtp(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  console.log(`[SECURITY-OTP] Generated code ${otp} for student: ${formattedEmail}`);
+  const otp = generateOtpCode();
+  if (!isProduction) console.log(`[DEV-OTP] Generated code ${otp} for student: ${formattedEmail}`);
 
   await saveOtpRecord({
     email: formattedEmail,
-    otp,
-    expiresAt: now + 60 * 60 * 1000,
+    otp: hashOtpCode(formattedEmail, otp, getLocalAuthSecret()),
+    expiresAt: now + OTP_TTL_MS,
     attempts: 0,
     lastRequestedAt: now,
     requestHistory: [...recentRequests, now]
   });
-
-  const baseUrl = getRequestOrigin(req);
-  const magicLink = `${baseUrl}/api/auth/login-backup?email=${encodeURIComponent(formattedEmail)}&otp=${otp}`;
 
   const resendApiKey = process.env.RESEND_API_KEY;
   if (!resendApiKey) {
@@ -1340,16 +1262,8 @@ async function handleSendOtp(req: VercelRequest, res: VercelResponse) {
               Type this code into the active login screen.
             </p>
             <p style="color: #94a3b8; font-size: 10px; margin: 4px 0 0;">
-              This code will expire in 60 minutes.
+              This code will expire in 10 minutes.
             </p>
-          </div>
-          <div style="border-top: 1px solid #f1f5f9; padding-top: 20px; text-align: center; margin-top: 20px;">
-            <p style="color: #64748b; font-size: 12px; margin: 0 0 10px 0;">
-              Alternatively, use this secondary auto-login option:
-            </p>
-            <a href="${magicLink}" target="_blank" style="display: inline-block; background-color: #f1f5f9; border: 1px solid #e2e8f0; color: #334155; text-decoration: none; font-size: 13px; font-weight: 600; padding: 10px 20px; border-radius: 8px; text-align: center; cursor: pointer;">
-              Fast Sign In
-            </a>
           </div>
         </div>
       `
@@ -1397,6 +1311,9 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
 
   const formattedEmail = normalizeProfileEmail(email);
   const enteredOtp = String(otp).trim();
+  if (!isXmumEmail(formattedEmail)) {
+    return res.status(400).json({ error: "Please use your official @xmu.edu.my student email." });
+  }
   const storedOtpData = await getOtpRecord(formattedEmail);
 
   if (!storedOtpData) {
@@ -1413,7 +1330,7 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
     return res.status(429).json({ error: "Too many failed verification attempts. Please request a new code." });
   }
 
-  if (enteredOtp !== storedOtpData.otp) {
+  if (!matchesOtpCode(storedOtpData.otp, formattedEmail, enteredOtp, getLocalAuthSecret())) {
     storedOtpData.attempts += 1;
     await saveOtpRecord(storedOtpData);
     return res.status(400).json({
@@ -1423,23 +1340,12 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
 
   await deleteOtpRecord(formattedEmail);
 
-  const deterministicPassword = getDeterministicPassword(formattedEmail);
-  let authResponse = await establishOtpAuthSession(formattedEmail, deterministicPassword);
-
-  const { data: matchedProfiles } = await backendProfileClient
-    .from("xmum_profiles")
-    .select("*")
-    .eq("email", formattedEmail);
-
-  let profile = pickCanonicalProfile((matchedProfiles || []) as Profile[], {
-    email: formattedEmail,
-    authUserId: authResponse.data?.user?.id
-  });
+  let profile = await resolveBestProfileByEmail(formattedEmail);
 
   if (!profile) {
     const studentId = formattedEmail.split("@")[0];
     profile = {
-      id: authResponse.data?.user?.id || `user_${Math.random().toString(36).slice(2, 11)}`,
+      id: `user_${crypto.randomUUID()}`,
       email: formattedEmail,
       student_id: studentId,
       name: studentId,
@@ -1465,39 +1371,19 @@ async function handleVerifyOtp(req: VercelRequest, res: VercelResponse) {
     await upsertProfileWithFallback(profile);
   }
 
-  profile = mergeProfileWithAuthMetadata(profile, authResponse.data?.user);
-  await mirrorProfileToAuthUser(profile, deterministicPassword);
-
-  if (authResponse.error || !authResponse.data?.session) {
-    return res.status(200).json({
-      success: true,
-      message: "Identity verified! (Validated fallback session)",
-      is_fallback: true,
-      profile: sanitizeProfileForClient(profile),
-      local_auth_token: generateLocalAuthToken(profile),
-      session: {
-        access_token: "resilient_fallback_session_token",
-        refresh_token: "resilient_fallback_session_token",
-        expires_at: Math.floor(Date.now() / 1000) + 3600 * 24 * 30,
-        user: {
-          id: profile.id,
-          email: formattedEmail
-        }
-      }
-    });
-  }
-
+  profile = mergeProfileWithAuthMetadata(profile);
+  await mirrorProfileToAuthUser(profile);
   return res.status(200).json({
     success: true,
-    message: "Identity verified! Authorizing app session.",
-    is_fallback: false,
+    message: "Identity verified!",
+    is_fallback: true,
     profile: sanitizeProfileForClient(profile),
     local_auth_token: generateLocalAuthToken(profile),
     session: {
-      access_token: authResponse.data.session.access_token,
-      refresh_token: authResponse.data.session.refresh_token,
-      expires_at: authResponse.data.session.expires_at,
-      user: authResponse.data.user
+      access_token: "local_verified_session",
+      refresh_token: "local_verified_session",
+      expires_at: Math.floor(Date.now() / 1000) + 3600 * 24 * 7,
+      user: { id: profile.id, email: formattedEmail }
     }
   });
 }
@@ -1509,6 +1395,12 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
   }
 
   const formattedEmail = normalizeProfileEmail(email);
+  if (!isXmumEmail(formattedEmail)) {
+    return res.status(400).json({ error: "Please use your official @xmu.edu.my student email." });
+  }
+  const passwordValidation = validatePassword(password);
+  if (!passwordValidation.valid) return res.status(400).json({ error: "Email or password is incorrect." });
+  const validatedPassword = passwordValidation.password;
   const attempt = consumePasswordLoginAttempt(req, formattedEmail);
   if (!attempt.allowed) {
     res.setHeader("Retry-After", String(attempt.retryAfterSeconds));
@@ -1519,7 +1411,7 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
   if (!profile) {
     const authOnlyResponse = await supabase.auth.signInWithPassword({
       email: formattedEmail,
-      password
+      password: validatedPassword
     });
 
     if (authOnlyResponse.error || !authOnlyResponse.data?.user?.email) {
@@ -1559,11 +1451,11 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
 
   let authResponse = await supabase.auth.signInWithPassword({
     email: formattedEmail,
-    password
+    password: validatedPassword
   });
 
   const hasAppPassword = Boolean(profile.password_hash || (profile as any).password);
-  const appPasswordMatches = hasAppPassword && matchesStoredPassword(formattedEmail, password, profile);
+  const appPasswordMatches = hasAppPassword && matchesStoredPassword(formattedEmail, validatedPassword, profile);
 
   if (!appPasswordMatches && (authResponse.error || !authResponse.data?.session)) {
     return res.status(hasAppPassword ? 401 : 400).json({
@@ -1574,13 +1466,13 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!appPasswordMatches && authResponse.data?.session) {
-    profile.password_hash = hashPassword(formattedEmail, password);
+    profile.password_hash = hashPassword(formattedEmail, validatedPassword);
     await upsertProfileWithFallback(profile, ["password_hash"]);
-    await mirrorProfileToAuthUser(profile, password);
+    await mirrorProfileToAuthUser(profile, validatedPassword);
   }
 
   if (appPasswordMatches && !isModernPasswordHash(profile.password_hash)) {
-    profile.password_hash = hashPassword(formattedEmail, password);
+    profile.password_hash = hashPassword(formattedEmail, validatedPassword);
     delete (profile as any).password;
     await upsertProfileWithFallback(profile, ["password_hash"]);
   }
@@ -1592,10 +1484,10 @@ async function handlePasswordLogin(req: VercelRequest, res: VercelResponse) {
   }
 
   if (appPasswordMatches && (authResponse.error || !authResponse.data?.session)) {
-    await mirrorProfileToAuthUser(profile, password);
+    await mirrorProfileToAuthUser(profile, validatedPassword);
     authResponse = await supabase.auth.signInWithPassword({
       email: formattedEmail,
-      password
+      password: validatedPassword
     });
   }
 
@@ -1644,10 +1536,11 @@ async function handleSetPassword(req: VercelRequest, res: VercelResponse) {
     return res.status(503).json({ error: "Password sync requires SUPABASE_SERVICE_ROLE_KEY." });
   }
 
-  const password = String(req.body?.password || "").trim();
-  if (password.length < 8) {
-    return res.status(400).json({ error: "Password must be at least 8 characters." });
+  const passwordValidation = validatePassword(req.body?.password);
+  if (!passwordValidation.valid) {
+    return res.status(400).json({ error: "error" in passwordValidation ? passwordValidation.error : "Invalid password." });
   }
+  const password = passwordValidation.password;
 
   const authHeader = req.headers.authorization || "";
   const accessToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
@@ -1685,7 +1578,7 @@ async function handleSetPassword(req: VercelRequest, res: VercelResponse) {
     password_hash: hashPassword(formattedEmail, password)
   };
 
-  const authUser = authUserId ? { id: authUserId } : await findAuthUserByEmail(formattedEmail);
+  const authUser = accessToken && authUserId ? { id: authUserId } : await findAuthUserByEmail(formattedEmail);
   if (authUser?.id) {
     const { error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, { password });
     if (error) {
@@ -1700,50 +1593,15 @@ async function handleSetPassword(req: VercelRequest, res: VercelResponse) {
 }
 
 async function handleLoginBackup(req: VercelRequest, res: VercelResponse) {
-  const email = getSingleQueryParam(req.query.email as string | string[] | undefined);
-  const otp = getSingleQueryParam(req.query.otp as string | string[] | undefined);
+  return res.status(410).send("<h3>This sign-in link has been retired for security. Return to XMUM Hangouts and enter the verification code from your email.</h3>");
+}
 
-  if (!email || !otp) {
-    return res.status(400).send("<h3>Missing backup query parameters</h3>");
-  }
-
-  const formattedEmail = normalizeProfileEmail(email);
-  const codeStr = otp.trim();
-
-  try {
-    const entry = await getOtpRecord(formattedEmail);
-    if (!entry || entry.otp !== codeStr || Date.now() > entry.expiresAt) {
-      return res.status(400).send(`
-        <div style="font-family: sans-serif; text-align: center; padding: 50px;">
-          <h3>Invalid or Expired Backup Verification Link</h3>
-          <p style="color: #64748b;">The code has already been verified or the session expired. Please return to the app and request a fresh login link.</p>
-        </div>
-      `);
-    }
-
-    await deleteOtpRecord(formattedEmail);
-
-    const deterministicPassword = getDeterministicPassword(formattedEmail);
-    const loginResult = await establishOtpAuthSession(formattedEmail, deterministicPassword);
-    let sessionData: any = loginResult.data;
-    let sessionErr: any = loginResult.error;
-
-    if (sessionErr || !sessionData?.session) {
-      return res.status(500).send("<h3>Authentication service is temporarily busy. Try logging in normally.</h3>");
-    }
-
-    const accessToken = sessionData.session.access_token;
-    const refreshToken = sessionData.session.refresh_token;
-    const appUrl = resolveAppUrl(req);
-    return res.redirect(`${appUrl}/#access_token=${accessToken}&refresh_token=${refreshToken}`);
-  } catch (error) {
-    if (error instanceof OtpStorageConfigurationError) {
-      return res.status(503).send("<h3>Verification-code sign-in is still being finalized for deployment. Please return to the app and use Microsoft sign-in or password login.</h3>");
-    }
-
-    console.error("Backup Login exception:", error);
-    return res.status(500).send("<h3>Internal server validation error</h3>");
-  }
+async function handleAuthSession(req: VercelRequest, res: VercelResponse) {
+  const identity = await resolveRequestIdentity(req);
+  if (!identity) return res.status(401).json({ error: "Session expired." });
+  const profile = await resolveBestProfileByEmail(identity.email);
+  if (!profile || profile.is_blocked_globally) return res.status(401).json({ error: "Session expired." });
+  return res.status(200).json({ profile: sanitizeProfileForClient(profile) });
 }
 
 async function handleDeleteAccount(req: VercelRequest, res: VercelResponse) {
@@ -1993,6 +1851,11 @@ export async function handleAuthRoute(req: VercelRequest, res: VercelResponse, a
 
     if (action === "set-password") {
       return await handleSetPassword(req, res);
+    }
+
+    if (action === "session") {
+      if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+      return await handleAuthSession(req, res);
     }
 
     if (action === "login-backup") {

@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { useApp } from "../context/AppContext";
 import { Heart } from "lucide-react";
 import { SpecialCompanionForms } from "./SpecialCompanionForms";
-import { resolveStoredCompanionState, writeStoredCompanionState, type StoredCompanionState } from "../lib/companionState";
+import { normalizeCompanionMessageFrequency, resolveStoredCompanionState, writeStoredCompanionState, type StoredCompanionState } from "../lib/companionState";
 import {
   companionAnimations,
   companionAngryTabResponses,
@@ -68,6 +68,7 @@ type DragReturnMotion = {
   scaleY?: number | number[];
   transition?: Record<string, unknown>;
 };
+type CompanionDragBounds = { left: number; right: number; top: number; bottom: number };
 
 const getCompanionAngerSource = (): CompanionAngerSource => {
   try {
@@ -141,6 +142,24 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const [isBubbleBelow, setIsBubbleBelow] = useState(false);
   const [isCompanionNearLeft, setIsCompanionNearLeft] = useState(false);
   const [showBubble, setShowBubble] = useState<boolean>(true);
+  const initialMessagePreferences = resolveStoredCompanionState(currentUser?.email, currentUser || undefined);
+  const [companionMessagesEnabled, setCompanionMessagesEnabled] = useState(initialMessagePreferences.messagesEnabled !== false);
+  const [companionMessageFrequency, setCompanionMessageFrequency] = useState(
+    normalizeCompanionMessageFrequency(initialMessagePreferences.messageFrequency)
+  );
+  const companionMessagesEnabledRef = useRef(companionMessagesEnabled);
+  const companionMessageFrequencyRef = useRef(companionMessageFrequency);
+  const [hasBubbleMessage, setHasBubbleMessage] = useState(companionMessagesEnabled);
+
+  useEffect(() => {
+    companionMessagesEnabledRef.current = companionMessagesEnabled;
+    companionMessageFrequencyRef.current = companionMessageFrequency;
+    if (!companionMessagesEnabled) {
+      queueRef.current = [];
+      setShowBubble(false);
+      setHasBubbleMessage(false);
+    }
+  }, [companionMessagesEnabled, companionMessageFrequency]);
 
   const processQueue = () => {
     if (processingQueueRef.current) return;
@@ -162,8 +181,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     }
 
     const nextText = queueRef.current.shift();
-    if (nextText) {
+    if (nextText && companionMessagesEnabledRef.current) {
       setBubbleTextInternal(nextText);
+      setHasBubbleMessage(true);
       lastCompanionMessageRef.current = nextText;
       setShowBubble(true);
       lastSpeechTimeRef.current = Date.now();
@@ -183,6 +203,11 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   };
 
   const setBubbleText = (val: string | ((prev: string) => string)) => {
+    if (!companionMessagesEnabledRef.current) return;
+    if (Math.random() * 100 >= companionMessageFrequencyRef.current) {
+      setHasBubbleMessage(false);
+      return;
+    }
     const textStr = typeof val === "function" ? (val as any)(bubbleText) : val;
     const normalizedText = textStr.trim();
 
@@ -488,6 +513,13 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const [reactionType, setReactionType] = useState<CompanionReaction>("none");
   
   const containerRef = useRef<HTMLDivElement>(null);
+  const draggableCompanionRef = useRef<HTMLDivElement>(null);
+  const [companionDragBounds, setCompanionDragBounds] = useState<CompanionDragBounds>(() => ({
+    left: -Math.max(0, window.innerWidth - 104),
+    right: 0,
+    top: -Math.max(0, window.innerHeight - (currentUser ? 200 : 128)),
+    bottom: 0
+  }));
 
   // Keep track of reference lengths to accurately detect additions/changes
   const prevMessagesLen = useRef<number>(messages?.length || 0);
@@ -559,21 +591,40 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     const handleCompanionStateUpdated = (event: Event) => {
       const customEvent = event as CustomEvent<StoredCompanionState>;
       const detail = customEvent.detail || {};
+      if (detail.messagesEnabled !== undefined) {
+        const enabled = detail.messagesEnabled !== false;
+        companionMessagesEnabledRef.current = enabled;
+        setCompanionMessagesEnabled(enabled);
+        if (!enabled) {
+          queueRef.current = [];
+          setShowBubble(false);
+          setHasBubbleMessage(false);
+        }
+      }
+      if (detail.messageFrequency !== undefined) {
+        const frequency = normalizeCompanionMessageFrequency(detail.messageFrequency);
+        companionMessageFrequencyRef.current = frequency;
+        setCompanionMessageFrequency(frequency);
+      }
       if (typeof detail.petCount === "number") {
         setPetCount(Math.max(0, detail.petCount));
       }
       if (detail.selectedStateId !== undefined) {
-        setSelectedStateId(detail.selectedStateId || null);
-        const selectedState = getCompanionStateById(detail.selectedStateId);
-        const selectedLines = selectedState?.ambientLines || companionBaseStateOption.ambientLines;
-        setBubbleText(formatCompanionLine(pickCompanionLine(selectedLines), { name: fName }));
-        setShowBubble(true);
+        const nextSelectedStateId = detail.selectedStateId || null;
+        const selectionChanged = nextSelectedStateId !== selectedStateId;
+        setSelectedStateId(nextSelectedStateId);
+        if (selectionChanged) {
+          const selectedState = getCompanionStateById(detail.selectedStateId);
+          const selectedLines = selectedState?.ambientLines || companionBaseStateOption.ambientLines;
+          setBubbleText(formatCompanionLine(pickCompanionLine(selectedLines), { name: fName }));
+          setShowBubble(true);
+        }
       }
     };
 
     window.addEventListener(companionStateUpdateEvent, handleCompanionStateUpdated);
     return () => window.removeEventListener(companionStateUpdateEvent, handleCompanionStateUpdated);
-  }, [fName]);
+  }, [fName, selectedStateId]);
 
   useEffect(() => {
     const resolvedState = resolveStoredCompanionState(currentUser?.email, currentUser || undefined);
@@ -583,6 +634,17 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
     setPetCount(nextPetCount);
     setSelectedStateId(nextSelectedStateId);
+    const nextMessagesEnabled = resolvedState.messagesEnabled !== false;
+    const nextMessageFrequency = normalizeCompanionMessageFrequency(resolvedState.messageFrequency);
+    companionMessagesEnabledRef.current = nextMessagesEnabled;
+    companionMessageFrequencyRef.current = nextMessageFrequency;
+    setCompanionMessagesEnabled(nextMessagesEnabled);
+    setCompanionMessageFrequency(nextMessageFrequency);
+    if (!nextMessagesEnabled) {
+      queueRef.current = [];
+      setShowBubble(false);
+      setHasBubbleMessage(false);
+    }
 
     if (
       currentUser &&
@@ -1023,6 +1085,42 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     setIsCompanionNearLeft(estimatedCompanionLeft < (window.innerWidth >= 768 ? 170 : 120));
   };
 
+  const calculateCompanionDragBounds = (assumedOffset = companionOffsetRef.current): CompanionDragBounds => {
+    const node = draggableCompanionRef.current;
+    if (!node) return companionDragBounds;
+
+    const viewportWidth = window.visualViewport?.width || window.innerWidth;
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    const safeMargin = 8;
+    const rect = node.getBoundingClientRect();
+    const restingLeft = rect.left - assumedOffset.x;
+    const restingTop = rect.top - assumedOffset.y;
+
+    return {
+      left: safeMargin - restingLeft,
+      right: viewportWidth - safeMargin - rect.width - restingLeft,
+      top: safeMargin - restingTop,
+      bottom: viewportHeight - safeMargin - rect.height - restingTop
+    };
+  };
+
+  const clampCompanionOffset = (offset: { x: number; y: number }, bounds: CompanionDragBounds) => ({
+    x: Math.min(bounds.right, Math.max(bounds.left, offset.x)),
+    y: Math.min(bounds.bottom, Math.max(bounds.top, offset.y))
+  });
+
+  const keepCompanionInsideViewport = () => {
+    const bounds = calculateCompanionDragBounds();
+    setCompanionDragBounds(bounds);
+    const safeOffset = clampCompanionOffset(companionOffsetRef.current, bounds);
+    if (safeOffset.x !== companionOffsetRef.current.x || safeOffset.y !== companionOffsetRef.current.y) {
+      companionOffsetRef.current = safeOffset;
+      setCompanionOffset(safeOffset);
+      setDragReturnMotion(buildDragReturnMotion("steady-bounce", safeOffset.x, safeOffset.y));
+      updateCompanionEdgeState(safeOffset.x, safeOffset.y);
+    }
+  };
+
   const scheduleCompanionReturn = () => {
     clearCompanionReturnTimer();
     const minuteRange = companionReturnMaximumMinutes - companionReturnMinimumMinutes + 1;
@@ -1048,10 +1146,16 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   useEffect(() => () => clearCompanionReturnTimer(), []);
 
   useEffect(() => {
-    const handleResize = () => updateCompanionEdgeState(companionOffsetRef.current.x, companionOffsetRef.current.y);
+    const handleResize = () => window.requestAnimationFrame(keepCompanionInsideViewport);
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [currentUser]);
+    window.visualViewport?.addEventListener("resize", handleResize);
+    const frame = window.requestAnimationFrame(keepCompanionInsideViewport);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", handleResize);
+      window.visualViewport?.removeEventListener("resize", handleResize);
+    };
+  }, [currentUser?.id, showBubble, isBubbleBelow]);
 
   const triggerDragAnger = () => {
     const angerTimestamp = new Date().toISOString();
@@ -1464,7 +1568,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         className={`relative z-[90] ${isBubbleBelow ? "order-2 mt-2" : "order-1 mb-2"}`}
       >
         <AnimatePresence>
-          {showBubble && (
+          {showBubble && hasBubbleMessage && companionMessagesEnabled && (
             <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.92 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1472,8 +1576,23 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             transition={{ duration: 0.28, ease: "easeOut" }}
             className={`bg-white/98 text-slate-800 text-[10px] md:text-[11px] font-bold p-2.5 md:p-3 rounded-2xl border border-slate-100 shadow-xl max-w-[150px] md:max-w-[205px] pointer-events-auto leading-relaxed relative z-[90] flex flex-col gap-1 border-rose-50 ${
               isCompanionNearLeft ? "items-start text-left" : "items-end text-right"
-            }`}
+            } cursor-pointer`}
             id="companion-speech-bubble"
+            role="button"
+            tabIndex={0}
+            title="Dismiss companion message"
+            aria-label="Dismiss companion message"
+            onClick={event => {
+              event.stopPropagation();
+              setShowBubble(false);
+            }}
+            onKeyDown={event => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                event.stopPropagation();
+                setShowBubble(false);
+              }
+            }}
           >
             {/* Tiny bubble point arrow */}
             <div className={`absolute w-2.5 h-2.5 bg-white rotate-45 ${isCompanionNearLeft ? "left-4 md:left-6" : "right-4 md:right-6"} ${
@@ -1499,14 +1618,10 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
 
       {/* Floating Animated Ultra Cute Round Fluffy Kitty Mascot */}
       <motion.div
+        ref={draggableCompanionRef}
         className={`pointer-events-auto relative z-10 ${isBubbleBelow ? "order-1" : "order-2"}`}
         drag
-        dragConstraints={{
-          left: -Math.max(0, window.innerWidth - 104),
-          right: 0,
-          top: -Math.max(0, window.innerHeight - (currentUser ? 200 : 128)),
-          bottom: 0
-        }}
+        dragConstraints={companionDragBounds}
         dragElastic={0.02}
         dragMomentum={false}
         dragTransition={{ bounceStiffness: 560, bounceDamping: 28, power: 0.08, timeConstant: 120 }}
@@ -1532,14 +1647,18 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
           });
           setReactionType("subtle");
           setMood("excited");
+          window.requestAnimationFrame(keepCompanionInsideViewport);
         }}
         onDragEnd={(_, info) => {
           draggedRef.current = true;
           const movedFarEnough = Math.abs(info.offset.x) > 12 || Math.abs(info.offset.y) > 12;
-          const nextOffset = {
+          const rawNextOffset = {
             x: companionOffsetRef.current.x + info.offset.x,
             y: companionOffsetRef.current.y + info.offset.y
           };
+          const latestBounds = calculateCompanionDragBounds(rawNextOffset);
+          const nextOffset = clampCompanionOffset(rawNextOffset, latestBounds);
+          setCompanionDragBounds(latestBounds);
           companionOffsetRef.current = nextOffset;
           setCompanionOffset(nextOffset);
           updateCompanionEdgeState(nextOffset.x, nextOffset.y);
