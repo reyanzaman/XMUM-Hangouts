@@ -3440,7 +3440,7 @@ const AppContent: React.FC = () => {
         </p>
         {activeTab === "feed" && (
           <p className="text-[8px] font-semibold tracking-[0.16em] text-slate-300" aria-label="App version 1.10">
-            v1.10
+            v1.11
           </p>
         )}
       </footer>
