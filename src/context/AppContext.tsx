@@ -28,6 +28,7 @@ import { encryptMessage, decryptMessage } from "../lib/encryption";
 import { hashPassword, matchesStoredPassword } from "../lib/security";
 import {
   MIN_HANGOUT_DESCRIPTION_LENGTH,
+  evaluateHangoutEligibility,
   parseHangoutEditHistoryEntry,
   serializeHangoutEditHistoryEntry,
   validateFutureHangoutDate
@@ -4488,56 +4489,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Eligibility and Restriction checks
-  const isEligibleForHangout = (profile: Profile, hangout: Hangout): { eligible: boolean; reasons: string[] } => {
-    const r = hangout.restrictions;
-    const reasons: string[] = [];
-
-    // Country match
-    if (r.countries && r.countries.length > 0 && !r.countries.includes(profile.country)) {
-      reasons.push(`Mandatory Countries list: [${r.countries.join(", ")}]; your profile lists "${profile.country}"`);
-    }
-
-    // Languages match: check if user shares at least one required language
-    if (r.languages && r.languages.length > 0) {
-      const sharesLanguage = r.languages.some(lang => profile.languages.includes(lang));
-      if (!sharesLanguage) {
-        reasons.push(`Mandatory Spoken language(s): [${r.languages.join(", ")}]; your profile does not share these languages`);
-      }
-    }
-
-    // Program match
-    if (r.programs && r.programs.length > 0 && !r.programs.includes(profile.program)) {
-      reasons.push(`Mandatory Academic Program(s): [${r.programs.join(", ")}]; your profile lists "${profile.program}"`);
-    }
-
-    // Year of Study match
-    if (r.years && r.years.length > 0 && !r.years.includes(profile.year_of_study)) {
-      reasons.push(`Mandatory Academic Year(s): [${r.years.join(", ")}]; your profile lists "${profile.year_of_study}"`);
-    }
-
-    // Student Type match
-    if (r.student_types && r.student_types.length > 0 && !r.student_types.includes(profile.student_type)) {
-      reasons.push(`Mandatory Student Type: [${r.student_types.join(", ")}]; your profile lists "${profile.student_type}"`);
-    }
-
-    // Age bound
-    if (r.age_min !== null && profile.age < r.age_min) {
-      reasons.push(`Age is below specified minimum of ${r.age_min} years old (you are ${profile.age})`);
-    }
-    if (r.age_max !== null && profile.age > r.age_max) {
-      reasons.push(`Age is above specified maximum of ${r.age_max} years old (you are ${profile.age})`);
-    }
-
-    // Gender match
-    if (r.genders && r.genders.length > 0 && !r.genders.includes(profile.gender)) {
-      reasons.push(`Gender target mismatch: [${r.genders.join(", ")}]; your profile lists "${profile.gender}"`);
-    }
-
-    return {
-      eligible: reasons.length === 0,
-      reasons
-    };
-  };
+  const isEligibleForHangout = (profile: Profile, hangout: Hangout) =>
+    evaluateHangoutEligibility(profile, hangout);
 
   const runHangoutLifecycleCheck = (showFeedback = false) => {
     const nowStamp = Date.now();

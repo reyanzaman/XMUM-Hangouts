@@ -36,7 +36,6 @@ import {
   Plus, 
   X, 
   Fingerprint, 
-  History,
   Lock,
   Heart,
   HelpCircle,
@@ -78,8 +77,6 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
     likes,
     comments,
     updateProfile, 
-    profiles, 
-    switchUser, 
     showToast,
     onboardingStep,
     setOnboardingStep,
@@ -133,7 +130,6 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   // Custom language draft input
   const [customLanguage, setCustomLanguage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-  const [isDemoSwitcherOpen, setIsDemoSwitcherOpen] = useState(false);
   const [showConfirmSignOut, setShowConfirmSignOut] = useState(false);
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
   const [deleteAccountConfirmationInput, setDeleteAccountConfirmationInput] = useState("");
@@ -385,9 +381,6 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
     window.dispatchEvent(new CustomEvent("xmum-companion-state-updated", { detail: nextState }));
   };
 
-  // Switch demo profiles
-  const demoUsers = profiles.filter(p => p.id !== currentUser.id);
-
   // Compute if any field differs from the currently saved user details
   const hasChanges = 
     profileName !== (currentUser.name || "") ||
@@ -521,7 +514,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
         {/* Left Column (35% width on desktop) - Displays current card & simulation tools */}
-        <div className="lg:col-span-5 space-y-6">
+        <div className="contents lg:col-span-5 lg:block lg:space-y-6">
           
           {/* Card visual preview marker */}
           <div className="space-y-2">
@@ -680,27 +673,25 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               onClick={() => setIsCompanionProgressOpen(open => !open)}
               aria-expanded={isCompanionProgressOpen}
               aria-controls="companion-progress-details"
-              className={`flex w-full items-center justify-between text-left transition-all sm:pointer-events-none ${
-                isCompanionProgressOpen
-                  ? "mb-4 border-b border-gray-50 pb-3"
-                  : "-m-2 w-[calc(100%+1rem)] rounded-2xl border border-rose-100 bg-gradient-to-r from-rose-50 via-white to-amber-50 p-3 shadow-[0_6px_20px_rgba(244,63,94,0.10)]"
-              } sm:m-0 sm:mb-4 sm:w-full sm:rounded-none sm:border-x-0 sm:border-t-0 sm:border-b sm:border-gray-50 sm:bg-none sm:p-0 sm:pb-3 sm:shadow-none`}
+              className={`flex w-full items-center justify-between gap-3 text-left transition-all sm:pointer-events-none ${
+                isCompanionProgressOpen ? "mb-4 border-b border-gray-50 pb-3" : ""
+              } sm:mb-4 sm:border-b sm:border-gray-50 sm:pb-3`}
             >
-              <div className="flex items-center gap-2">
-                <span className={`${isCompanionProgressOpen ? "" : "rounded-xl bg-white p-1.5 shadow-sm ring-1 ring-rose-100"} sm:p-0 sm:shadow-none sm:ring-0`}>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className={`${isCompanionProgressOpen ? "" : "rounded-xl bg-rose-50 p-2 ring-1 ring-rose-100"} shrink-0 sm:p-0 sm:ring-0`}>
                   <Heart className="w-5 h-5 fill-rose-100 text-rose-500" />
                 </span>
-                <div>
+                <div className="min-w-0">
                   <h3 className="font-bold text-slate-850 text-sm">Companion Progress</h3>
                   {!isCompanionProgressOpen && (
-                    <span className="mt-0.5 flex items-center gap-1 text-[9px] font-bold text-rose-500 sm:hidden">
-                      <Sparkles className="h-2.5 w-2.5" /> Tap to see your forms
+                    <span className="mt-0.5 flex items-center gap-1 text-[10px] font-semibold text-slate-500 sm:hidden">
+                      <Sparkles className="h-2.5 w-2.5 shrink-0 text-rose-400" /> Tap to view forms
                     </span>
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">
+              <div className="flex shrink-0 items-center gap-1.5">
+                <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-rose-50 text-rose-700 tabular-nums">
                   {companionPetCount} pets
                 </span>
                 <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform sm:hidden ${isCompanionProgressOpen ? "rotate-180" : ""}`} />
@@ -790,112 +781,6 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             </div>
           </div>}
 
-          <div className="bg-white border border-rose-100 p-5 rounded-3xl shadow-sm space-y-4">
-            <div>
-              <h3 className="font-bold text-slate-850 text-sm">Permanent Account Deletion</h3>
-              <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
-                This removes your account, cancels any active hangouts you host, and keeps expired activity under a deleted-user label.
-              </p>
-            </div>
-
-            {showDeleteAccountConfirm ? (
-              <div className="space-y-3">
-                <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3 text-[11px] text-rose-800 leading-relaxed">
-                  This action is permanent. Type <span className="font-black">{currentUser.email}</span> to confirm account deletion. Your active hangouts will be cancelled and affected students will be notified.
-                </div>
-                <input
-                  type="text"
-                  value={deleteAccountConfirmationInput}
-                  onChange={(event) => setDeleteAccountConfirmationInput(event.target.value)}
-                  placeholder="Type your email to confirm"
-                  className="w-full px-3 py-2.5 rounded-xl border border-rose-200 focus:border-rose-400 focus:ring-2 focus:ring-rose-100 outline-none text-xs text-slate-700 bg-white"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={handleDeleteAccount}
-                    disabled={isDeletingAccount || !deleteAccountConfirmationMatches}
-                    className="flex-1 bg-rose-600 hover:bg-rose-700 disabled:opacity-70 disabled:cursor-not-allowed text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
-                  >
-                    {isDeletingAccount ? "Deleting Account..." : "Delete Permanently"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeleteAccountConfirmationInput("");
-                      setShowDeleteAccountConfirm(false);
-                    }}
-                    disabled={isDeletingAccount}
-                    className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
-                  >
-                    Keep Account
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setDeleteAccountConfirmationInput("");
-                  setShowDeleteAccountConfirm(true);
-                }}
-                className="w-full bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
-              >
-                Delete My Account Permanently
-              </button>
-            )}
-          </div>
-
-          {/* Simulated Account Switcher (Only visible to Admin) */}
-          {currentUser?.is_admin && (
-            <div className="bg-gradient-to-br from-slate-900 to-indigo-950 p-5 rounded-3xl text-white shadow-xl space-y-4">
-              <button
-                type="button"
-                onClick={() => setIsDemoSwitcherOpen(!isDemoSwitcherOpen)}
-                className="w-full flex items-center justify-between hover:opacity-80 transition-opacity text-left cursor-pointer outline-none"
-              >
-                <div className="flex items-center gap-2">
-                  <History className="w-5 h-5 text-indigo-400" />
-                  <div>
-                    <h3 className="font-bold text-sm text-slate-100">Demo Account Switcher</h3>
-                    <p className="text-[10px] text-slate-400">Instantly switch profiles to test peer coordination views.</p>
-                  </div>
-                </div>
-                <span className="text-indigo-300 text-xs font-bold shrink-0 ml-2">
-                  {isDemoSwitcherOpen ? "Collapse ▴" : "Expand ▾"}
-                </span>
-              </button>
-
-              {isDemoSwitcherOpen && (
-                <div className="space-y-4 pt-1 animate-in fade-in duration-200 border-t border-white/10">
-                  {demoUsers.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic">No other student accounts registered.</p>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {demoUsers.map(user => (
-                        <button
-                          id={`simulation-switch-${user.id}`}
-                          key={user.id}
-                          onClick={() => switchUser(user.id)}
-                          className="w-full bg-white/5 hover:bg-white/10 border border-white/10 p-2.5 rounded-xl text-left text-xs transition-colors flex items-center justify-between group cursor-pointer"
-                        >
-                          <div>
-                            <span className="flex items-center gap-1.5 font-black text-slate-100">{user.name}</span>
-                            <span className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400">{user.program} · {user.country || "Malaysia"}</span>
-                          </div>
-                          <span className="text-[9px] font-bold bg-indigo-500/30 text-indigo-300 border border-indigo-400/40 px-2 py-0.5 rounded-full group-hover:scale-105 transition-transform">
-                            Switch Focus
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Right Column (65% width on desktop) - Detailed editable form fields */}
@@ -1135,6 +1020,66 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               </button>
             </div>
           </form>
+
+          <div className="border-t border-gray-100 pt-6">
+            <div className="rounded-3xl border border-rose-100 bg-rose-50/20 p-5 space-y-4">
+              <div>
+                <h3 className="font-bold text-slate-850 text-sm">Permanent Account Deletion</h3>
+                <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  This removes your account, cancels any active hangouts you host, and keeps expired activity under a deleted-user label.
+                </p>
+              </div>
+
+              {showDeleteAccountConfirm ? (
+                <div className="space-y-3">
+                  <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3 text-[11px] text-rose-800 leading-relaxed">
+                    This action is permanent. Type <span className="font-black">{currentUser.email}</span> to confirm account deletion. Your active hangouts will be cancelled and affected students will be notified.
+                  </div>
+                  <input
+                    type="text"
+                    value={deleteAccountConfirmationInput}
+                    onChange={(event) => setDeleteAccountConfirmationInput(event.target.value)}
+                    placeholder="Type your email to confirm"
+                    className="w-full px-3 py-2.5 rounded-xl border border-rose-200 focus:border-rose-400 focus:ring-2 focus:ring-rose-100 outline-none text-xs text-slate-700 bg-white"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleDeleteAccount}
+                      disabled={isDeletingAccount || !deleteAccountConfirmationMatches}
+                      className="flex-1 bg-rose-600 hover:bg-rose-700 disabled:opacity-70 disabled:cursor-not-allowed text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                    >
+                      {isDeletingAccount ? "Deleting Account..." : "Delete Permanently"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteAccountConfirmationInput("");
+                        setShowDeleteAccountConfirm(false);
+                      }}
+                      disabled={isDeletingAccount}
+                      className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                    >
+                      Keep Account
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteAccountConfirmationInput("");
+                    setShowDeleteAccountConfirm(true);
+                  }}
+                  className="w-full bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Delete My Account Permanently
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -1,7 +1,73 @@
+import type { Hangout, Profile } from "../types";
+
 export const MIN_HANGOUT_LEAD_MINUTES = 30;
 export const MIN_HANGOUT_DESCRIPTION_LENGTH = 35;
 export const MAX_HANGOUT_ADVANCE_MONTHS = 2;
 const HANGOUT_EDIT_HISTORY_PREFIX = "[[HANGOUT_EDIT]]";
+
+export function evaluateHangoutEligibility(
+  profile: Profile,
+  hangout: Hangout,
+  today = new Date()
+): { eligible: boolean; reasons: string[] } {
+  const r = {
+    countries: [] as string[],
+    languages: [] as string[],
+    programs: [] as string[],
+    years: [] as string[],
+    student_types: [] as string[],
+    genders: [] as string[],
+    age_min: null as number | null,
+    age_max: null as number | null,
+    ...(hangout.restrictions || {})
+  };
+  const reasons: string[] = [];
+  const normalize = (value: unknown) => String(value ?? "").trim().toLocaleLowerCase();
+  const matchesAllowed = (allowed: string[] | undefined, value: unknown) =>
+    !allowed?.length || allowed.some(option => normalize(option) === normalize(value));
+  const profileLanguages = new Set((profile.languages || []).map(normalize).filter(Boolean));
+  const profileAge = (() => {
+    const storedAge = Number(profile.age);
+    if (Number.isFinite(storedAge) && storedAge >= 0) return storedAge;
+    if (!profile.birthdate) return null;
+    const birthdate = new Date(`${profile.birthdate}T00:00:00`);
+    if (Number.isNaN(birthdate.getTime())) return null;
+    let age = today.getFullYear() - birthdate.getFullYear();
+    const monthDifference = today.getMonth() - birthdate.getMonth();
+    if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < birthdate.getDate())) age -= 1;
+    return age;
+  })();
+
+  if (!matchesAllowed(r.countries, profile.country)) {
+    reasons.push(`Mandatory Countries list: [${r.countries.join(", ")}]; your profile lists "${profile.country}"`);
+  }
+  if (r.languages.length > 0 && !r.languages.some(language => profileLanguages.has(normalize(language)))) {
+    reasons.push(`Mandatory Spoken language(s): [${r.languages.join(", ")}]; your profile does not share these languages`);
+  }
+  if (!matchesAllowed(r.programs, profile.program)) {
+    reasons.push(`Mandatory Academic Program(s): [${r.programs.join(", ")}]; your profile lists "${profile.program}"`);
+  }
+  if (!matchesAllowed(r.years, profile.year_of_study)) {
+    reasons.push(`Mandatory Academic Year(s): [${r.years.join(", ")}]; your profile lists "${profile.year_of_study}"`);
+  }
+  if (!matchesAllowed(r.student_types, profile.student_type)) {
+    reasons.push(`Mandatory Student Type: [${r.student_types.join(", ")}]; your profile lists "${profile.student_type}"`);
+  }
+  if ((r.age_min !== null || r.age_max !== null) && profileAge === null) {
+    reasons.push("Your profile needs a valid birthdate before age-restricted plans can be matched");
+  }
+  if (profileAge !== null && r.age_min !== null && profileAge < r.age_min) {
+    reasons.push(`Age is below specified minimum of ${r.age_min} years old (you are ${profileAge})`);
+  }
+  if (profileAge !== null && r.age_max !== null && profileAge > r.age_max) {
+    reasons.push(`Age is above specified maximum of ${r.age_max} years old (you are ${profileAge})`);
+  }
+  if (!matchesAllowed(r.genders, profile.gender)) {
+    reasons.push(`Gender target mismatch: [${r.genders.join(", ")}]; your profile lists "${profile.gender}"`);
+  }
+
+  return { eligible: reasons.length === 0, reasons };
+}
 
 export interface HangoutEditHistoryChange {
   field: string;

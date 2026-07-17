@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence, MotionConfig, useDragControls } from "motion/react";
+import { motion, AnimatePresence, MotionConfig } from "motion/react";
 import { useApp } from "../context/AppContext";
 import { Heart } from "lucide-react";
 import { SpecialCompanionForms } from "./SpecialCompanionForms";
@@ -25,6 +25,8 @@ import {
   companionTravelAnimations,
   formatCompanionLine,
   getCompanionStateById,
+  getCompanionStateActions,
+  getCompanionStateDialogueLines,
   getCompanionMilestone,
   getCompanionPetRequestLines,
   getUnlockedCompanionState,
@@ -48,10 +50,7 @@ const companionStateUpdateEvent = "xmum-companion-state-updated";
 const companionAngerSourceStorageKey = "xmum_companion_anger_source";
 const normalAngerPetsRequired = 5;
 const redHotAngerPetsRequired = 9;
-const companionReturnMinimumMinutes = 2;
-const companionReturnMaximumMinutes = 10;
-const companionHomePositionVersion = "mobile-down-18-right-9-v1";
-const companionHomePositionVersionStorageKey = "xmum_companion_home_position_version";
+const companionPositionStorageKey = "xmum_companion_position";
 const getRandomDragAngerThreshold = () => 8 + Math.floor(Math.random() * 6);
 
 type CompanionAngerSource = "none" | "profanity" | "drag";
@@ -72,6 +71,32 @@ type DragReturnMotion = {
   transition?: Record<string, unknown>;
 };
 type CompanionDragBounds = { left: number; right: number; top: number; bottom: number };
+type CompanionPosition = { x: number; y: number };
+
+const getCompanionPositionStorageKey = (userId?: string | null) =>
+  `${companionPositionStorageKey}:${userId || "guest"}`;
+
+const getStoredCompanionPosition = (userId?: string | null): CompanionPosition => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(getCompanionPositionStorageKey(userId)) || "null");
+    const x = Number(stored?.x);
+    const y = Number(stored?.y);
+    return {
+      x: Number.isFinite(x) ? x : 0,
+      y: Number.isFinite(y) ? y : 0
+    };
+  } catch {
+    return { x: 0, y: 0 };
+  }
+};
+
+const saveCompanionPosition = (userId: string | null | undefined, position: CompanionPosition) => {
+  try {
+    localStorage.setItem(getCompanionPositionStorageKey(userId), JSON.stringify(position));
+  } catch {
+    // Keep the chosen position for this session when storage is unavailable.
+  }
+};
 
 const getCompanionAngerSource = (): CompanionAngerSource => {
   try {
@@ -138,10 +163,11 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const lastCompanionMessageRef = useRef<string>(bubbleText);
   const draggedRef = useRef<boolean>(false);
   const dragHistoryRef = useRef<number[]>([]);
+  const lastAmbientActionKeyRef = useRef("");
   const dragAngerThresholdRef = useRef(getRandomDragAngerThreshold());
-  const companionReturnTimerRef = useRef<number | null>(null);
-  const companionOffsetRef = useRef({ x: 0, y: 0 });
-  const [companionOffset, setCompanionOffset] = useState({ x: 0, y: 0 });
+  const initialCompanionPosition = getStoredCompanionPosition(currentUser?.id);
+  const companionOffsetRef = useRef(initialCompanionPosition);
+  const [companionOffset, setCompanionOffset] = useState(initialCompanionPosition);
   const [isBubbleBelow, setIsBubbleBelow] = useState(false);
   const [isCompanionNearLeft, setIsCompanionNearLeft] = useState(false);
   const [showBubble, setShowBubble] = useState<boolean>(true);
@@ -459,7 +485,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       : activeSpecialStateId
         ? 0.21
         : 0.2;
-  const activeDialogueLines = activeTierState?.ambientLines || companionBaseStateOption.ambientLines;
+  const activeDialogueLines = getCompanionStateDialogueLines(activeTierState);
   const isRedHotAngry = isCompanionAngry && angerSource === "drag";
 
   // Periodic subtle cute random companion movement triggers and rare screen hops.
@@ -467,16 +493,10 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     if (isIdle) return;
 
     const triggerRandomMovement = () => {
+      const stateActions = getCompanionStateActions(activeTierState);
       const stateAmbientAction: CompanionAction | null =
-        activeDialogueLines.length > 0
-          ? {
-              text: pickCompanionLine(activeDialogueLines),
-              pose: activeTierState?.pose || "wiggle",
-              mood: activeTierState?.mood || "happy",
-              accessory: activeTierState?.accessory || "none",
-              speechChance: 1,
-              durationMs: 4600
-            }
+        stateActions.length > 0
+          ? stateActions[Math.floor(Math.random() * stateActions.length)]
           : null;
       const petHintAction: CompanionAction | null =
         !isCompanionAngry && Math.random() < 0.14
@@ -493,8 +513,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       const baseActions = isCompanionAngry
         ? companionGrumpyActions
         : rareAction
-        ? [...companionRandomActions, ...(stateAmbientAction ? [stateAmbientAction] : []), ...(petHintAction ? [petHintAction] : []), ...companionRareActions]
-        : [...companionRandomActions, ...(stateAmbientAction ? [stateAmbientAction] : []), ...(petHintAction ? [petHintAction] : [])];
+        ? [...companionRandomActions, ...stateActions, ...(petHintAction ? [petHintAction] : []), ...companionRareActions]
+        : [...companionRandomActions, ...stateActions, ...(petHintAction ? [petHintAction] : [])];
       const eligibleActions = baseActions.filter(action => {
         const reachedMin = action.minPetCount === undefined || petCount >= action.minPetCount;
         const underMax = action.maxPetCount === undefined || petCount <= action.maxPetCount;
@@ -502,9 +522,18 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         return reachedMin && underMax && tabMatch;
       });
       const actionsToUse = eligibleActions.length > 0 ? eligibleActions : baseActions;
-      const action = stateAmbientAction && !isCompanionAngry && Math.random() < 0.34
+      let action = stateAmbientAction && !isCompanionAngry && Math.random() < 0.42
         ? stateAmbientAction
         : actionsToUse[Math.floor(Math.random() * actionsToUse.length)];
+      const actionKey = (candidate: CompanionAction) =>
+        `${candidate.pose}:${candidate.travel || "home"}:${candidate.text}`;
+      const nonRepeatingActions = actionsToUse.filter(candidate =>
+        actionKey(candidate) !== lastAmbientActionKeyRef.current
+      );
+      if (actionKey(action) === lastAmbientActionKeyRef.current && nonRepeatingActions.length > 0) {
+        action = nonRepeatingActions[Math.floor(Math.random() * nonRepeatingActions.length)];
+      }
+      lastAmbientActionKeyRef.current = actionKey(action);
 
       setCompanionPose(action.pose);
       setMood(action.mood);
@@ -552,13 +581,15 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   
   const containerRef = useRef<HTMLDivElement>(null);
   const draggableCompanionRef = useRef<HTMLDivElement>(null);
-  const companionDragControls = useDragControls();
   const companionHoldTimerRef = useRef<number | null>(null);
   const petReactionResetTimerRef = useRef<number | null>(null);
   const companionPointerRef = useRef<{
     id: number;
     startX: number;
     startY: number;
+    startOffsetX: number;
+    startOffsetY: number;
+    bounds: CompanionDragBounds;
     lastPetX: number;
     lastPetY: number;
     lastPetAt: number;
@@ -1134,19 +1165,13 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     return motions[style];
   };
 
-  const clearCompanionReturnTimer = () => {
-    if (companionReturnTimerRef.current !== null) {
-      window.clearTimeout(companionReturnTimerRef.current);
-      companionReturnTimerRef.current = null;
-    }
-  };
-
   const updateCompanionEdgeState = (offsetX: number, offsetY: number) => {
     const isDesktop = window.innerWidth >= 768;
-    const restingBottom = isDesktop ? 48 : currentUser ? 102 : 30;
-    const estimatedCompanionTop = window.innerHeight - restingBottom - 72 + offsetY;
-    const restingRight = isDesktop ? 40 : 23;
-    const estimatedCompanionLeft = window.innerWidth - restingRight - 72 + offsetX;
+    const restingBottom = isDesktop ? 48 : currentUser ? 82 : 24;
+    const estimatedSize = isDesktop ? 68 : 52;
+    const estimatedCompanionTop = window.innerHeight - restingBottom - estimatedSize + offsetY;
+    const restingRight = isDesktop ? 40 : 16;
+    const estimatedCompanionLeft = window.innerWidth - restingRight - estimatedSize + offsetX;
     setIsBubbleBelow(estimatedCompanionTop < 150);
     setIsCompanionNearLeft(estimatedCompanionLeft < (window.innerWidth >= 768 ? 170 : 120));
   };
@@ -1184,63 +1209,25 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       setCompanionOffset(safeOffset);
       setDragReturnMotion(buildDragReturnMotion("steady-bounce", safeOffset.x, safeOffset.y));
       updateCompanionEdgeState(safeOffset.x, safeOffset.y);
+      saveCompanionPosition(currentUser?.id, safeOffset);
     }
   };
-
-  const scheduleCompanionReturn = () => {
-    clearCompanionReturnTimer();
-    const minuteRange = companionReturnMaximumMinutes - companionReturnMinimumMinutes + 1;
-    const delayMinutes = companionReturnMinimumMinutes + Math.floor(Math.random() * minuteRange);
-    companionReturnTimerRef.current = window.setTimeout(() => {
-      companionOffsetRef.current = { x: 0, y: 0 };
-      setCompanionOffset({ x: 0, y: 0 });
-      setIsBubbleBelow(false);
-      setIsCompanionNearLeft(false);
-      setDragReturnMotion({
-        x: 0,
-        y: 0,
-        rotate: 0,
-        scale: 1,
-        scaleX: 1,
-        scaleY: 1,
-        transition: { type: "spring", stiffness: 150, damping: 20 }
-      });
-      companionReturnTimerRef.current = null;
-    }, delayMinutes * 60 * 1000);
-  };
-
-  useEffect(() => () => clearCompanionReturnTimer(), []);
 
   useEffect(() => {
-    const userPositionVersionKey = `${companionHomePositionVersionStorageKey}:${currentUser?.id || "guest"}`;
-    let shouldResetPosition = true;
-
-    try {
-      shouldResetPosition = localStorage.getItem(userPositionVersionKey) !== companionHomePositionVersion;
-      if (shouldResetPosition) {
-        localStorage.setItem(userPositionVersionKey, companionHomePositionVersion);
-      }
-    } catch {
-      // Reset safely even when browser storage is unavailable.
-    }
-
-    if (!shouldResetPosition) return;
-
-    clearCompanionReturnTimer();
-    companionOffsetRef.current = { x: 0, y: 0 };
-    setCompanionOffset({ x: 0, y: 0 });
-    setIsBubbleBelow(false);
-    setIsCompanionNearLeft(false);
+    const storedPosition = getStoredCompanionPosition(currentUser?.id);
+    companionOffsetRef.current = storedPosition;
+    setCompanionOffset(storedPosition);
     setIsDragReturning(false);
     setDragReturnMotion({
-      x: 0,
-      y: 0,
+      x: storedPosition.x,
+      y: storedPosition.y,
       rotate: 0,
       scale: 1,
       scaleX: 1,
       scaleY: 1,
       transition: { type: "spring", stiffness: 150, damping: 20 }
     });
+    updateCompanionEdgeState(storedPosition.x, storedPosition.y);
   }, [currentUser?.id]);
 
   useEffect(() => {
@@ -1442,6 +1429,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const handleCompanionPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || companionPointerRef.current) return;
 
+    const latestBounds = calculateCompanionDragBounds();
     draggedRef.current = false;
     companionStrokePetRef.current = false;
     companionDragArmedRef.current = false;
@@ -1450,6 +1438,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       id: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
+      startOffsetX: companionOffsetRef.current.x,
+      startOffsetY: companionOffsetRef.current.y,
+      bounds: latestBounds,
       lastPetX: event.clientX,
       lastPetY: event.clientY,
       lastPetAt: Date.now()
@@ -1457,9 +1448,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     event.currentTarget.setPointerCapture?.(event.pointerId);
     setIsPreparingCompanionDrag(true);
 
-    const latestBounds = calculateCompanionDragBounds();
     setCompanionDragBounds(latestBounds);
-    const holdDelay = 2000 + Math.floor(Math.random() * 650);
+    const holdDelay = 500;
     companionHoldTimerRef.current = window.setTimeout(() => {
       companionHoldTimerRef.current = null;
       if (!companionPointerRef.current || companionPointerRef.current.id !== event.pointerId) return;
@@ -1478,11 +1468,31 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     if (!pointer || pointer.id !== event.pointerId) return;
 
     if (companionDragArmedRef.current) {
+      event.preventDefault();
       if (!companionDragStartedRef.current) {
         companionDragStartedRef.current = true;
         draggedRef.current = true;
-        companionDragControls.start(event.nativeEvent, { snapToCursor: false });
+        setIsDraggingCompanion(true);
+        setIsHoldingCompanion(true);
+        setTravelMode("home");
+        setIsDragReturning(false);
       }
+      const nextOffset = clampCompanionOffset({
+        x: pointer.startOffsetX + event.clientX - pointer.startX,
+        y: pointer.startOffsetY + event.clientY - pointer.startY
+      }, pointer.bounds);
+      companionOffsetRef.current = nextOffset;
+      setCompanionOffset(nextOffset);
+      setDragReturnMotion({
+        x: nextOffset.x,
+        y: nextOffset.y,
+        rotate: 0,
+        scale: 1,
+        scaleX: 1,
+        scaleY: 1,
+        transition: { duration: 0 }
+      });
+      updateCompanionEdgeState(nextOffset.x, nextOffset.y);
       return;
     }
 
@@ -1503,14 +1513,77 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     }
   };
 
+  const completeCompanionDrag = (pointer: NonNullable<typeof companionPointerRef.current>) => {
+    const nextOffset = companionOffsetRef.current;
+    const movedFarEnough =
+      Math.abs(nextOffset.x - pointer.startOffsetX) > 12 ||
+      Math.abs(nextOffset.y - pointer.startOffsetY) > 12;
+
+    draggedRef.current = true;
+    setIsDraggingCompanion(false);
+    setIsHoldingCompanion(false);
+    saveCompanionPosition(currentUser?.id, nextOffset);
+
+    const now = Date.now();
+    const recentDrags = [...dragHistoryRef.current.filter(timestamp => now - timestamp < 45000)];
+    if (movedFarEnough) recentDrags.push(now);
+    dragHistoryRef.current = recentDrags;
+
+    const currentAngerThreshold = dragAngerThresholdRef.current;
+    const triggeredDragAnger = movedFarEnough && recentDrags.length >= currentAngerThreshold;
+    const selectedReturnStyle = triggeredDragAnger || isCompanionAngry
+      ? (["grumpy-wobble", "grumpy-stomp", "hot-streak"] as DragReturnStyle[])[Math.floor(Math.random() * 3)]
+      : (["steady-bounce", "orbit-swoop", "feather-float"] as DragReturnStyle[])[Math.floor(Math.random() * 3)];
+
+    setDragReturnStyle(selectedReturnStyle);
+    setIsDragReturning(true);
+    setDragReturnMotion(buildDragReturnMotion(selectedReturnStyle, nextOffset.x, nextOffset.y));
+    setReactionType(triggeredDragAnger || isCompanionAngry ? "error" : "subtle");
+    setMood(triggeredDragAnger || isCompanionAngry ? "sleepy" : (activeTierState?.mood || "happy"));
+
+    if (movedFarEnough && triggeredDragAnger) {
+      dragHistoryRef.current = [];
+      dragAngerThresholdRef.current = getRandomDragAngerThreshold();
+      triggerDragAnger();
+    } else if (movedFarEnough) {
+      setBubbleText(
+        pickCompanionLine(
+          isCompanionAngry
+            ? companionDialogue.dragReturnAngry
+            : recentDrags.length >= currentAngerThreshold - 2
+              ? companionDialogue.dragGettingDizzy
+              : companionDialogue.dragReturn
+        )
+      );
+      setShowBubble(true);
+    }
+
+    window.setTimeout(() => {
+      draggedRef.current = false;
+      setIsDragReturning(false);
+      setDragReturnMotion({
+        x: companionOffsetRef.current.x,
+        y: companionOffsetRef.current.y,
+        rotate: 0,
+        scale: 1,
+        scaleX: 1,
+        scaleY: 1,
+        transition: { duration: 0.01 }
+      });
+      setReactionType("none");
+    }, 1100);
+  };
+
   const finishCompanionPointerGesture = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (companionPointerRef.current?.id !== event.pointerId) return;
+    const pointer = companionPointerRef.current;
+    if (pointer?.id !== event.pointerId) return;
     clearCompanionHoldTimer();
+    if (companionDragStartedRef.current) completeCompanionDrag(pointer);
     companionPointerRef.current = null;
     companionDragArmedRef.current = false;
-    if (!isDraggingCompanion) companionDragStartedRef.current = false;
+    companionDragStartedRef.current = false;
     setIsPreparingCompanionDrag(false);
-    if (!isDraggingCompanion) setIsHoldingCompanion(false);
+    if (!draggedRef.current) setIsHoldingCompanion(false);
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -1735,8 +1808,9 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     return Math.min(maximum, Math.abs(Number(value) || 0) * 0.45);
   };
   const baseTravelAnimation = companionTravelAnimations[travelMode];
+  const hasCustomCompanionPosition = Math.abs(companionOffset.x) > 1 || Math.abs(companionOffset.y) > 1;
   const edgeSafeTravelAnimation =
-    travelMode === "home"
+    travelMode === "home" || hasCustomCompanionPosition
       ? { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
       : {
           scale: 1,
@@ -1745,7 +1819,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
           ...(isCompanionNearLeft ? { x: mapTravelAxisInward(baseTravelAnimation.x, 42) } : {}),
           ...(isBubbleBelow ? { y: mapTravelAxisInward(baseTravelAnimation.y, 36) } : {})
         };
-  const bubbleHorizontalShift = isCompanionNearLeft ? (window.innerWidth >= 768 ? 137 : 86) : 0;
+  const bubbleHorizontalShift = isCompanionNearLeft ? (window.innerWidth >= 768 ? 137 : 98) : 0;
 
   if (!companionVisible) return null;
 
@@ -1760,7 +1834,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         damping: 18, 
         delay: 0.8
       }}
-      className={`fixed ${currentUser ? "bottom-[102px] right-[23px] md:bottom-12 md:right-10" : "bottom-[30px] right-[23px] md:bottom-12 md:right-10"} z-40 flex max-w-[calc(100vw-1rem)] flex-col items-end pointer-events-none font-sans select-none`}
+      className={`fixed ${currentUser ? "bottom-[82px] right-4 md:bottom-12 md:right-10" : "bottom-6 right-4 md:bottom-12 md:right-10"} z-40 flex max-w-[calc(100vw-1rem)] flex-col items-end pointer-events-none font-sans select-none`}
     >
       {/* Dynamic Bubble text */}
       <motion.div
@@ -1775,7 +1849,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.82, filter: "blur(1px)" }}
             transition={{ duration: 0.28, ease: "easeOut" }}
-            className={`bg-white/98 text-slate-800 text-[10px] md:text-[11px] font-bold p-2.5 md:p-3 rounded-2xl border border-slate-100 shadow-xl max-w-[150px] md:max-w-[205px] pointer-events-auto leading-relaxed relative z-[90] flex flex-col gap-1 border-rose-50 ${
+            className={`bg-white/98 text-slate-800 text-[10px] md:text-[11px] font-bold p-2.5 md:p-3 rounded-2xl border border-slate-100 shadow-xl w-max max-w-[min(150px,calc(100vw-1rem))] md:max-w-[205px] overflow-visible break-words [overflow-wrap:anywhere] pointer-events-auto leading-relaxed relative z-[90] flex flex-col gap-1 border-rose-50 ${
               isCompanionNearLeft ? "items-start text-left" : "items-end text-right"
             } cursor-pointer`}
             id="companion-speech-bubble"
@@ -1822,104 +1896,11 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
         ref={draggableCompanionRef}
         className={`pointer-events-auto relative z-10 ${isBubbleBelow ? "order-1" : "order-2"}`}
         style={{ touchAction: "none", willChange: "transform" }}
-        drag
-        dragControls={companionDragControls}
-        dragListener={false}
-        dragConstraints={companionDragBounds}
-        dragElastic={0}
-        dragMomentum={false}
-        dragTransition={{ bounceStiffness: 420, bounceDamping: 34, power: 0, timeConstant: 100 }}
         animate={dragReturnMotion}
-        whileDrag={{ scale: 1.055, y: -4, rotate: [-1.5, 1.5, -1.5], transition: { duration: 0.75, repeat: Infinity, ease: "easeInOut" } }}
         onPointerDown={handleCompanionPointerDown}
         onPointerMove={handleCompanionPointerMove}
         onPointerUp={finishCompanionPointerGesture}
         onPointerCancel={finishCompanionPointerGesture}
-        onDragStart={() => {
-          draggedRef.current = true;
-          companionDragStartedRef.current = true;
-          setIsDraggingCompanion(true);
-          setIsPreparingCompanionDrag(false);
-          setIsHoldingCompanion(true);
-          setShowBubble(false);
-          clearCompanionReturnTimer();
-          setTravelMode("home");
-          setIsDragReturning(false);
-          setReactionType("subtle");
-          setMood("excited");
-        }}
-        onDragEnd={(_, info) => {
-          draggedRef.current = true;
-          setIsDraggingCompanion(false);
-          setIsHoldingCompanion(false);
-          companionDragArmedRef.current = false;
-          companionDragStartedRef.current = false;
-          const movedFarEnough = Math.abs(info.offset.x) > 12 || Math.abs(info.offset.y) > 12;
-          const rawNextOffset = {
-            x: companionOffsetRef.current.x + info.offset.x,
-            y: companionOffsetRef.current.y + info.offset.y
-          };
-          const latestBounds = calculateCompanionDragBounds(rawNextOffset);
-          const nextOffset = clampCompanionOffset(rawNextOffset, latestBounds);
-          setCompanionDragBounds(latestBounds);
-          companionOffsetRef.current = nextOffset;
-          setCompanionOffset(nextOffset);
-          updateCompanionEdgeState(nextOffset.x, nextOffset.y);
-          const now = Date.now();
-          const recentDrags = [...dragHistoryRef.current.filter(timestamp => now - timestamp < 45000)];
-          if (movedFarEnough) {
-            recentDrags.push(now);
-          }
-          dragHistoryRef.current = recentDrags;
-
-          const currentAngerThreshold = dragAngerThresholdRef.current;
-          const triggeredDragAnger = movedFarEnough && recentDrags.length >= currentAngerThreshold;
-          const selectedReturnStyle = triggeredDragAnger || isCompanionAngry
-            ? (["grumpy-wobble", "grumpy-stomp", "hot-streak"] as DragReturnStyle[])[
-                Math.floor(Math.random() * 3)
-              ]
-            : (["steady-bounce", "orbit-swoop", "feather-float"] as DragReturnStyle[])[
-                Math.floor(Math.random() * 3)
-              ];
-
-          setDragReturnStyle(selectedReturnStyle);
-          setIsDragReturning(true);
-          setDragReturnMotion(buildDragReturnMotion(selectedReturnStyle, nextOffset.x, nextOffset.y));
-          setReactionType(triggeredDragAnger || isCompanionAngry ? "error" : "subtle");
-          setMood(triggeredDragAnger || isCompanionAngry ? "sleepy" : (activeTierState?.mood || "happy"));
-
-          if (movedFarEnough && triggeredDragAnger) {
-            dragHistoryRef.current = [];
-            dragAngerThresholdRef.current = getRandomDragAngerThreshold();
-            triggerDragAnger();
-          } else if (movedFarEnough) {
-            setBubbleText(
-              pickCompanionLine(
-                isCompanionAngry
-                  ? companionDialogue.dragReturnAngry
-                  : recentDrags.length >= currentAngerThreshold - 2
-                    ? companionDialogue.dragGettingDizzy
-                    : companionDialogue.dragReturn
-              )
-            );
-            setShowBubble(true);
-          }
-          scheduleCompanionReturn();
-          window.setTimeout(() => {
-            draggedRef.current = false;
-            setIsDragReturning(false);
-            setDragReturnMotion({
-              x: companionOffsetRef.current.x,
-              y: companionOffsetRef.current.y,
-              rotate: 0,
-              scale: 1,
-              scaleX: 1,
-              scaleY: 1,
-              transition: { duration: 0.01 }
-            });
-            setReactionType("none");
-          }, 1100);
-        }}
       >
         <motion.div
           className={`${isDraggingCompanion || isHoldingCompanion ? "cursor-grabbing" : "cursor-pointer"} relative group flex items-center justify-center p-1 rounded-full transition-all duration-350 ${
@@ -1948,8 +1929,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
               : "0 0 11px rgba(148,163,184,0.13)"
           } : undefined}
           id="campus-companion-widget"
-          title="Slide to pet. Hold for 2 seconds, then move to reposition."
-          aria-label="Campus companion. Slide to pet, or hold for 2 seconds and move to reposition."
+          title="Slide to pet. Hold briefly, then move to reposition."
+          aria-label="Campus companion. Slide to pet, or hold briefly and move to reposition."
         >
         <AnimatePresence>
           {(isPreparingCompanionDrag || isHoldingCompanion) && (
@@ -2043,7 +2024,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
           />
         )}
 
-        <div className="relative w-14 h-14 md:w-17 md:h-17 flex items-center justify-center">
+        <div className="relative w-13 h-13 md:w-17 md:h-17 flex items-center justify-center">
           {/* Extremely Fluffy, Chubby Marshmallow Cat SVG */}
           <svg
             viewBox="0 0 100 100"

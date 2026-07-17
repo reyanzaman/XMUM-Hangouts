@@ -48,7 +48,7 @@ export const ChatWindow: React.FC = () => {
 
   if (!currentUser) {
     return (
-      <div id="chat-no-auth" className="rounded-[2rem] border border-rose-100 bg-gradient-to-br from-white to-rose-50/50 p-10 text-center shadow-sm">
+      <div id="chat-no-auth" className="rounded-[2rem] border border-slate-200 bg-white p-10 text-center shadow-sm">
         <MessageSquare className="mx-auto h-11 w-11 text-rose-500" />
         <h4 className="mt-3 font-black text-slate-800">Inbox locked</h4>
         <p className="mt-1 text-xs text-slate-400">Sign in to read your conversations.</p>
@@ -107,9 +107,7 @@ export const ChatWindow: React.FC = () => {
 
   if (myChats.length === 0) {
     return (
-      <div id="chat-system-empty" className="relative isolate flex min-h-[520px] flex-col items-center justify-center overflow-hidden rounded-[2rem] border border-rose-100 bg-gradient-to-br from-white via-[#fff1f6] to-[#fff5f8] p-8 text-center shadow-[0_20px_55px_-42px_rgba(236,72,120,0.28)]">
-        <div className="absolute -left-14 -top-14 h-40 w-40 rounded-full bg-rose-200/25 blur-3xl" />
-        <div className="absolute -bottom-16 -right-12 h-44 w-44 rounded-full bg-[#f9a8c4]/40 blur-3xl" />
+      <div id="chat-system-empty" className="relative flex min-h-[520px] flex-col items-center justify-center overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-8 text-center shadow-sm">
         <div className="relative mb-5 flex h-20 w-20 items-center justify-center rounded-[1.75rem] bg-white text-rose-500 shadow-sm ring-1 ring-rose-100">
           <Inbox className="h-9 w-9" />
           <Heart className="absolute -right-1 -top-1 h-5 w-5 fill-pink-400 text-pink-400" />
@@ -126,9 +124,9 @@ export const ChatWindow: React.FC = () => {
   }
 
   return (
-    <div id="chat-system-grid" className="flex h-[calc(100dvh-9rem)] min-h-[540px] max-h-[780px] overflow-hidden rounded-[2rem] border border-rose-100 bg-white font-sans shadow-[0_22px_60px_-44px_rgba(236,72,120,0.29)]">
-      <aside id="chat-sidebar" className={`${activeChatId ? "hidden md:flex" : "flex"} h-full w-full shrink-0 flex-col border-r border-rose-100 bg-gradient-to-b from-[#fff1f6] via-white to-[#fff5f8] md:w-[21rem] lg:w-[23rem]`}>
-        <div className="space-y-3 border-b border-rose-100 p-4 sm:p-5">
+    <div id="chat-system-grid" className="flex h-[calc(100dvh-9rem)] min-h-[540px] max-h-[780px] overflow-hidden rounded-[2rem] border border-slate-200 bg-white font-sans shadow-sm">
+      <aside id="chat-sidebar" className={`${activeChatId ? "hidden md:flex" : "flex"} h-full w-full shrink-0 flex-col border-r border-slate-200 bg-slate-50/50 md:w-[21rem] lg:w-[23rem]`}>
+        <div className="space-y-3 border-b border-slate-200 bg-white p-4 sm:p-5">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="flex items-center gap-2 text-base font-black tracking-tight text-slate-850"><Inbox className="h-4 w-4 text-rose-500" /> Inbox</h3>
@@ -149,7 +147,7 @@ export const ChatWindow: React.FC = () => {
             const unread = getUnreadCount(chat.id);
             const lastMessage = getLastMessage(chat.id);
             return (
-              <button key={chat.id} id={`chat-thread-btn-${chat.id}`} onClick={() => setActiveChatId(chat.id)} className={`relative flex w-full items-center gap-3 rounded-2xl border p-3 text-left outline-none transition-all duration-200 ${activeChatId === chat.id ? "border-rose-200 bg-gradient-to-r from-white to-rose-50 shadow-sm" : "border-transparent bg-white/55 hover:border-rose-100 hover:bg-white"}`}>
+              <button key={chat.id} id={`chat-thread-btn-${chat.id}`} onClick={() => setActiveChatId(chat.id)} className={`relative flex w-full items-center gap-3 rounded-2xl border p-3 text-left outline-none transition-all duration-200 ${activeChatId === chat.id ? "border-rose-200 bg-rose-50/60 shadow-sm" : "border-transparent bg-white hover:border-slate-200"}`}>
                 <AvatarSVG id={other.avatar_id} size={44} petCount={other.companion_pet_count} />
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 flex items-baseline justify-between gap-2">
@@ -158,7 +156,7 @@ export const ChatWindow: React.FC = () => {
                   </div>
                   <p className={`truncate pr-2 text-[11px] ${unread > 0 ? "font-bold text-slate-650" : "font-medium text-slate-400"}`}>{lastMessage?.content || "Start your conversation"}</p>
                 </div>
-                {unread > 0 && <span className="ml-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-gradient-to-br from-[#e34f78] to-[#f07b98] px-1 text-[9px] font-black text-white ring-2 ring-white">{unread}</span>}
+                {unread > 0 && <span className="ml-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-black text-white ring-2 ring-white">{unread}</span>}
               </button>
             );
           })}
@@ -171,7 +169,7 @@ export const ChatWindow: React.FC = () => {
       <section id="chat-message-window" className={`${activeChatId ? "flex" : "hidden md:flex"} relative h-full min-w-0 flex-1 flex-col bg-white`}>
         {activeChat && otherUser ? (
           <>
-            <header className="flex items-center justify-between gap-2 border-b border-rose-100 bg-white p-3.5 sm:px-5 sm:py-4">
+            <header className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white p-3.5 sm:px-5 sm:py-4">
               <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                 <button onClick={() => setActiveChatId(null)} className="shrink-0 rounded-xl p-1.5 text-slate-500 hover:bg-slate-100 md:hidden" title="Back to inbox"><ArrowLeft className="h-5 w-5" /></button>
                 <button type="button" onClick={() => setViewedProfile(otherUser)} className="group flex min-w-0 items-center gap-2.5 text-left outline-none">
@@ -183,19 +181,19 @@ export const ChatWindow: React.FC = () => {
             </header>
 
             {activeChat.hangout_id && (
-              <div className="flex items-start gap-2 border-b border-rose-100 bg-gradient-to-r from-[#fff1f6] to-[#fff5f8] px-4 py-2.5 text-[10px] font-semibold text-rose-700 sm:px-5">
+              <div className="flex items-start gap-2 border-b border-rose-100 bg-rose-50/60 px-4 py-2.5 text-[10px] font-semibold text-rose-700 sm:px-5">
                 <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-500" />
                 <span>Linked plan: <strong>{hangouts.find(hangout => hangout.id === activeChat.hangout_id)?.intention ? formatHangoutIntent(hangouts.find(hangout => hangout.id === activeChat.hangout_id)?.intention || "") : "This plan has ended"}</strong></span>
               </div>
             )}
 
-            <div className="flex-1 space-y-3 overflow-y-auto bg-[radial-gradient(circle_at_top_left,_rgba(255,228,230,0.5),_transparent_38%),linear-gradient(180deg,_#fff_0%,_#fafafa_100%)] p-3 sm:p-5">
+            <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50/40 p-3 sm:p-5">
               <AnimatePresence initial={false}>
                 {activeChatMessages.map(message => {
                   const isMe = message.sender_id === currentUser.id;
                   return (
                     <motion.div key={message.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 28 }} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                      <div className={`max-w-[84%] rounded-[1.35rem] px-3.5 py-2.5 text-xs shadow-sm sm:max-w-[72%] sm:px-4 sm:py-3 sm:text-sm ${isMe ? "rounded-br-md bg-gradient-to-br from-[#e34f78] via-[#ed6887] to-[#f59aae] text-white shadow-rose-100/70" : "rounded-bl-md border border-rose-100 bg-white text-slate-800"}`}>
+                      <div className={`max-w-[84%] rounded-[1.35rem] px-3.5 py-2.5 text-xs shadow-sm sm:max-w-[72%] sm:px-4 sm:py-3 sm:text-sm ${isMe ? "rounded-br-md bg-rose-500 text-white" : "rounded-bl-md border border-slate-200 bg-white text-slate-800"}`}>
                         <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
                         <span className={`mt-1.5 block text-right text-[8px] font-semibold ${isMe ? "text-rose-50" : "text-slate-350"}`}>{new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                       </div>
@@ -206,19 +204,19 @@ export const ChatWindow: React.FC = () => {
               <div ref={messagesEndRef} />
             </div>
 
-            <footer className="border-t border-rose-100 bg-white p-3 sm:p-4">
+            <footer className="border-t border-slate-200 bg-white p-3 sm:p-4">
               {isChatLocked ? (
                 <div className="flex items-center gap-2 rounded-2xl border border-rose-100 bg-rose-50 p-3 text-xs font-semibold text-rose-700"><ShieldAlert className="h-4 w-4 shrink-0" />{isBlockedByUser ? "Unblock this student to continue messaging." : "This conversation is currently unavailable."}</div>
               ) : (
                 <form onSubmit={handleSend} className="flex items-center gap-2 rounded-[1.35rem] border border-rose-100 bg-rose-50/35 p-1.5 transition-all focus-within:border-rose-300 focus-within:bg-white focus-within:ring-2 focus-within:ring-rose-100">
                   <input id="chat-text-input" value={typedMessage} onChange={event => setTypedMessage(event.target.value)} placeholder="Write a message" className="min-w-0 flex-grow bg-transparent px-3 py-2 text-xs text-slate-700 outline-none sm:text-sm" />
-                  <button id="chat-send-btn" type="submit" disabled={!typedMessage.trim()} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#e34f78] to-[#f07b98] text-white shadow-sm transition-all hover:brightness-95 active:scale-95 disabled:cursor-not-allowed disabled:from-slate-200 disabled:to-slate-200" title="Send message"><Send className="h-4 w-4" /></button>
+                  <button id="chat-send-btn" type="submit" disabled={!typedMessage.trim()} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-rose-500 text-white shadow-sm transition-all hover:bg-rose-600 active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-200" title="Send message"><Send className="h-4 w-4" /></button>
                 </form>
               )}
             </footer>
           </>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center bg-gradient-to-br from-white via-[#fff1f6] to-[#fff5f8] p-8 text-center">
+          <div className="flex flex-1 flex-col items-center justify-center bg-slate-50/50 p-8 text-center">
             <span className="relative mb-4 flex h-16 w-16 items-center justify-center rounded-3xl border border-rose-100 bg-white text-rose-500 shadow-sm"><MessageSquare className="h-7 w-7" /><Heart className="absolute -right-1 -top-1 h-4 w-4 text-pink-400" /></span>
             <h4 className="text-sm font-black text-slate-800 sm:text-base">Choose a conversation</h4>
             <p className="mt-1.5 max-w-[260px] text-xs leading-relaxed text-slate-400">Pick a student from your inbox to continue planning together.</p>

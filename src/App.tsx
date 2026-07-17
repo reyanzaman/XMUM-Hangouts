@@ -72,7 +72,6 @@ import {
 
 const SYSTEM_DELETED_USER_ID = "deleted_user";
 const RECENT_HANGOUT_WINDOW_MONTHS = 2;
-const adminChooserPositionStorageKey = "xmum_admin_chooser_position";
 const onboardingSlides = [
   {
     title: "Find your campus circle",
@@ -103,27 +102,6 @@ const onboardingSlides = [
     points: ["PII privacy shield", "Reporting and blocking tools", "Settings available in your profile"]
   }
 ] as const;
-type FloatingPosition = { x: number; y: number };
-const defaultAdminChooserPosition: FloatingPosition = { x: 0, y: 0 };
-
-const clampAdminChooserPosition = (position: FloatingPosition): FloatingPosition => ({
-  x: Math.min(Math.max(0, position.x), Math.max(0, window.innerWidth - 164)),
-  y: Math.min(0, Math.max(-Math.max(0, window.innerHeight - 64), position.y))
-});
-
-const getStoredAdminChooserPosition = (): FloatingPosition => {
-  try {
-    const stored = JSON.parse(localStorage.getItem(adminChooserPositionStorageKey) || "null");
-    const x = Number(stored?.x);
-    const y = Number(stored?.y);
-    return clampAdminChooserPosition({
-      x: Number.isFinite(x) ? x : defaultAdminChooserPosition.x,
-      y: Number.isFinite(y) ? y : defaultAdminChooserPosition.y
-    });
-  } catch {
-    return { ...defaultAdminChooserPosition };
-  }
-};
 const LOCKED_MEETING_POINT_MARKERS = [
   "apply and get accepted to unlock",
   "visible after the host approves your request"
@@ -360,7 +338,6 @@ const AppContent: React.FC = () => {
     adminReviewReport,
     adminReviewAppeal,
     isEligibleForHangout,
-    triggerCronJobs,
     showOnboarding,
     onboardingStep,
     setOnboardingStep,
@@ -404,11 +381,6 @@ const AppContent: React.FC = () => {
 
   // Navigation states
   const [activeTab, setActiveTab] = useState<"feed" | "create" | "profile" | "my-plans" | "chats" | "admin" | "terms" | "privacy" | "safety" | "about" | "donation" | "bug-report" | "get-app">("feed");
-  const adminToolProfiles = Array.from(
-    new Map<string, Profile>(
-      [...ADMIN_TOOL_TEST_PROFILES, ...profiles].map(profile => [profile.id, profile])
-    ).values()
-  );
   const [portalSubTab, setPortalSubTab] = useState<"hosted" | "requested">("hosted");
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showMobileInstallPrompt, setShowMobileInstallPrompt] = useState(false);
@@ -658,8 +630,6 @@ const AppContent: React.FC = () => {
   const [showAppealModal, setShowAppealModal] = useState(false);
   const [appealText, setAppealText] = useState("");
 
-  // Developer / Assessor debug state toggle
-  const [showTesterTools, setShowTesterTools] = useState(false);
   const [isLoginLoading, setIsLoginLoading] = useState(false);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
@@ -671,34 +641,6 @@ const AppContent: React.FC = () => {
   const [showPasswordResetHelp, setShowPasswordResetHelp] = useState(false);
   const [showNavLogoutConfirm, setShowNavLogoutConfirm] = useState(false);
   const [adminAnalyticsRange, setAdminAnalyticsRange] = useState<"daily" | "weekly" | "monthly" | "yearly" | "lifetime">("monthly");
-  const [adminChooserPosition, setAdminChooserPosition] = useState<FloatingPosition>(getStoredAdminChooserPosition);
-  const adminChooserPositionRef = useRef(adminChooserPosition);
-  const adminChooserDraggedRef = useRef(false);
-
-  useEffect(() => {
-    adminChooserPositionRef.current = adminChooserPosition;
-    try {
-      localStorage.setItem(adminChooserPositionStorageKey, JSON.stringify(adminChooserPosition));
-    } catch {
-      // Keep the chooser usable for this session when storage is unavailable.
-    }
-  }, [adminChooserPosition]);
-
-  useEffect(() => {
-    const keepAdminChooserInView = () => {
-      const nextPosition = clampAdminChooserPosition(adminChooserPositionRef.current);
-      if (
-        nextPosition.x !== adminChooserPositionRef.current.x ||
-        nextPosition.y !== adminChooserPositionRef.current.y
-      ) {
-        adminChooserPositionRef.current = nextPosition;
-        setAdminChooserPosition(nextPosition);
-      }
-    };
-
-    window.addEventListener("resize", keepAdminChooserInView);
-    return () => window.removeEventListener("resize", keepAdminChooserInView);
-  }, []);
 
   const minimumCreateDateTime = getRoundedMinimumTime();
   const minimumCreateDate = formatDateInputValue(minimumCreateDateTime);
@@ -2373,7 +2315,9 @@ const AppContent: React.FC = () => {
             .map(profile => [normalizeProfileEmail(profile.email), profile])
         );
         const countableProfiles = Array.from(allRealProfilesByEmail.values());
-        const statsProfiles = countableProfiles.filter(profile => !profile.is_admin);
+        const statsProfiles = countableProfiles.filter(
+          profile => !profile.is_admin && !matchesPrimaryAdminEmail(profile.email)
+        );
         const activityProfileIds = new Set(countableProfiles.map(profile => profile.id));
         const testUsersCount = testProfilesByEmail.size;
         const nowTimestamp = Date.now();
@@ -2393,11 +2337,12 @@ const AppContent: React.FC = () => {
         const totalUsersCount = countableProfiles.length;
         const demographicsProfiles = countableProfiles;
         const demographicsUsersCount = demographicsProfiles.length;
-        const totalCompanionPets = countableProfiles.reduce(
+        const companionStatsProfiles = statsProfiles;
+        const totalCompanionPets = companionStatsProfiles.reduce(
           (sum, profile) => sum + Math.max(0, Number(profile.companion_pet_count || 0)),
           0
         );
-        const topCompanionProfile = [...countableProfiles].sort(
+        const topCompanionProfile = [...companionStatsProfiles].sort(
           (a, b) => Number(b.companion_pet_count || 0) - Number(a.companion_pet_count || 0)
         )[0] || null;
         const highestCompanionPets = Math.max(0, Number(topCompanionProfile?.companion_pet_count || 0));
@@ -2692,7 +2637,7 @@ const AppContent: React.FC = () => {
                       <div className="flex items-center justify-between gap-3">
                         <span>Average per real profile</span>
                         <strong className="text-gray-900">
-                          {countableProfiles.length > 0 ? Math.round(totalCompanionPets / countableProfiles.length) : 0}
+                          {companionStatsProfiles.length > 0 ? Math.round(totalCompanionPets / companionStatsProfiles.length) : 0}
                         </strong>
                       </div>
                       <div className="flex items-center justify-between gap-3">
@@ -2705,7 +2650,7 @@ const AppContent: React.FC = () => {
                     <div className="mt-4 border-t border-slate-200/70 pt-3">
                       <p className="mb-2 text-[9px] font-black uppercase tracking-wider text-slate-400">Pets by student</p>
                       <div className="max-h-44 space-y-1.5 overflow-y-auto pr-1">
-                        {[...countableProfiles]
+                        {[...companionStatsProfiles]
                           .sort((a, b) => Number(b.companion_pet_count || 0) - Number(a.companion_pet_count || 0) || a.name.localeCompare(b.name))
                           .map(profile => (
                             <div key={profile.id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-2.5 py-2 shadow-sm">
@@ -3123,17 +3068,17 @@ const AppContent: React.FC = () => {
     <div className="min-h-screen w-full max-w-full overflow-x-clip bg-slate-50 text-slate-850 font-sans flex flex-col justify-between">
       {/* Navbar section with optimized vertical padding and responsive alignments */}
       <header className="sticky top-0 z-40 w-full max-w-full bg-white border-b border-gray-100/90 shadow-sm/5">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5 sm:pt-[22px] sm:pb-5.5 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto min-h-16 px-4 sm:px-6 lg:px-8 py-3 sm:pt-[22px] sm:pb-5.5 flex items-center justify-between gap-3">
           
           {/* Logo on the left - cleaner and responsive */}
           <button
             id="nav-logo-btn"
             onClick={() => setActiveTab("feed")}
-            className="flex items-center gap-2 pb-0 sm:gap-3 sm:pb-1 outline-none text-left hover:scale-[1.01] active:scale-95 transition-all duration-200 shrink-0"
+            className="flex min-w-0 items-center gap-1.5 pb-0 sm:gap-3 sm:pb-1 outline-none text-left hover:scale-[1.01] active:scale-95 transition-all duration-200 shrink"
           >
             {currentUser && <Logo size="sm" />}
             <div>
-              <span className="font-display font-black text-[15px] sm:text-lg text-gray-950 tracking-tight block sm:pt-1.25">XMUM Hangouts</span>
+              <span className="font-display font-black text-sm min-[380px]:text-[15px] sm:text-lg text-gray-950 tracking-tight block whitespace-nowrap sm:pt-1.25">XMUM Hangouts</span>
             </div>
           </button>
 
@@ -3202,7 +3147,7 @@ const AppContent: React.FC = () => {
               )}
 
               {/* User profile / Actions triggers on the right */}
-              <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+              <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                 <NotificationBell onOpenNotification={handleNotificationOpen} />
                 <button
                   id="nav-profile-card-btn"
@@ -3297,110 +3242,6 @@ const AppContent: React.FC = () => {
           )}
         </AnimatePresence>
       </main>
-
-      {/* Peer Switcher and Tester tools for admin only */}
-      {currentUser?.is_admin && !showTesterTools && (
-        <motion.button
-          drag
-          dragMomentum={false}
-          dragElastic={0.04}
-          dragConstraints={{
-            left: 0,
-            right: Math.max(0, window.innerWidth - 164),
-            top: -Math.max(0, window.innerHeight - 64),
-            bottom: 0
-          }}
-          animate={{ x: adminChooserPosition.x, y: adminChooserPosition.y }}
-          onPointerDown={() => {
-            adminChooserDraggedRef.current = false;
-          }}
-          onDragStart={() => {
-            adminChooserDraggedRef.current = true;
-          }}
-          onDragEnd={(_, info) => {
-            const nextPosition = {
-              x: Math.min(
-                Math.max(0, adminChooserPositionRef.current.x + info.offset.x),
-                Math.max(0, window.innerWidth - 164)
-              ),
-              y: Math.min(
-                0,
-                Math.max(-Math.max(0, window.innerHeight - 64), adminChooserPositionRef.current.y + info.offset.y)
-              )
-            };
-            adminChooserPositionRef.current = nextPosition;
-            setAdminChooserPosition(nextPosition);
-            try {
-              localStorage.setItem(adminChooserPositionStorageKey, JSON.stringify(nextPosition));
-            } catch {
-              // The chooser still remains movable for this session.
-            }
-          }}
-          onClick={() => {
-            if (adminChooserDraggedRef.current) {
-              adminChooserDraggedRef.current = false;
-              return;
-            }
-            setShowTesterTools(true);
-          }}
-          whileDrag={{ scale: 1.03 }}
-          className="fixed bottom-3 left-3 bg-slate-900 border border-slate-850 text-rose-400 hover:text-rose-300 hover:bg-slate-800 active:scale-95 text-[11px] font-black px-3.5 py-2 rounded-xl z-50 transition-colors flex items-center gap-1.5 cursor-grab active:cursor-grabbing shadow-lg pointer-events-auto touch-none"
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse"></span>
-          Admin Chooser ▾
-        </motion.button>
-      )}
-
-      {showTesterTools && currentUser?.is_admin && (
-        <div id="assessor-tools-container" className="fixed bottom-0 left-0 right-0 bg-slate-950 border-t border-slate-800 text-slate-300 py-3.5 px-4 z-50 text-xs font-sans">
-          <div className="max-w-7xl mx-auto flex flex-col md:flex-row gap-3 items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="bg-rose-500 text-[10px] uppercase font-bold text-white px-2 py-0.5 rounded">Admin Dashboard Chooser</span>
-              <p className="text-[11px] text-slate-400">
-                Swap between seeded classmate profiles to check dual peer chats, approvals, reports.
-              </p>
-            </div>
-          
-            <div className="flex flex-wrap gap-2 items-center">
-              {adminToolProfiles.map(p => (
-                <button
-                  id={`tester-user-switch-${p.id}`}
-                  key={p.id}
-                  onClick={() => {
-                    switchUser(p.id);
-                    // Clear state to feed on switch so it's fresh
-                    setActiveTab("feed");
-                  }}
-                  className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer ${
-                    currentUser?.id === p.id
-                      ? "bg-rose-500 text-white border-rose-500 font-extrabold"
-                      : "bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white"
-                  }`}
-                >
-                  {p.name} {p.is_admin ? "⭐" : ""}
-                </button>
-              ))}
-          
-              <button
-                id="tester-cron-trigger"
-                onClick={triggerCronJobs}
-                className="px-2.5 py-1.5 rounded-lg bg-teal-500 hover:bg-teal-600 text-white font-bold text-[11px] cursor-pointer"
-                title="Expire past events & trigger notifications"
-              >
-                Cron Check
-              </button>
-          
-              <button
-                onClick={() => setShowTesterTools(false)}
-                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold text-[11px] cursor-pointer transition-all transition-colors flex items-center gap-1"
-                title="Collapse chooser dashboard"
-              >
-                Collapse ▴
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
          {/* Footer sections */}
       <footer className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 mt-auto border-t border-gray-100 py-4 pb-26 sm:py-6 text-center text-[10px] sm:text-[11px] text-slate-400 space-y-2 sm:space-y-3 w-full">
@@ -4225,7 +4066,7 @@ const AppContent: React.FC = () => {
 
       {/* Mobile Sticky Bottom Navigation Bar for flawless responsiveness */}
       {currentUser && currentUser.is_profile_complete && (
-        <nav className="fixed bottom-0 left-0 right-0 z-40 h-[72px] w-full max-w-full overflow-hidden bg-white border-t border-gray-100/80 shadow-[0_-5px_15px_rgba(0,0,0,0.03)] px-4 py-1.5 pb-2 flex justify-around items-center md:hidden">
+        <nav className="fixed bottom-0 left-0 right-0 z-40 h-16 w-full max-w-full overflow-hidden bg-white border-t border-gray-100/80 shadow-[0_-5px_15px_rgba(0,0,0,0.03)] px-4 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] flex justify-around items-center md:hidden">
           <button
             onClick={() => {
               setActiveTab("feed");

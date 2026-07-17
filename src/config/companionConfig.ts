@@ -1265,6 +1265,158 @@ export const companionTierStates: CompanionTierState[] = [
   }
 ];
 
+const companionPoseDialogueVariations: Record<CompanionPose, readonly string[]> = {
+  rest: [
+    "Tiny paws tucked in. This is a very official cozy pause.",
+    "I am loafing with excellent posture and one soft thought.",
+    "Quiet mode activated. My whiskers are still on duty."
+  ],
+  bounce: [
+    "Boing. That hop was small, but the enthusiasm was enormous.",
+    "My paws found an extra pocket of bounce today.",
+    "One happy hop for luck, and another because it was cute."
+  ],
+  fly: [
+    "I am floating carefully so none of my fluff gets left behind.",
+    "Tiny sky patrol is gliding over the page.",
+    "My wings are carrying one very gentle campus wish."
+  ],
+  wiggle: [
+    "A tiny wiggle escaped. I regret absolutely nothing.",
+    "Tail check: swishy. Whisker check: delighted.",
+    "I am wiggling with quiet professional confidence."
+  ],
+  shimmy: [
+    "This shoulder shimmy has been approved by the tiny dance committee.",
+    "Left paw, right paw, one very fluffy little groove.",
+    "I added a soft shimmy to make the moment sparkle."
+  ],
+  spin: [
+    "A neat little spin keeps all my happy thoughts evenly mixed.",
+    "Round and round, but still extremely dignified.",
+    "I completed one sparkle-powered turn without losing my fluff."
+  ],
+  snuggle: [
+    "I saved the coziest corner of this moment for you, {name}.",
+    "Snuggle formation complete. Everything feels softer now.",
+    "I tucked my paws close and sent you one warm little purr."
+  ],
+  stretch: [
+    "Long paws, round cheeks, very serious stretching business.",
+    "I stretched all the way from one tiny toe bean to the other.",
+    "A gentle stretch keeps my campus-helper fluff ready."
+  ],
+  peek: [
+    "Peek. I was checking whether the page needed more cuteness.",
+    "I found a curious little corner and inspected it with both whiskers.",
+    "Just peeking in to make sure you are doing okay, {name}."
+  ],
+  dash: [
+    "Tiny paws at maximum zoom, heart still set to gentle.",
+    "I dashed over because something felt exciting and possibly snack-shaped.",
+    "Fast fluff delivery complete. I am catching my tiny breath now."
+  ],
+  orbit: [
+    "I am orbiting one bright thought until it becomes a plan.",
+    "Round the page I go, keeping every little star in formation.",
+    "My orbit is smooth, cozy, and only slightly showy."
+  ],
+  curtsy: [
+    "One careful curtsy, presented with my very best paw placement.",
+    "I practiced this bow until even my ribbon looked impressed.",
+    "A tiny elegant hello for you, {name}."
+  ],
+  walk: [
+    "Three tiny steps forward. That counts as a campus expedition.",
+    "I am taking my fluff for a calm and important little walk.",
+    "Soft paws, steady pace, curious whiskers."
+  ],
+  study: [
+    "I bookmarked the coziest idea so we can return to it later.",
+    "My study face is serious, but my toe beans are still adorable.",
+    "One tiny page at a time, {name}. We have got this."
+  ],
+  cook: [
+    "I stirred two warm thoughts and one brave idea into the pot.",
+    "The tiny kitchen smells like comfort and imaginary biscuits.",
+    "Chef paws are preparing a perfectly cozy little plan."
+  ],
+  exercise: [
+    "One, two, tiny paw lift. Fitness has never looked this fluffy.",
+    "I completed a whole miniature workout and deserve a proud blink.",
+    "Strong paws, soft heart, excellent little form."
+  ],
+  golf: [
+    "I lined up the tiniest putt with extremely serious whiskers.",
+    "Soft swing, steady paws, and one hopeful little bounce.",
+    "The ball went somewhere charming. I am calling that a win."
+  ]
+};
+
+const companionPoseAnimationVariations: Record<CompanionPose, readonly CompanionPose[]> = {
+  rest: ["rest", "peek", "stretch", "snuggle"],
+  bounce: ["bounce", "wiggle", "spin", "stretch"],
+  fly: ["fly", "orbit", "peek", "stretch"],
+  wiggle: ["wiggle", "shimmy", "bounce", "snuggle"],
+  shimmy: ["shimmy", "wiggle", "spin", "curtsy"],
+  spin: ["spin", "orbit", "wiggle", "curtsy"],
+  snuggle: ["snuggle", "stretch", "peek", "rest"],
+  stretch: ["stretch", "wiggle", "snuggle", "walk"],
+  peek: ["peek", "walk", "wiggle", "snuggle"],
+  dash: ["dash", "walk", "bounce", "stretch"],
+  orbit: ["orbit", "spin", "fly", "curtsy"],
+  curtsy: ["curtsy", "spin", "snuggle", "walk"],
+  walk: ["walk", "peek", "stretch", "dash"],
+  study: ["study", "peek", "stretch", "snuggle"],
+  cook: ["cook", "shimmy", "stretch", "curtsy"],
+  exercise: ["exercise", "stretch", "bounce", "wiggle"],
+  golf: ["golf", "stretch", "walk", "curtsy"]
+};
+
+const companionTravelByPose: Partial<Record<CompanionPose, readonly CompanionTravel[]>> = {
+  bounce: ["hop-out", "peek-up"],
+  fly: ["orbit-loop", "peek-up"],
+  peek: ["peek-left", "peek-up"],
+  dash: ["stroll-right", "hop-out"],
+  orbit: ["orbit-loop", "peek-up"],
+  walk: ["stroll-right", "peek-left"]
+};
+
+export function getCompanionStateDialogueLines(state?: CompanionTierState): string[] {
+  if (!state) {
+    return [
+      ...companionBaseStateOption.ambientLines,
+      ...companionPoseDialogueVariations.rest,
+      "Original Sprout mode is keeping things simple, soft, and kind."
+    ];
+  }
+
+  return Array.from(new Set([
+    ...state.ambientLines,
+    `${state.name} mode is ready for one tiny, cozy adventure.`,
+    `I gave my ${state.name} look a careful fluff-check. Everything is adorable.`,
+    `A little ${state.name} magic for you, {name}.`,
+    ...companionPoseDialogueVariations[state.pose]
+  ]));
+}
+
+export function getCompanionStateActions(state?: CompanionTierState): CompanionAction[] {
+  const dialogueLines = getCompanionStateDialogueLines(state);
+  const basePose = state?.pose || "rest";
+  const poses = companionPoseAnimationVariations[basePose];
+  const travels = companionTravelByPose[basePose] || ["home", "peek-left", "peek-up"];
+
+  return dialogueLines.map((text, index) => ({
+    text,
+    pose: poses[index % poses.length],
+    mood: index % 4 === 1 ? "excited" : index % 4 === 2 ? "bouncy" : (state?.mood || "happy"),
+    accessory: state?.accessory || "none",
+    travel: index % 3 === 0 ? travels[index % travels.length] : "home",
+    speechChance: index < 3 ? 0.22 : 0.14,
+    durationMs: 3900 + (index % 4) * 550
+  }));
+}
+
 export const companionRandomActions: CompanionAction[] = [
   { text: "I am stretching my tiny soft paws.", pose: "stretch", mood: "happy", accessory: "none", speechChance: 0.08 },
   { text: "Doing a tiny shoulder shimmy because the mood feels right.", pose: "shimmy", mood: "happy", accessory: "none", speechChance: 0.08 },
