@@ -75,5 +75,5 @@ test("selected 2000-pet borders preserve regular and companion avatar ids", () =
 
   assert.deepEqual(decodeAvatarSelection(regular), { avatarId: "fox", borderId: "heart-nebula" });
   assert.equal(getCompanionStateIdFromAvatar(companion), "base-sprout");
-  assert.equal(getAvatarBorderReward(2000, "starlight-gala")?.name, "Starlight Gala");
+  assert.equal(getAvatarBorderReward(2000, "starlight-gala")?.name, "Midnight Constellation");
 });
