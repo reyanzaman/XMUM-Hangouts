@@ -276,9 +276,9 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
   return (
     <div
       id={`hangout-card-${hangout.id}`}
-      className={`border rounded-3xl p-5 shadow-sm transition-all duration-250 flex flex-col justify-between h-full relative ${
+      className={`border rounded-3xl p-5 shadow-sm transition-all duration-250 flex flex-col justify-between h-full relative ${showLikers ? "z-30" : "z-0"} ${
         isExpired
-          ? "bg-slate-50/45 border-slate-200/60 opacity-55 saturate-50 contrast-85 shadow-none select-none"
+          ? "bg-slate-50/80 border-slate-200/60 shadow-none select-none"
           : "bg-white border-gray-100 hover:shadow-md"
       }`}
     >
@@ -601,7 +601,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
                 </button>
 
                 {showLikers && (
-                  <div className="absolute left-0 top-full z-20 mt-2 w-64 rounded-2xl border border-slate-100 bg-white p-3 shadow-xl">
+                  <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-2xl border border-slate-200 bg-white p-3 text-slate-900 opacity-100 shadow-2xl saturate-100 contrast-100">
                     <div className="mb-2 flex items-center gap-2">
                       <Heart className="h-3.5 w-3.5 fill-rose-500 text-rose-500" />
                       <p className="text-[11px] font-black text-slate-700">Liked by</p>

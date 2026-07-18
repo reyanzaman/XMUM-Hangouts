@@ -600,6 +600,7 @@ const AppContent: React.FC = () => {
     genders: [] as string[]
   });
   const [showHostedPastPlans, setShowHostedPastPlans] = useState(false);
+  const [showRequestedPastPlans, setShowRequestedPastPlans] = useState(false);
   const [editingHangoutId, setEditingHangoutId] = useState<string | null>(null);
   const [editLocation, setEditLocation] = useState("");
   const [editDate, setEditDate] = useState("");
@@ -1054,9 +1055,15 @@ const AppContent: React.FC = () => {
   const myCreatedHangouts = currentUser 
     ? hangouts.filter(h => h.creator_id === currentUser.id) 
     : [];
+  const activeCreatedHangouts = myCreatedHangouts.filter(h => getEffectiveHangoutStatus(h) === "active");
   const visibleHostedHangouts = myCreatedHangouts.filter(h =>
     showHostedPastPlans ? true : getEffectiveHangoutStatus(h) === "active"
   );
+  const activeApplications = myApplications.filter(application => {
+    const relatedHangout = hangouts.find(hangout => hangout.id === application.hangout_id);
+    return relatedHangout ? getEffectiveHangoutStatus(relatedHangout) === "active" : false;
+  });
+  const visibleApplications = showRequestedPastPlans ? myApplications : activeApplications;
 
   // Active unread messages indicator count
   const myUnreadMsgsCount = currentUser ? messages.filter(m => {
@@ -1113,8 +1120,12 @@ const AppContent: React.FC = () => {
   const navigateToMyPlansTarget = (hangoutId?: string, options?: { revealExpired?: boolean }) => {
     const nextSubTab = resolveMyPlansSubTab(hangoutId);
     setPortalSubTab(nextSubTab);
-    if (options?.revealExpired && nextSubTab === "hosted") {
-      setShowHostedPastPlans(true);
+    if (options?.revealExpired) {
+      if (nextSubTab === "hosted") {
+        setShowHostedPastPlans(true);
+      } else {
+        setShowRequestedPastPlans(true);
+      }
     }
     setNotificationTarget(null);
     setActiveTab("my-plans");
@@ -1808,9 +1819,6 @@ const AppContent: React.FC = () => {
               <div>
                 <h1 className="text-xl sm:text-2xl font-display font-black text-slate-800 tracking-tight flex items-center gap-2">
                   <span>My Hangouts Portal</span>
-                  <span className="text-xs bg-rose-500 text-white font-black px-2 py-0.5 rounded-full">
-                    {myCreatedHangouts.length + myApplications.length} Total
-                  </span>
                 </h1>
                 <p className="text-xs text-slate-500 mt-1 max-w-xl">
                   Manage your active campus plans, evaluate attendee requests, and monitor your submitted join invitations.
@@ -1829,7 +1837,7 @@ const AppContent: React.FC = () => {
                       : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
-                  Hosted ({myCreatedHangouts.length})
+                  Hosted ({activeCreatedHangouts.length})
                 </button>
                 <button
                   type="button"
@@ -1841,7 +1849,7 @@ const AppContent: React.FC = () => {
                       : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
-                  Requests ({myApplications.length})
+                  Requests ({activeApplications.length})
                 </button>
               </div>
             </div>
@@ -1859,7 +1867,7 @@ const AppContent: React.FC = () => {
                 >
                   <div className="flex items-center justify-between px-1">
                     <h2 className="text-xs sm:text-sm font-black text-slate-700 tracking-tight uppercase">
-                      Posted Hangout Plans ({visibleHostedHangouts.length})
+                      Posted Hangout Plans ({activeCreatedHangouts.length})
                     </h2>
                     <button
                       type="button"
@@ -2065,20 +2073,35 @@ const AppContent: React.FC = () => {
                 >
                   <div className="flex items-center justify-between px-1">
                     <h2 className="text-xs sm:text-sm font-black text-slate-700 tracking-tight uppercase">
-                      Match Requests Sent ({myApplications.length})
+                      Match Requests Sent ({activeApplications.length})
                     </h2>
+                    <button
+                      type="button"
+                      onClick={() => setShowRequestedPastPlans(!showRequestedPastPlans)}
+                      className={`text-[11px] font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                        showRequestedPastPlans
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      {showRequestedPastPlans ? "Hide Past Requests" : "Show Past Requests"}
+                    </button>
                   </div>
 
-                  {myApplications.length === 0 ? (
+                  {visibleApplications.length === 0 ? (
                     <div className="flex flex-col items-center justify-center space-y-4 rounded-[1.9rem] border border-gray-100 bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.08),_transparent_48%),linear-gradient(180deg,_rgba(255,255,255,1),_rgba(255,250,251,0.92))] p-8 text-center shadow-sm">
                       <div className="relative flex h-14 w-14 items-center justify-center rounded-[1.25rem] border border-rose-100 bg-white text-transparent shadow-sm">
                         <Search className="absolute h-6 w-6 text-rose-500" />
                         🌟
                       </div>
                       <div>
-                        <h3 className="text-sm font-extrabold text-slate-700">No active match requests</h3>
+                        <h3 className="text-sm font-extrabold text-slate-700">
+                          {myApplications.length === 0 ? "No match requests yet" : "No active match requests"}
+                        </h3>
                         <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-gray-400">
-                          You haven't submitted any hangout requests yet. Browse the home feed to discover other active student plans!
+                          {myApplications.length === 0
+                            ? "You haven't submitted any hangout requests yet. Browse the home feed to discover other active student plans!"
+                            : "Turn on past requests to review requests for expired or cancelled hangouts."}
                         </p>
                       </div>
                       <button
@@ -2091,12 +2114,13 @@ const AppContent: React.FC = () => {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-4">
-                      {myApplications.map(app => {
+                      {visibleApplications.map(app => {
                         const hangoutItem = hangouts.find(h => h.id === app.hangout_id);
                         if (!hangoutItem) return null;
 
                         const planner = profiles.find(p => p.id === hangoutItem.creator_id);
                         const isMeetingPointCorrupted = isLockedMeetingPointPlaceholder(hangoutItem.meeting_point);
+                        const requestedHangoutStatus = getEffectiveHangoutStatus(hangoutItem);
 
                         return (
                           <details
@@ -2108,6 +2132,11 @@ const AppContent: React.FC = () => {
                               <div className="flex flex-col gap-4 border-b border-gray-50 pb-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div className="space-y-2">
                                   <div className="flex flex-wrap items-center gap-2">
+                                    {requestedHangoutStatus !== "active" && (
+                                      <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.22em] text-slate-500">
+                                        {requestedHangoutStatus}
+                                      </span>
+                                    )}
                                     <span className={`text-[9px] font-black uppercase tracking-[0.22em] px-2.5 py-1 rounded-full border ${
                                       app.status === "pending"
                                         ? "bg-amber-50 text-amber-600 border-amber-100"
@@ -2315,18 +2344,14 @@ const AppContent: React.FC = () => {
             .map(profile => [normalizeProfileEmail(profile.email), profile])
         );
         const countableProfiles = Array.from(allRealProfilesByEmail.values());
-        const statsProfiles = countableProfiles.filter(
-          profile => !profile.is_admin && !matchesPrimaryAdminEmail(profile.email)
-        );
         const activityProfileIds = new Set(countableProfiles.map(profile => profile.id));
         const testUsersCount = testProfilesByEmail.size;
         const nowTimestamp = Date.now();
-        const expirationThresholdMs = 24 * 60 * 60 * 1000;
         const isEffectivelyExpired = (hangout: Hangout) => {
           if (hangout.status === "cancelled") return false;
           if (hangout.status === "expired") return true;
           const eventTime = getHangoutEventTime(hangout);
-          return eventTime !== null && eventTime < (nowTimestamp - expirationThresholdMs);
+          return eventTime !== null && eventTime <= nowTimestamp;
         };
         const totalActive = hangouts.filter(
           h => activityProfileIds.has(h.creator_id) && h.status !== "cancelled" && !isEffectivelyExpired(h)
@@ -2337,7 +2362,7 @@ const AppContent: React.FC = () => {
         const totalUsersCount = countableProfiles.length;
         const demographicsProfiles = countableProfiles;
         const demographicsUsersCount = demographicsProfiles.length;
-        const companionStatsProfiles = statsProfiles;
+        const companionStatsProfiles = countableProfiles;
         const totalCompanionPets = companionStatsProfiles.reduce(
           (sum, profile) => sum + Math.max(0, Number(profile.companion_pet_count || 0)),
           0
@@ -2346,7 +2371,6 @@ const AppContent: React.FC = () => {
           (a, b) => Number(b.companion_pet_count || 0) - Number(a.companion_pet_count || 0)
         )[0] || null;
         const highestCompanionPets = Math.max(0, Number(topCompanionProfile?.companion_pet_count || 0));
-        const showingAdminFallbackStats = statsProfiles.length === 0 && countableProfiles.length > 0;
         const pendingReportsList = reports.filter(r => r.status === "pending");
         const pendingAppealsList = appeals.filter(a => a.status === "pending");
         const analyticsRangeStart = (() => {
@@ -2368,16 +2392,19 @@ const AppContent: React.FC = () => {
         const allRealHangouts = hangouts.filter(hangout => activityProfileIds.has(hangout.creator_id));
         const realHangouts = allRealHangouts.filter(hangout => isWithinAnalyticsRange(hangout.created_at));
         const allRealHangoutIds = new Set(allRealHangouts.map(hangout => hangout.id));
-        const realApplications = applications.filter(application =>
-          activityProfileIds.has(application.applicant_id) && allRealHangoutIds.has(application.hangout_id) && isWithinAnalyticsRange(application.created_at)
+        const allRealApplications = applications.filter(application =>
+          activityProfileIds.has(application.applicant_id) && allRealHangoutIds.has(application.hangout_id)
         );
-        const realLikes = likes.filter(like => activityProfileIds.has(like.user_id) && allRealHangoutIds.has(like.hangout_id) && isWithinAnalyticsRange(like.created_at));
-        const realComments = comments.filter(comment => activityProfileIds.has(comment.user_id) && allRealHangoutIds.has(comment.hangout_id) && isWithinAnalyticsRange(comment.created_at));
+        const allRealLikes = likes.filter(like => activityProfileIds.has(like.user_id) && allRealHangoutIds.has(like.hangout_id));
+        const allRealComments = comments.filter(comment => activityProfileIds.has(comment.user_id) && allRealHangoutIds.has(comment.hangout_id));
+        const realApplications = allRealApplications.filter(application => isWithinAnalyticsRange(application.created_at));
+        const realLikes = allRealLikes.filter(like => isWithinAnalyticsRange(like.created_at));
+        const realComments = allRealComments.filter(comment => isWithinAnalyticsRange(comment.created_at));
         const allAnalyticsTimestamps = [
           ...allRealHangouts.map(item => new Date(item.created_at).getTime()),
-          ...applications.filter(item => activityProfileIds.has(item.applicant_id)).map(item => new Date(item.created_at).getTime()),
-          ...likes.filter(item => activityProfileIds.has(item.user_id)).map(item => new Date(item.created_at).getTime()),
-          ...comments.filter(item => activityProfileIds.has(item.user_id)).map(item => new Date(item.created_at).getTime())
+          ...allRealApplications.map(item => new Date(item.created_at).getTime()),
+          ...allRealLikes.map(item => new Date(item.created_at).getTime()),
+          ...allRealComments.map(item => new Date(item.created_at).getTime())
         ].filter(timestamp => !Number.isNaN(timestamp));
         const earliestAnalyticsTimestamp = allAnalyticsTimestamps.length > 0 ? Math.min(...allAnalyticsTimestamps) : nowTimestamp;
         const nowDate = new Date(nowTimestamp);
@@ -2453,11 +2480,15 @@ const AppContent: React.FC = () => {
           };
         });
         const maxDailyActivity = Math.max(1, ...activityTrend.map(day => day.posts + day.joins + day.likes + day.comments));
-        const hangoutsWithApplications = new Set(realApplications.map(application => application.hangout_id)).size;
+        const realHangoutIds = new Set(realHangouts.map(hangout => hangout.id));
+        const cohortApplications = realApplications.filter(application => realHangoutIds.has(application.hangout_id));
+        const cohortLikes = realLikes.filter(like => realHangoutIds.has(like.hangout_id));
+        const cohortComments = realComments.filter(comment => realHangoutIds.has(comment.hangout_id));
+        const hangoutsWithApplications = new Set(cohortApplications.map(application => application.hangout_id)).size;
         const hangoutsWithAcceptedApplicants = new Set(
-          realApplications.filter(application => application.status === "accepted").map(application => application.hangout_id)
+          cohortApplications.filter(application => application.status === "accepted").map(application => application.hangout_id)
         ).size;
-        const hangoutsWithComments = new Set(realComments.map(comment => comment.hangout_id)).size;
+        const hangoutsWithComments = new Set(cohortComments.map(comment => comment.hangout_id)).size;
         const funnelSteps = [
           { label: "Published", value: realHangouts.length, color: "bg-indigo-500" },
           { label: "Received requests", value: hangoutsWithApplications, color: "bg-sky-500" },
@@ -2496,12 +2527,6 @@ const AppContent: React.FC = () => {
               <p className="text-xs text-purple-800 leading-relaxed max-w-2xl">
                 Dear XMUM administrator, manage reports, evaluate appeals, and monitor safe statistics directly.
               </p>
-              {showingAdminFallbackStats && (
-                <p className="text-[11px] text-purple-700 leading-relaxed">
-                  Activity analytics are using your admin profile for now because no non-admin student profiles are active yet.
-                </p>
-              )}
-
               {/* Admin metrics counters */}
               <div className="grid grid-cols-2 md:grid-cols-7 gap-3 pt-3">
                 <div className="bg-white p-3.5 rounded-2xl border border-purple-100 shadow-sm text-center">
@@ -2770,8 +2795,8 @@ const AppContent: React.FC = () => {
 
                 {/* Conversation and appreciation */}
                 {(() => {
-                  const likedHangouts = new Set(realLikes.map(item => item.hangout_id)).size;
-                  const discussedHangouts = new Set(realComments.map(item => item.hangout_id)).size;
+                  const likedHangouts = new Set(cohortLikes.map(item => item.hangout_id)).size;
+                  const discussedHangouts = new Set(cohortComments.map(item => item.hangout_id)).size;
                   const postTotal = Math.max(1, realHangouts.length);
                   const likedShare = Math.round((likedHangouts / postTotal) * 100);
                   const discussedShare = Math.round((discussedHangouts / postTotal) * 100);
