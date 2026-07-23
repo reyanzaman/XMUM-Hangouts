@@ -278,13 +278,13 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
       id={`hangout-card-${hangout.id}`}
       className={`border rounded-3xl p-5 shadow-sm transition-all duration-250 flex flex-col justify-between h-full relative ${showLikers ? "z-30" : "z-0"} ${
         isExpired
-          ? "bg-slate-50/80 border-slate-200/60 shadow-none select-none"
+          ? "bg-slate-50/45 border-slate-200/60 opacity-55 saturate-50 contrast-85 shadow-none select-none"
           : "bg-white border-gray-100 hover:shadow-md"
       }`}
     >
       <div className="flex flex-col flex-grow space-y-4">
       {/* 1. Header with creator info */}
-      <div className="flex items-center justify-between border-b border-gray-50 pb-3">
+      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-gray-50 pb-3">
         <button
           id={`view-creator-profile-${hangout.id}`}
           onClick={() => {
@@ -294,7 +294,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
             }
             setViewedProfile(creator as Profile);
           }}
-          className="flex items-center gap-3.5 text-left outline-none group cursor-pointer"
+          className="group flex min-w-0 flex-1 items-center gap-2.5 text-left outline-none cursor-pointer sm:gap-3.5"
         >
           <AvatarSVG id={creator.avatar_id} size={52} petCount={shouldMaskAnonymousOnCard ? 0 : creator.companion_pet_count} className={shouldMaskAnonymousOnCard ? "group-hover:opacity-90 transition-opacity shrink-0" : "group-hover:scale-105 transition-transform shrink-0"} />
           <div className="min-w-0 text-left">
@@ -317,7 +317,7 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
               </span>
             </div>
             {realCreator ? (
-              <span className="text-[10px] text-slate-400 block mt-0.5 truncate max-w-[200px] sm:max-w-xs font-medium">
+              <span className="mt-0.5 block w-full truncate text-[10px] font-medium text-slate-400 sm:max-w-xs">
                 {(!hangout.is_anonymous || !shouldMaskAnonymousOnCard)
                   ? `${realCreator.program} • ${realCreator.year_of_study} • ${realCreator.student_type ? realCreator.student_type.charAt(0).toUpperCase() + realCreator.student_type.slice(1) : ""}`
                   : `Verified Peer • ${realCreator.student_type ? realCreator.student_type.charAt(0).toUpperCase() + realCreator.student_type.slice(1) : "Student"}`}
@@ -327,19 +327,19 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
                 Verified Peer • Privacy Mode
               </span>
             )}
-            <span className="text-[9px] text-slate-400/80 block mt-0.5 font-medium flex items-center gap-1">
+            <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[9px] font-medium text-slate-400/80">
               <Clock className="w-3 h-3 text-slate-400/60 shrink-0" />
-              Posted on {new Date(hangout.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })} at {new Date(hangout.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+              <span className="truncate">Posted on {new Date(hangout.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })} at {new Date(hangout.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>
             </span>
           </div>
         </button>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex shrink-0 items-center gap-0.5 sm:gap-1.5">
           {editHistoryEntries.length > 0 && (
             <button
               type="button"
               onClick={() => setShowEditHistory(!showEditHistory)}
-              className="bg-amber-50 text-amber-700 text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-100 flex items-center gap-1"
+              className="hidden items-center gap-1 rounded-full border border-amber-100 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700 sm:flex"
             >
               <PencilLine className="w-3 h-3" />
               Edited

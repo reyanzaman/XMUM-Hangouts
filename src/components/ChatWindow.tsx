@@ -48,7 +48,7 @@ export const ChatWindow: React.FC = () => {
 
   if (!currentUser) {
     return (
-      <div id="chat-no-auth" className="rounded-[2rem] border border-slate-200 bg-white p-10 text-center shadow-sm">
+      <div id="chat-no-auth" className="min-h-[calc(100dvh-8rem)] bg-white p-10 text-center sm:min-h-0 sm:rounded-[2rem] sm:border sm:border-slate-200 sm:shadow-sm">
         <MessageSquare className="mx-auto h-11 w-11 text-rose-500" />
         <h4 className="mt-3 font-black text-slate-800">Inbox locked</h4>
         <p className="mt-1 text-xs text-slate-400">Sign in to read your conversations.</p>
@@ -107,7 +107,7 @@ export const ChatWindow: React.FC = () => {
 
   if (myChats.length === 0) {
     return (
-      <div id="chat-system-empty" className="relative flex min-h-[520px] flex-col items-center justify-center overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-8 text-center shadow-sm">
+      <div id="chat-system-empty" className="relative flex min-h-[calc(100dvh-8rem)] flex-col items-center justify-center overflow-hidden bg-white p-8 text-center sm:min-h-[520px] sm:rounded-[2rem] sm:border sm:border-slate-200 sm:shadow-sm">
         <div className="relative mb-5 flex h-20 w-20 items-center justify-center rounded-[1.75rem] bg-white text-rose-500 shadow-sm ring-1 ring-rose-100">
           <Inbox className="h-9 w-9" />
           <Heart className="absolute -right-1 -top-1 h-5 w-5 fill-pink-400 text-pink-400" />
@@ -124,7 +124,7 @@ export const ChatWindow: React.FC = () => {
   }
 
   return (
-    <div id="chat-system-grid" className="flex h-[calc(100dvh-9rem)] min-h-[540px] max-h-[780px] overflow-hidden rounded-[2rem] border border-slate-200 bg-white font-sans shadow-sm">
+    <div id="chat-system-grid" className="flex h-[calc(100dvh-8rem)] min-h-0 max-h-none overflow-hidden bg-white font-sans sm:h-[calc(100dvh-9rem)] sm:min-h-[540px] sm:max-h-[780px] sm:rounded-[2rem] sm:border sm:border-slate-200 sm:shadow-sm">
       <aside id="chat-sidebar" className={`${activeChatId ? "hidden md:flex" : "flex"} h-full w-full shrink-0 flex-col border-r border-slate-200 bg-slate-50/50 md:w-[21rem] lg:w-[23rem]`}>
         <div className="space-y-3 border-b border-slate-200 bg-white p-4 sm:p-5">
           <div className="flex items-center justify-between gap-3">

@@ -1578,7 +1578,7 @@ const AppContent: React.FC = () => {
 
       case "create":
         return (
-          <div className="max-w-md lg:max-w-lg mx-auto bg-white border border-rose-100/45 rounded-2xl sm:rounded-3xl p-5 sm:p-7 shadow-sm space-y-5 animate-in fade-in duration-350">
+          <div className="min-h-[calc(100dvh-8rem)] w-full max-w-none space-y-5 bg-white p-5 animate-in fade-in duration-350 sm:mx-auto sm:min-h-0 sm:max-w-md sm:rounded-3xl sm:border sm:border-rose-100/45 sm:p-7 sm:shadow-sm lg:max-w-lg">
             {/* Minimal Header */}
             <div className="pb-2.5 border-b border-rose-100/30 flex items-center gap-2">
               <span className="text-rose-500 text-base sm:text-lg">✨</span>
@@ -1813,9 +1813,9 @@ const AppContent: React.FC = () => {
         }
 
         return (
-          <div className="space-y-6 font-sans max-w-4xl mx-auto px-1 sm:px-3">
+          <div className="min-h-[calc(100dvh-8rem)] w-full max-w-none space-y-6 bg-white px-4 py-5 font-sans sm:mx-auto sm:min-h-0 sm:max-w-4xl sm:bg-transparent sm:px-3 sm:py-0">
             {/* Modern Header Container */}
-            <div className="bg-gradient-to-r from-rose-500/5 via-rose-500/1 to-transparent rounded-3xl p-5 sm:p-6 border border-rose-100/15 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex flex-col justify-between gap-4 border-b border-rose-100/40 bg-transparent pb-5 sm:rounded-3xl sm:border sm:border-rose-100/15 sm:bg-gradient-to-r sm:from-rose-500/5 sm:via-rose-500/1 sm:to-transparent sm:p-6 md:flex-row md:items-center">
               <div>
                 <h1 className="text-xl sm:text-2xl font-display font-black text-slate-800 tracking-tight flex items-center gap-2">
                   <span>My Hangouts Portal</span>
@@ -3242,7 +3242,11 @@ const AppContent: React.FC = () => {
       </header>
 
       {/* Main Body container */}
-      <main className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 flex-grow w-full pt-6 sm:pt-8 pb-12">
+      <main className={`max-w-7xl mx-auto flex-grow w-full sm:px-6 lg:px-8 sm:pt-8 sm:pb-12 ${
+        activeTab === "chats" || activeTab === "create" || activeTab === "my-plans"
+          ? "px-0 pt-0 pb-0"
+          : "px-2.5 pt-6 pb-12"
+      }`}>
         <AnimatePresence mode="wait">
           {currentUser && !currentUser.is_profile_complete ? (
             <motion.div
@@ -3269,46 +3273,62 @@ const AppContent: React.FC = () => {
       </main>
 
          {/* Footer sections */}
-      <footer className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 mt-auto border-t border-gray-100 py-4 pb-26 sm:py-6 text-center text-[10px] sm:text-[11px] text-slate-400 space-y-2 sm:space-y-3 w-full">
-        <p className="font-semibold text-slate-400 text-[10px] sm:text-xs">
-          "Vibe coded by a fellow XMUM student 💛"
-        </p>
-        <div className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-2 text-slate-500 font-bold px-2 text-[10px] sm:text-xs">
-          <button
-            id="footer-get-app-button"
-            onClick={() => { setActiveTab("get-app"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-            className="inline-flex items-center justify-center gap-1 text-slate-500 hover:text-rose-500 transition-colors cursor-pointer"
-            aria-label="Get the Hangouts app"
-          >
-            <Download className="h-3 w-3 shrink-0" />
-            Get App
-          </button>
-          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
-          <button onClick={() => { setActiveTab("terms"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer">Terms</button>
-          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
-          <button onClick={() => { setActiveTab("privacy"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer">Privacy</button>
-          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
-          <button onClick={() => { setActiveTab("safety"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer">Safety</button>
-          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
-          <button onClick={() => { setActiveTab("about"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer">About</button>
-          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
-          <button
-            onClick={() => { setActiveTab("bug-report"); window.scrollTo(0, 0); }}
-            className="hover:text-rose-500 transition-colors cursor-pointer inline-flex items-center justify-center gap-1"
-          >
-            <Bug className="w-3 h-3 shrink-0" /> Report Bug
-          </button>
-          <span className="text-slate-300 leading-none" aria-hidden="true">•</span>
-          <button onClick={() => { setActiveTab("donation"); window.scrollTo(0, 0); }} className="hover:text-rose-500 transition-colors cursor-pointer flex items-center justify-center gap-1 text-rose-500"><Heart className="w-3 h-3 fill-rose-500 text-rose-500 shrink-0" /> Donation</button>
+      <footer className="mx-auto mt-auto w-full max-w-7xl px-3 pb-[calc(4.75rem+env(safe-area-inset-bottom))] pt-2.5 text-slate-400 sm:px-6 sm:py-3 lg:px-8">
+        {/* Compact mobile footer */}
+        <div className="border-t border-gray-100 pt-2.5 text-center sm:hidden">
+          <div className="flex items-center justify-center gap-2 text-[10px] font-bold">
+            <button
+              id="footer-get-app-button"
+              onClick={() => { setActiveTab("get-app"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              className="inline-flex cursor-pointer items-center justify-center gap-1 rounded-full bg-slate-900 px-2.5 py-1 text-white shadow-sm transition-all hover:bg-rose-600"
+              aria-label="Get the Hangouts app"
+            >
+              <Download className="h-3 w-3 shrink-0" /> Get App
+            </button>
+            <button onClick={() => { setActiveTab("donation"); window.scrollTo(0, 0); }} className="flex cursor-pointer items-center justify-center gap-1 rounded-full bg-rose-500 px-2.5 py-1 text-white shadow-sm transition-all hover:bg-rose-600">
+              <Heart className="h-3 w-3 shrink-0 fill-white text-white" /> Donation
+            </button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-[10px] font-bold text-slate-500">
+            <button onClick={() => { setActiveTab("terms"); window.scrollTo(0, 0); }} className="cursor-pointer transition-colors hover:text-rose-500">Terms</button>
+            <span className="text-slate-300" aria-hidden="true">•</span>
+            <button onClick={() => { setActiveTab("privacy"); window.scrollTo(0, 0); }} className="cursor-pointer transition-colors hover:text-rose-500">Privacy</button>
+            <span className="text-slate-300" aria-hidden="true">•</span>
+            <button onClick={() => { setActiveTab("safety"); window.scrollTo(0, 0); }} className="cursor-pointer transition-colors hover:text-rose-500">Safety</button>
+            <span className="text-slate-300" aria-hidden="true">•</span>
+            <button onClick={() => { setActiveTab("about"); window.scrollTo(0, 0); }} className="cursor-pointer transition-colors hover:text-rose-500">About</button>
+            <span className="text-slate-300" aria-hidden="true">•</span>
+            <button onClick={() => { setActiveTab("bug-report"); window.scrollTo(0, 0); }} className="inline-flex cursor-pointer items-center gap-1 transition-colors hover:text-rose-500"><Bug className="h-3 w-3" /> Report Bug</button>
+          </div>
+          <p className="mt-1.5 text-[9px] font-semibold text-slate-400">Vibe coded by a fellow XMUM student 💛</p>
         </div>
-        <p className="max-w-xl sm:max-w-none mx-auto text-[9px] sm:text-[10px] leading-relaxed text-slate-450 font-mono px-4">
-          Disclaimer: Independently run by students. Not affiliated with or endorsed by Xiamen University Malaysia (XMUM).
-        </p>
-        {activeTab === "feed" && (
-          <p className="text-[8px] font-semibold tracking-[0.16em] text-slate-300" aria-label="App version 1.10">
-            v1.11
-          </p>
-        )}
+
+        {/* Compact desktop footer */}
+        <div className="hidden flex-wrap items-center justify-center gap-x-5 gap-y-2 border-t border-gray-100 py-2 text-[11px] sm:flex lg:justify-between">
+          <p className="shrink-0 font-semibold text-slate-400">Vibe coded by a fellow XMUM student 💛</p>
+          <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 font-bold text-slate-500" aria-label="Footer links">
+            <button onClick={() => { setActiveTab("terms"); window.scrollTo(0, 0); }} className="cursor-pointer transition-colors hover:text-rose-500">Terms</button>
+            <button onClick={() => { setActiveTab("privacy"); window.scrollTo(0, 0); }} className="cursor-pointer transition-colors hover:text-rose-500">Privacy</button>
+            <button onClick={() => { setActiveTab("safety"); window.scrollTo(0, 0); }} className="cursor-pointer transition-colors hover:text-rose-500">Safety</button>
+            <button onClick={() => { setActiveTab("about"); window.scrollTo(0, 0); }} className="cursor-pointer transition-colors hover:text-rose-500">About</button>
+            <button onClick={() => { setActiveTab("bug-report"); window.scrollTo(0, 0); }} className="inline-flex cursor-pointer items-center gap-1 transition-colors hover:text-rose-500"><Bug className="h-3 w-3" /> Report Bug</button>
+          </nav>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              id="footer-get-app-button-desktop"
+              onClick={() => { setActiveTab("get-app"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[10px] font-black text-white transition-colors hover:bg-slate-800"
+            >
+              <Download className="h-3 w-3" /> Get App
+            </button>
+            <button
+              onClick={() => { setActiveTab("donation"); window.scrollTo(0, 0); }}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-rose-500 px-3 py-1.5 text-[10px] font-black text-white transition-colors hover:bg-rose-600"
+            >
+              <Heart className="h-3 w-3 fill-white" /> Donation
+            </button>
+          </div>
+        </div>
       </footer>
 
       <AnimatePresence>
