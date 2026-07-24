@@ -118,6 +118,10 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
 
   // Helpers to resolve items
   const realCreator = profiles.find(p => p.id === hangout.creator_id);
+  const isDeletedCreator =
+    hangout.creator_id === "deleted_user" ||
+    realCreator?.id === "deleted_user" ||
+    realCreator?.email === "deleted.user@system.local";
   const myApp = currentUser ? applications.find(a => a.hangout_id === hangout.id && a.applicant_id === currentUser.id && a.status !== "retracted") : null;
   const isCreatorMe = currentUser && hangout.creator_id === currentUser.id;
   const isAcceptedApplicant = myApp && myApp.status === "accepted";
@@ -311,22 +315,29 @@ export const HangoutCard: React.FC<HangoutCardProps> = ({
                   ({realCreator?.name})
                 </span>
               )}
-              <CountryFlag country={creator.country || realCreator?.country} className="ml-0.5 h-4 w-4" />
-              <span className="inline-flex items-center gap-1">
-                {renderGenderIcon(creator.gender || realCreator?.gender || "other")}
-              </span>
+              {!isDeletedCreator && (
+                <>
+                  <CountryFlag country={creator.country || realCreator?.country} className="ml-0.5 h-4 w-4" />
+                  <span className="inline-flex items-center gap-1">
+                    {renderGenderIcon(creator.gender || realCreator?.gender || "other")}
+                  </span>
+                </>
+              )}
             </div>
-            {realCreator ? (
-              <span className="mt-0.5 block w-full truncate text-[10px] font-medium text-slate-400 sm:max-w-xs">
-                {(!hangout.is_anonymous || !shouldMaskAnonymousOnCard)
-                  ? `${realCreator.program} • ${realCreator.year_of_study} • ${realCreator.student_type ? realCreator.student_type.charAt(0).toUpperCase() + realCreator.student_type.slice(1) : ""}`
-                  : `Verified Peer • ${realCreator.student_type ? realCreator.student_type.charAt(0).toUpperCase() + realCreator.student_type.slice(1) : "Student"}`}
+            {realCreator && !isDeletedCreator ? (
+              <span className="mt-0.5 block w-full whitespace-normal break-words text-[10px] font-medium leading-tight text-slate-400 sm:max-w-xs sm:truncate sm:whitespace-nowrap">
+                <span className="sm:hidden">{realCreator.program}</span>
+                <span className="hidden sm:inline">
+                  {!hangout.is_anonymous || !shouldMaskAnonymousOnCard
+                    ? `${realCreator.program} • ${realCreator.year_of_study} • ${realCreator.student_type ? realCreator.student_type.charAt(0).toUpperCase() + realCreator.student_type.slice(1) : ""}`
+                    : `Verified Peer • ${realCreator.student_type ? realCreator.student_type.charAt(0).toUpperCase() + realCreator.student_type.slice(1) : "Student"}`}
+                </span>
               </span>
-            ) : (
+            ) : !isDeletedCreator ? (
               <span className="text-[10px] text-slate-400 block mt-0.5 font-medium">
                 Verified Peer • Privacy Mode
               </span>
-            )}
+            ) : null}
             <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[9px] font-medium text-slate-400/80">
               <Clock className="w-3 h-3 text-slate-400/60 shrink-0" />
               <span className="truncate">Posted on {new Date(hangout.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })} at {new Date(hangout.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>

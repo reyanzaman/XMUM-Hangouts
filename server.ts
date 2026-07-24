@@ -1589,10 +1589,59 @@ async function startServer() {
           return { ...safeRow, country: "Hidden", languages: [], age: 0, birthdate: null, program: "Hidden", year_of_study: "Hidden", gender: "Hidden", student_type: "Not Specified" };
         });
       } else if (table === "xmum_hangouts") {
-        const acceptedIds = new Set(getLocalData(LOCAL_APPLICATIONS_FILE).filter((item: any) => item.applicant_id === userId && item.status === "accepted").map((item: any) => item.hangout_id));
+        // Keep local development in sync with the same shared hangout source as
+        // production. The runtime file remains an offline fallback only.
+        if (supabaseAdmin) {
+          const { data: remoteHangouts, error: remoteHangoutsError } = await supabaseAdmin
+            .from("xmum_hangouts")
+            .select("*");
+          if (!remoteHangoutsError && Array.isArray(remoteHangouts)) {
+            payload = remoteHangouts;
+            saveLocalData(LOCAL_HANGOUTS_FILE, payload);
+          } else if (remoteHangoutsError) {
+            console.warn("Hangout refresh fell back to the local cache:", remoteHangoutsError.message);
+          }
+        }
+
+        let acceptedApplications = getLocalData(LOCAL_APPLICATIONS_FILE).filter(
+          (item: any) => item.applicant_id === userId && item.status === "accepted"
+        );
+        if (supabaseAdmin && userId) {
+          const { data: remoteAcceptedApplications, error: acceptedApplicationsError } = await supabaseAdmin
+            .from("xmum_applications")
+            .select("hangout_id,applicant_id,status")
+            .eq("applicant_id", userId)
+            .eq("status", "accepted");
+          if (!acceptedApplicationsError && Array.isArray(remoteAcceptedApplications)) {
+            acceptedApplications = remoteAcceptedApplications;
+          }
+        }
+        const acceptedIds = new Set(acceptedApplications.map((item: any) => item.hangout_id));
         payload = payload.map((row: any) => isAdmin || row.creator_id === userId || acceptedIds.has(row.id) ? row : { ...row, meeting_point: "Apply and get accepted to unlock" });
       } else if (table === "xmum_applications") {
-        const hostedIds = new Set(getLocalData(LOCAL_HANGOUTS_FILE).filter((item: any) => item.creator_id === userId).map((item: any) => item.id));
+        if (supabaseAdmin) {
+          const { data: remoteApplications, error: remoteApplicationsError } = await supabaseAdmin
+            .from("xmum_applications")
+            .select("*");
+          if (!remoteApplicationsError && Array.isArray(remoteApplications)) {
+            payload = remoteApplications;
+            saveLocalData(LOCAL_APPLICATIONS_FILE, payload);
+          } else if (remoteApplicationsError) {
+            console.warn("Application refresh fell back to the local cache:", remoteApplicationsError.message);
+          }
+        }
+
+        let hostedHangouts = getLocalData(LOCAL_HANGOUTS_FILE).filter((item: any) => item.creator_id === userId);
+        if (supabaseAdmin && userId) {
+          const { data: remoteHostedHangouts, error: hostedHangoutsError } = await supabaseAdmin
+            .from("xmum_hangouts")
+            .select("id,creator_id")
+            .eq("creator_id", userId);
+          if (!hostedHangoutsError && Array.isArray(remoteHostedHangouts)) {
+            hostedHangouts = remoteHostedHangouts;
+          }
+        }
+        const hostedIds = new Set(hostedHangouts.map((item: any) => item.id));
         payload = isAdmin ? payload : payload.filter((row: any) => row.applicant_id === userId || hostedIds.has(row.hangout_id));
       } else if (table === "xmum_chats") {
         payload = isAdmin ? payload : payload.filter((row: any) => row.user_a_id === userId || row.user_b_id === userId);

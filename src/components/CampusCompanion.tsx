@@ -73,29 +73,52 @@ type DragReturnMotion = {
 type CompanionDragBounds = { left: number; right: number; top: number; bottom: number };
 type CompanionPosition = { x: number; y: number };
 
-const getCompanionPositionStorageKey = (userId?: string | null) =>
-  `${companionPositionStorageKey}:${userId || "guest"}`;
+const getCompanionPositionStorageKey = (identity?: string | null) =>
+  `${companionPositionStorageKey}:${identity?.trim().toLowerCase() || "guest"}`;
 
-const getStoredCompanionPosition = (userId?: string | null): CompanionPosition => {
+const readStoredCompanionPosition = (identity?: string | null): CompanionPosition | null => {
   try {
-    const stored = JSON.parse(localStorage.getItem(getCompanionPositionStorageKey(userId)) || "null");
+    const rawPosition = localStorage.getItem(getCompanionPositionStorageKey(identity));
+    if (!rawPosition) return null;
+    const stored = JSON.parse(rawPosition);
     const x = Number(stored?.x);
     const y = Number(stored?.y);
-    return {
-      x: Number.isFinite(x) ? x : 0,
-      y: Number.isFinite(y) ? y : 0
-    };
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x, y };
   } catch {
-    return { x: 0, y: 0 };
+    return null;
   }
 };
 
-const saveCompanionPosition = (userId: string | null | undefined, position: CompanionPosition) => {
+const saveCompanionPosition = (identity: string | null | undefined, position: CompanionPosition) => {
   try {
-    localStorage.setItem(getCompanionPositionStorageKey(userId), JSON.stringify(position));
+    localStorage.setItem(getCompanionPositionStorageKey(identity), JSON.stringify(position));
   } catch {
     // Keep the chosen position for this session when storage is unavailable.
   }
+};
+
+const getStoredCompanionPosition = (
+  primaryIdentity?: string | null,
+  legacyUserId?: string | null
+): CompanionPosition => {
+  const identities = [primaryIdentity, legacyUserId, "guest"].filter(
+    (identity, index, values): identity is string => Boolean(identity) && values.indexOf(identity) === index
+  );
+
+  for (const identity of identities) {
+    const storedPosition = readStoredCompanionPosition(identity);
+    if (!storedPosition) continue;
+
+    // Profile IDs can change while auth is reconciled. Migrate the old ID/guest
+    // position to the stable email key so subsequent launches restore it directly.
+    if (primaryIdentity && identity !== primaryIdentity) {
+      saveCompanionPosition(primaryIdentity, storedPosition);
+    }
+    return storedPosition;
+  }
+
+  return { x: 0, y: 0 };
 };
 
 const getCompanionAngerSource = (): CompanionAngerSource => {
@@ -165,7 +188,8 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
   const dragHistoryRef = useRef<number[]>([]);
   const lastAmbientActionKeyRef = useRef("");
   const dragAngerThresholdRef = useRef(getRandomDragAngerThreshold());
-  const initialCompanionPosition = getStoredCompanionPosition(currentUser?.id);
+  const companionPositionIdentity = currentUser?.email || currentUser?.id;
+  const initialCompanionPosition = getStoredCompanionPosition(companionPositionIdentity, currentUser?.id);
   const companionOffsetRef = useRef(initialCompanionPosition);
   const [companionOffset, setCompanionOffset] = useState(initialCompanionPosition);
   const [isBubbleBelow, setIsBubbleBelow] = useState(false);
@@ -1209,12 +1233,12 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       setCompanionOffset(safeOffset);
       setDragReturnMotion(buildDragReturnMotion("steady-bounce", safeOffset.x, safeOffset.y));
       updateCompanionEdgeState(safeOffset.x, safeOffset.y);
-      saveCompanionPosition(currentUser?.id, safeOffset);
+      saveCompanionPosition(companionPositionIdentity, safeOffset);
     }
   };
 
   useEffect(() => {
-    const storedPosition = getStoredCompanionPosition(currentUser?.id);
+    const storedPosition = getStoredCompanionPosition(companionPositionIdentity, currentUser?.id);
     companionOffsetRef.current = storedPosition;
     setCompanionOffset(storedPosition);
     setIsDragReturning(false);
@@ -1228,7 +1252,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
       transition: { type: "spring", stiffness: 150, damping: 20 }
     });
     updateCompanionEdgeState(storedPosition.x, storedPosition.y);
-  }, [currentUser?.id]);
+  }, [companionPositionIdentity, currentUser?.id]);
 
   useEffect(() => {
     const handleResize = () => window.requestAnimationFrame(keepCompanionInsideViewport);
@@ -1522,7 +1546,7 @@ export const CampusCompanion: React.FC<CampusCompanionProps> = ({ activeTab }) =
     draggedRef.current = true;
     setIsDraggingCompanion(false);
     setIsHoldingCompanion(false);
-    saveCompanionPosition(currentUser?.id, nextOffset);
+    saveCompanionPosition(companionPositionIdentity, nextOffset);
 
     const now = Date.now();
     const recentDrags = [...dragHistoryRef.current.filter(timestamp => now - timestamp < 45000)];

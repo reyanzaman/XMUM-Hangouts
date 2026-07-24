@@ -1,11 +1,11 @@
-const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const UPDATE_CHECK_THROTTLE_MS = 60 * 1000;
-const RELOAD_GUARD_KEY = 'xmum_pwa_update_reload_at';
 
 /**
  * Registers the generated PWA worker and keeps installed app windows current.
- * Workbox is configured with skipWaiting + clientsClaim, so a controller change
- * means the new release is ready and the running document can safely reload.
+ * Checks are asynchronous and limited to visible, online windows. A downloaded
+ * release takes effect on the user's next normal launch/navigation; an active
+ * session is never reloaded automatically.
  */
 export const setupPwaUpdates = () => {
   if (!('serviceWorker' in navigator)) return () => undefined;
@@ -13,24 +13,9 @@ export const setupPwaUpdates = () => {
   let registration: ServiceWorkerRegistration | null = null;
   let updatePromise: Promise<void> | null = null;
   let lastUpdateCheckAt = 0;
-  let reloadPending = false;
-  const hadControllerAtStartup = Boolean(navigator.serviceWorker.controller);
-
-  const reloadForUpdate = () => {
-    if (!reloadPending || document.visibilityState !== 'visible') return;
-
-    const now = Date.now();
-    const previousReloadAt = Number(sessionStorage.getItem(RELOAD_GUARD_KEY) || 0);
-    if (now - previousReloadAt < 10_000) {
-      reloadPending = false;
-      return;
-    }
-
-    sessionStorage.setItem(RELOAD_GUARD_KEY, String(now));
-    window.location.reload();
-  };
 
   const checkForUpdate = async (force = false) => {
+    if (!navigator.onLine || document.visibilityState !== 'visible') return;
     const now = Date.now();
     if (!force && now - lastUpdateCheckAt < UPDATE_CHECK_THROTTLE_MS) return;
     if (updatePromise) return updatePromise;
@@ -53,33 +38,43 @@ export const setupPwaUpdates = () => {
   };
 
   const handleControllerChange = () => {
-    // Do not reload when the app is installed for the first time. Reload only
-    // when an already-controlled app receives a replacement worker.
-    if (!hadControllerAtStartup) return;
-    reloadPending = true;
-    reloadForUpdate();
+    // Let interested UI surfaces know an update is ready, but never interrupt
+    // forms, chats, scrolling, or any other active work with a forced reload.
+    window.dispatchEvent(new CustomEvent('xmum-pwa-update-ready'));
   };
 
   const handleVisibilityChange = () => {
     if (document.visibilityState !== 'visible') return;
-    reloadForUpdate();
     void checkForUpdate();
   };
 
   const handleFocus = () => {
-    reloadForUpdate();
     void checkForUpdate();
+  };
+
+  const handlePageShow = () => {
+    void checkForUpdate(true);
   };
 
   navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('focus', handleFocus);
   window.addEventListener('online', handleFocus);
+  window.addEventListener('pageshow', handlePageShow);
 
   void navigator.serviceWorker
     .register('/sw.js', { scope: '/', updateViaCache: 'none' })
     .then(currentRegistration => {
       registration = currentRegistration;
+      currentRegistration.addEventListener('updatefound', () => {
+        const installingWorker = currentRegistration.installing;
+        if (!installingWorker) return;
+        installingWorker.addEventListener('statechange', () => {
+          if (installingWorker.state !== 'installed' || !navigator.serviceWorker.controller) return;
+          currentRegistration.waiting?.postMessage({ type: 'SKIP_WAITING' });
+        });
+      });
+      currentRegistration.waiting?.postMessage({ type: 'SKIP_WAITING' });
       return checkForUpdate(true);
     })
     .catch(error => {
@@ -96,5 +91,6 @@ export const setupPwaUpdates = () => {
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('focus', handleFocus);
     window.removeEventListener('online', handleFocus);
+    window.removeEventListener('pageshow', handlePageShow);
   };
 };

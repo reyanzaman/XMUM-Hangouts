@@ -72,6 +72,23 @@ import {
 
 const SYSTEM_DELETED_USER_ID = "deleted_user";
 const RECENT_HANGOUT_WINDOW_MONTHS = 2;
+const MAX_HANGOUT_DESCRIPTION_LENGTH = 500;
+
+const FieldInfo: React.FC<{ text: string; label: string }> = ({ text, label }) => (
+  <span className="group static inline-flex align-middle">
+    <button
+      type="button"
+      className="inline-flex h-4 w-4 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-rose-500 focus:text-rose-500 focus:outline-none"
+      aria-label={label}
+    >
+      <HelpCircle className="h-3.5 w-3.5" />
+    </button>
+    <span className="pointer-events-none absolute bottom-full left-0 z-30 mb-2 hidden w-full max-w-sm rounded-xl bg-slate-900 px-3 py-2 text-left text-[10px] font-medium leading-relaxed text-white shadow-xl group-hover:block group-focus-within:block">
+      {text}
+    </span>
+  </span>
+);
+
 const onboardingSlides = [
   {
     title: "Find your campus circle",
@@ -886,6 +903,9 @@ const AppContent: React.FC = () => {
     if (createAdditional.trim().length < MIN_HANGOUT_DESCRIPTION_LENGTH) {
       return showToast(`Please make the description at least ${MIN_HANGOUT_DESCRIPTION_LENGTH} characters long.`, "error");
     }
+    if (createAdditional.trim().length > MAX_HANGOUT_DESCRIPTION_LENGTH) {
+      return showToast(`Please keep the description under ${MAX_HANGOUT_DESCRIPTION_LENGTH} characters.`, "error");
+    }
 
     const eventDateTime = combineDateAndTimeToIso(createDate, createTime);
     if (!eventDateTime) return showToast("Please choose a valid date and time.", "error");
@@ -988,6 +1008,9 @@ const AppContent: React.FC = () => {
     if (editDescription.trim().length < MIN_HANGOUT_DESCRIPTION_LENGTH) {
       return showToast(`Please make the description at least ${MIN_HANGOUT_DESCRIPTION_LENGTH} characters long.`, "error");
     }
+    if (editDescription.trim().length > MAX_HANGOUT_DESCRIPTION_LENGTH) {
+      return showToast(`Please keep the description under ${MAX_HANGOUT_DESCRIPTION_LENGTH} characters.`, "error");
+    }
 
     const eventDateTime = combineDateAndTimeToIso(editDate, editTime);
     if (!eventDateTime) return showToast("Please choose a valid date and time.", "error");
@@ -1046,7 +1069,7 @@ const AppContent: React.FC = () => {
   // Resolve calculations
   const myApplications = currentUser 
     ? applications.filter(a => {
-        if (a.applicant_id !== currentUser.id || a.status === "retracted") return false;
+        if (a.applicant_id !== currentUser.id) return false;
         const relatedHangout = hangouts.find(h => h.id === a.hangout_id);
         return relatedHangout?.creator_id !== currentUser.id;
       }) 
@@ -1060,6 +1083,7 @@ const AppContent: React.FC = () => {
     showHostedPastPlans ? true : getEffectiveHangoutStatus(h) === "active"
   );
   const activeApplications = myApplications.filter(application => {
+    if (application.status === "retracted") return false;
     const relatedHangout = hangouts.find(hangout => hangout.id === application.hangout_id);
     return relatedHangout ? getEffectiveHangoutStatus(relatedHangout) === "active" : false;
   });
@@ -1285,7 +1309,7 @@ const AppContent: React.FC = () => {
             )}
 
             {/* Filters layout bar */}
-            <div className="bg-white border border-gray-100 rounded-2xl p-3 sm:p-5 shadow-sm space-y-3 sm:space-y-4">
+            <div className={`rounded-2xl border border-gray-100 bg-white p-3 shadow-sm sm:space-y-4 sm:p-5 ${showMobileFilters ? "space-y-3" : "space-y-0"}`}>
               <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
                 {/* Search input and mobile filter trigger on the same row */}
                 <div className="flex items-center gap-2 flex-grow">
@@ -1579,10 +1603,9 @@ const AppContent: React.FC = () => {
       case "create":
         return (
           <div className="min-h-[calc(100dvh-8rem)] w-full max-w-none space-y-5 bg-white p-5 animate-in fade-in duration-350 sm:mx-auto sm:min-h-0 sm:max-w-md sm:rounded-3xl sm:border sm:border-rose-100/45 sm:p-7 sm:shadow-sm lg:max-w-lg">
-            {/* Minimal Header */}
-            <div className="pb-2.5 border-b border-rose-100/30 flex items-center gap-2">
-              <span className="text-rose-500 text-base sm:text-lg">✨</span>
-              <h2 id="create-plan-title" className="text-base sm:text-lg font-display font-bold text-slate-800 tracking-tight">
+            <div className="flex items-center gap-2 border-b border-rose-100/30 pb-2.5">
+              <span className="text-base text-rose-500 sm:text-lg">✨</span>
+              <h2 id="create-plan-title" className="font-display text-base font-bold tracking-tight text-slate-800 sm:text-lg">
                 Plan a Hangout
               </h2>
             </div>
@@ -1591,10 +1614,11 @@ const AppContent: React.FC = () => {
               
               {/* Intention statement */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-slate-700">
+                <label className="relative flex items-center gap-1 text-xs font-bold text-slate-700">
                   What would you like to plan? <span className="text-rose-500">*</span>
+                  <FieldInfo label="About the hangout title" text="Write the opening and activity as one natural sentence. The preview remains visible on larger screens." />
                 </label>
-                <div className="relative flex items-center gap-1 bg-slate-50/40 border border-slate-100 focus-within:border-rose-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-rose-200 rounded-xl transition-all duration-200 overflow-hidden px-2">
+                <div className="relative flex items-center gap-1 overflow-hidden rounded-xl border border-slate-100 bg-slate-50/40 px-2 transition-all duration-200 focus-within:border-rose-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-rose-200">
                   <input
                     id="create-intention-lead"
                     type="text"
@@ -1603,7 +1627,7 @@ const AppContent: React.FC = () => {
                     placeholder="I want to"
                     required
                     maxLength={28}
-                    className="w-[8.5rem] min-w-[7rem] max-w-[10rem] bg-transparent px-2 py-2 text-xs sm:text-sm text-rose-500 font-extrabold outline-none font-sans"
+                    className="w-[8.5rem] min-w-[7rem] max-w-[10rem] bg-transparent px-2 py-2 text-xs font-extrabold text-rose-500 outline-none font-sans sm:text-sm"
                   />
                   <input
                     id="create-intention"
@@ -1613,11 +1637,11 @@ const AppContent: React.FC = () => {
                     placeholder="do a group study for philosophy..."
                     required
                     maxLength={130}
-                    className="w-full bg-transparent px-2 py-2 text-xs sm:text-sm text-slate-800 font-bold outline-none font-sans placeholder:text-slate-350"
+                    className="w-full bg-transparent px-2 py-2 text-xs font-bold text-slate-800 outline-none font-sans placeholder:text-slate-350 sm:text-sm"
                   />
                 </div>
                 {(createIntentionLead.trim() || createIntentionDetail.trim()) && (
-                  <p className="text-[10px] text-gray-400 font-medium italic mt-1 pl-1 bg-slate-50/50 p-1.5 rounded-lg border border-slate-100/30">
+                  <p className="mt-1 hidden rounded-lg border border-slate-100/30 bg-slate-50/50 p-1.5 pl-1 text-[10px] font-medium italic text-gray-400 sm:block">
                     Sentence Preview: <span className="font-bold text-slate-700">{createIntentionLead}</span>{" "}
                     <span className="text-rose-600 font-bold">{createIntentionDetail}</span>
                   </p>
@@ -1636,17 +1660,18 @@ const AppContent: React.FC = () => {
                   onChange={e => setCreateLocation(e.target.value)}
                   placeholder="e.g. Library, LY3 1st Floor..."
                   required
-                  className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans"
+                  className="w-full rounded-xl border border-slate-100 bg-slate-50/40 px-3.5 py-2 text-xs text-slate-800 outline-none transition-colors focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 font-sans sm:text-sm"
                 />
               </div>
 
               {/* Date & Time */}
               <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-700">
+                <label className="relative flex items-center gap-1 text-xs font-bold text-slate-700">
                   When? <span className="text-rose-500">*</span>
+                  <FieldInfo label="Date and time requirements" text="Choose a future time within the next 2 months. Same-day hangouts must be at least 30 minutes ahead." />
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                  <div className="min-w-0 space-y-1">
                     <label htmlFor="create-date" className="block text-[11px] font-semibold text-slate-500">
                       Date
                     </label>
@@ -1658,10 +1683,10 @@ const AppContent: React.FC = () => {
                       max={maximumHangoutDate}
                       onChange={e => setCreateDate(e.target.value)}
                       required
-                      className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans cursor-pointer"
+                      className="w-full min-w-0 cursor-pointer rounded-xl border border-slate-100 bg-slate-50/40 px-2 py-2 text-[11px] text-slate-800 outline-none transition-colors focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 sm:px-3.5 sm:text-sm font-sans"
                     />
                   </div>
-                  <div className="space-y-1">
+                  <div className="min-w-0 space-y-1">
                     <label htmlFor="create-time" className="block text-[11px] font-semibold text-slate-500">
                       Time
                     </label>
@@ -1672,13 +1697,10 @@ const AppContent: React.FC = () => {
                       min={minimumCreateTime}
                       onChange={e => setCreateTime(e.target.value)}
                       required
-                      className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans cursor-pointer"
+                      className="w-full min-w-0 cursor-pointer rounded-xl border border-slate-100 bg-slate-50/40 px-2 py-2 text-[11px] text-slate-800 outline-none transition-colors focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 sm:px-3.5 sm:text-sm font-sans"
                     />
                   </div>
                 </div>
-                <p className="text-[10px] text-slate-400">
-                  Choose a future date and time within the next 2 months. Same-day hangouts must be at least 30 minutes ahead.
-                </p>
                 {combinedCreateDateTime && (
                   <p className={`text-[10px] font-medium ${createDateTimeError ? "text-rose-500" : "text-emerald-600"}`}>
                     {createDateTimeError
@@ -1696,8 +1718,9 @@ const AppContent: React.FC = () => {
 
               {/* Safe meeting spot (locked coordinates) */}
               <div className="space-y-1">
-                <label className="block text-xs font-bold text-slate-800">
-                  Meeting Point (Approved buddies only) <span className="text-rose-500">*</span>
+                <label className="relative flex items-center gap-1 text-xs font-bold text-slate-800">
+                  Meeting Point <span className="text-rose-500">*</span>
+                  <FieldInfo label="Who can see the meeting point" text="Visible only to users whose join requests you approve." />
                 </label>
                 <input
                   id="create-meeting-point"
@@ -1706,25 +1729,24 @@ const AppContent: React.FC = () => {
                   onChange={e => setCreateMeetingPoint(e.target.value)}
                   placeholder="e.g. B1 in front of Sapid..."
                   required
-                  className="w-full bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 outline-none transition-colors font-sans"
+                  className="w-full rounded-xl border border-slate-100 bg-slate-50/40 px-3.5 py-2 text-xs text-slate-800 outline-none transition-colors focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 font-sans sm:text-sm"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="block text-xs font-bold text-slate-700">
+                <label className="relative flex items-center gap-1 text-xs font-bold text-slate-700">
                   Description <span className="text-rose-500">*</span>
+                  <FieldInfo label="Description requirements" text={`Use between ${MIN_HANGOUT_DESCRIPTION_LENGTH} and ${MAX_HANGOUT_DESCRIPTION_LENGTH} characters so people know what to expect.`} />
                 </label>
                 <textarea
                   id="create-additional"
                   value={createAdditional}
                   onChange={e => setCreateAdditional(e.target.value)}
+                  maxLength={MAX_HANGOUT_DESCRIPTION_LENGTH}
                   placeholder="Share what the plan is like, what to bring, or anything your group should know."
-                  className="w-full text-xs sm:text-sm p-3 bg-slate-50/40 border border-slate-100 focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 rounded-xl outline-none h-24 transition-all font-sans resize-none"
+                  className="h-24 w-full resize-none rounded-xl border border-slate-100 bg-slate-50/40 p-3 text-xs text-slate-800 outline-none transition-all focus:border-rose-300 focus:bg-white focus:ring-1 focus:ring-rose-200 font-sans sm:text-sm"
                   required
                 />
-                <p className={`text-[10px] ${createAdditional.trim().length >= MIN_HANGOUT_DESCRIPTION_LENGTH ? "text-emerald-600" : "text-slate-400"}`}>
-                  Minimum {MIN_HANGOUT_DESCRIPTION_LENGTH} characters. This helps people know what to expect.
-                </p>
               </div>
 
               {/* Anonymous Checkbox */}
@@ -1734,11 +1756,9 @@ const AppContent: React.FC = () => {
                   type="checkbox"
                   checked={createIsAnonymous}
                   onChange={e => setCreateIsAnonymous(e.target.checked)}
-                  className="accent-rose-500 rounded text-rose-500 cursor-pointer w-4 h-4 shrink-0 font-sans"
+                  className="h-4 w-4 shrink-0 cursor-pointer rounded accent-rose-500 font-sans"
                 />
-                <label htmlFor="create-is-anonymous" className="text-xs text-slate-600 font-medium cursor-pointer">
-                  Post anonymously (Approve lists to reveal)
-                </label>
+                <label htmlFor="create-is-anonymous" className="cursor-pointer text-xs font-medium text-slate-600">Post anonymously</label>
               </div>
 
               {/* Additional Options */}
@@ -1747,9 +1767,9 @@ const AppContent: React.FC = () => {
                   id="toggle-advanced-create-btn"
                   type="button"
                   onClick={() => setShowAdvancedCreate(!showAdvancedCreate)}
-                  className="flex items-center gap-1 text-xs text-rose-500 font-extrabold hover:text-rose-600 transition-all cursor-pointer"
+                  className="flex items-center gap-1 text-xs font-extrabold text-rose-500 transition-all cursor-pointer hover:text-rose-600"
                 >
-                  {showAdvancedCreate ? "Show fewer options ▲" : "Preferences, size limits & joining criteria ▼"}
+                  {showAdvancedCreate ? "Hide advanced options ▲" : "Advanced options ▼"}
                 </button>
 
                 {showAdvancedCreate && (
@@ -1787,9 +1807,12 @@ const AppContent: React.FC = () => {
                 )}
               </div>
 
-              {/* Safety Warning */}
-              <div id="safety-warning-muted" className="text-[10px] text-slate-400 bg-slate-50/60 rounded-xl p-2.5 border border-slate-100/40 leading-normal text-center">
-                <span className="font-bold text-slate-500">⚠️ Safety Pledge:</span> Meet safely in public! Keep listings friendly and respectful. Offensive content triggers immediate lifetime exclusion.
+              <div id="safety-warning-muted" className="relative flex items-center justify-center gap-1 text-[10px] font-bold text-slate-500">
+                <span>Safety Pledge</span>
+                <FieldInfo
+                  label="Read the safety pledge"
+                  text="Meet safely in public. Keep listings friendly and respectful. Offensive content triggers immediate lifetime exclusion."
+                />
               </div>
 
               {/* Submit button */}
@@ -1797,7 +1820,7 @@ const AppContent: React.FC = () => {
                 <button
                   id="create-plan-submit-btn"
                   type="submit"
-                  className="w-full bg-rose-500 hover:bg-rose-600 text-white font-black py-3 px-5 rounded-2xl text-xs sm:text-sm transition-all shadow-sm active:scale-95 cursor-pointer flex items-center justify-center font-display"
+                  className="flex w-full cursor-pointer items-center justify-center rounded-2xl bg-rose-500 px-5 py-3 font-display text-xs font-black text-white shadow-sm transition-all hover:bg-rose-600 active:scale-95 sm:text-sm"
                 >
                   🚀 Post this Hangout
                 </button>
@@ -3929,11 +3952,9 @@ const AppContent: React.FC = () => {
                   <textarea
                     value={editDescription}
                     onChange={e => setEditDescription(e.target.value)}
+                    maxLength={MAX_HANGOUT_DESCRIPTION_LENGTH}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-3 text-sm text-slate-800 outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-200 h-24 resize-none"
                   />
-                  <p className={`text-[10px] ${editDescription.trim().length >= MIN_HANGOUT_DESCRIPTION_LENGTH ? "text-emerald-600" : "text-slate-400"}`}>
-                    Minimum {MIN_HANGOUT_DESCRIPTION_LENGTH} characters.
-                  </p>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

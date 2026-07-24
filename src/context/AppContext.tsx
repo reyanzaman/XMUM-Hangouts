@@ -903,15 +903,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const fetchHangoutsCollection = async (): Promise<Hangout[]> => {
     try {
-      let { data: dbHangouts, error: errHangouts } = await supabase.from("view_xmum_hangouts").select("*");
+      const { data: dbHangouts, error: errHangouts } = await supabase.from("view_xmum_hangouts").select("*");
       if (errHangouts) {
-        console.warn("view_xmum_hangouts read failed, fetching from base table:", errHangouts);
-        const { data: baseHangouts, error: baseHangoutsError } = await supabase.from("xmum_hangouts").select("*");
-        if (baseHangoutsError) {
-          console.warn("xmum_hangouts base read also failed during startup:", baseHangoutsError);
-          return [];
-        }
-        return ((baseHangouts || []) as Hangout[]);
+        // The public view applies the meeting-point visibility rules. Do not fall
+        // back to the base table here; the authenticated API/cache remains the
+        // safe offline fallback when the view is unavailable.
+        console.warn("view_xmum_hangouts read failed during startup:", errHangouts);
+        return [];
       }
       return ((dbHangouts || []) as Hangout[]);
     } catch (error) {
@@ -1588,9 +1586,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           dbNotifsRaw
         ] = await Promise.all([
           fetchLocalCollection<Hangout>("/api/hangouts", "hangouts"),
-          Promise.resolve([] as Hangout[]),
+          // Read the shared public view as well as the local API. This prevents a
+          // long-running local server or an older PWA cache from limiting Explore
+          // to a stale snapshot.
+          fetchHangoutsCollection(),
           fetchLocalCollection<HangoutApplication>("/api/applications", "applications"),
-          Promise.resolve([] as HangoutApplication[]),
+          // Supabase RLS restricts this read to applications the signed-in user
+          // can access. It supplements the API for sessions backed by Supabase,
+          // while local-token-only sessions continue to use the API/cache.
+          fetchSupabaseCollection<HangoutApplication>("xmum_applications"),
           fetchLocalCollection<Chat>("/api/chats", "chats"),
           Promise.resolve([] as Chat[]),
           fetchLocalCollection<Message>("/api/messages", "messages"),
@@ -1725,9 +1729,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           await supabase.from("xmum_hangouts").insert(seedHangouts.map(h => sanitizeHangout(h)));
           finalHangouts = seedHangouts;
         }
-        const cleanHangouts = filterHangoutsForRuntime(
-          finalHangouts.filter(h => h.additional_info && h.additional_info.trim() !== "")
-        );
+        // Older/deleted-user records may predate the required description field.
+        // They are still valid hangouts and must not silently disappear from the
+        // history feed merely because their description is blank.
+        const cleanHangouts = filterHangoutsForRuntime(finalHangouts);
         const activeHangoutIds = new Set(cleanHangouts.map(hangout => hangout.id));
         setHangouts(cleanHangouts);
         localStorage.setItem("xmum_hangouts", JSON.stringify(cleanHangouts));
